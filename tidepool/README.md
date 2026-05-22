@@ -170,14 +170,48 @@ launchctl bootstrap "gui/$(id -u)" \
     ~/Library/LaunchAgents/com.deepwa7er.tidepool-clipd.plist
 ```
 
+### iPhone (Shortcuts)
+
+iOS doesn't allow background clipboard access, so there's no
+`tidepool-clipd` for iPhone. Use two iOS Shortcuts instead, triggered
+manually (Back Tap, Share Sheet, Action Button, Siri, or Home Screen
+icon).
+
+**Push to tidepool** (iPhone clipboard → server):
+
+1. **Get Clipboard**
+2. **Get Contents of URL**
+   - URL: `https://tidepool.<tailnet>.ts.net/clip`
+   - Method: `POST`
+   - Request Body: `Form`, key `text`, value = the `Clipboard` variable
+
+**Pull from tidepool** (server → iPhone clipboard):
+
+1. **Get Contents of URL**
+   - URL: `https://tidepool.<tailnet>.ts.net/clip.json`
+   - Method: `GET` (default)
+2. **Get Dictionary Value**, key `text`, from the previous step's output
+3. **Copy to Clipboard**, input = the dictionary value
+
+The `/clip.json` endpoint exists specifically for clients that don't
+speak SSE — it returns `{"text": ..., "updated_at": ..., "updated_by": ...}`.
+POSTs to `/clip` from Shortcuts use the same form-encoded path the
+desktop daemons use, so they broadcast over `/clip/stream` to any
+connected daemons.
+
+Most useful trigger: **Back Tap** (Settings → Accessibility → Touch →
+Back Tap) bound to the Pull and Push shortcuts. iPhone ↔ Mac is
+already covered by Apple's Universal Clipboard if you have that on,
+so Shortcuts mainly bridge iPhone ↔ Linux.
+
 ### How sync works (and what it doesn't)
 
-The daemon polls the OS clipboard every 500ms (configurable with `-poll`)
-and pushes a SHA-256-deduped POST to `/clip` on any change. It also keeps
-a long-lived SSE connection to `/clip/stream` and writes the local
-clipboard when a remote update arrives. A shared `lastHash` updated on
-both write paths breaks the echo loop. Last write wins on concurrent
-edits across devices.
+The desktop daemon polls the OS clipboard every 500ms (configurable
+with `-poll`) and pushes a SHA-256-deduped POST to `/clip` on any
+change. It also keeps a long-lived SSE connection to `/clip/stream`
+and writes the local clipboard when a remote update arrives. A shared
+`lastHash` updated on both write paths breaks the echo loop. Last
+write wins on concurrent edits across devices.
 
 Text only; no rich content (images, formatted text). Trailing newlines
 are normalized on Linux (`wl-paste --no-newline` + `wl-copy -n`) for

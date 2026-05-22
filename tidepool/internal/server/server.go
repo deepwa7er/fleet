@@ -58,6 +58,7 @@ func New(cfg Config) http.Handler {
 
 	r.Get("/", s.handleIndex)
 	r.Get("/clip", s.handleClipGet)
+	r.Get("/clip.json", s.handleClipJSON)
 	r.Get("/clip/stream", s.handleClipStream)
 	r.Post("/clip", s.handleClipSet)
 	r.Post("/files", s.handleUpload)
@@ -139,6 +140,16 @@ type clipEvent struct {
 	Text      string    `json:"text"`
 	UpdatedAt time.Time `json:"updated_at"`
 	UpdatedBy string    `json:"updated_by"`
+}
+
+func (s *server) handleClipJSON(w http.ResponseWriter, r *http.Request) {
+	clip, err := s.cfg.DB.GetClip(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(clipEvent{Text: clip.Text, UpdatedAt: clip.UpdatedAt, UpdatedBy: clip.UpdatedBy})
 }
 
 func (s *server) handleClipStream(w http.ResponseWriter, r *http.Request) {
