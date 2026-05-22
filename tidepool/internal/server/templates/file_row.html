@@ -1,0 +1,13 @@
+{{define "file_row"}}
+<li id="file-{{.ID}}" class="flex items-center gap-3 py-2">
+  <a href="/files/{{.ID}}" class="flex-1 truncate text-sm text-blue-700 hover:underline">{{.Name}}</a>
+  <span class="text-xs text-slate-500 shrink-0">{{.SizeHuman}}</span>
+  <span class="text-xs text-slate-400 shrink-0 hidden sm:inline">{{.Uploader}}</span>
+  <span class="text-xs text-slate-400 shrink-0">{{.ExpiresInRel}}</span>
+  <button hx-delete="/files/{{.ID}}"
+          hx-target="#file-{{.ID}}"
+          hx-swap="outerHTML"
+          hx-confirm="Delete this file?"
+          class="text-xs text-red-600 hover:underline shrink-0">Delete</button>
+</li>
+{{end}}

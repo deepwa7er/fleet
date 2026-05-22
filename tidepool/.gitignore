@@ -1,0 +1,11 @@
+/data/
+/tsnet-state/
+/tidepool
+/web/static/app.css
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+.env
+.DS_Store
+/.claude/
