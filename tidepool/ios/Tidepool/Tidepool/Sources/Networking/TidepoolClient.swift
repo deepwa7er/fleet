@@ -44,4 +44,27 @@ struct TidepoolClient {
             throw ClientError.decode(underlying: error)
         }
     }
+
+    func postClip(text: String) async throws {
+        let url = baseURL.appending(path: "clip", directoryHint: .notDirectory)
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
+
+        var components = URLComponents()
+        components.queryItems = [URLQueryItem(name: "text", value: text)]
+        request.httpBody = (components.percentEncodedQuery ?? "").data(using: .utf8)
+
+        let response: URLResponse
+        do {
+            (_, response) = try await session.data(for: request)
+        } catch {
+            throw ClientError.transport(underlying: error)
+        }
+
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw ClientError.invalidResponse(status: http.statusCode)
+        }
+    }
 }
