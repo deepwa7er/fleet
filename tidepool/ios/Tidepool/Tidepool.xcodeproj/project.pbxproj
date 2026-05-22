@@ -6,20 +6,88 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		806CB19C2FC00B5300A34AF8 /* Share.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 806CB1922FC00B5300A34AF8 /* Share.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		806CB19A2FC00B5300A34AF8 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 806CB1602FC005EC00A34AF8 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 806CB1912FC00B5300A34AF8;
+			remoteInfo = Share;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		806CB1A12FC00B5300A34AF8 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				806CB19C2FC00B5300A34AF8 /* Share.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		806CB1682FC005EC00A34AF8 /* Tidepool.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tidepool.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		806CB1922FC00B5300A34AF8 /* Share.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = Share.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		806CB1A82FC00DB700A34AF8 /* Exceptions for "Share" folder in "Share" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 806CB1912FC00B5300A34AF8 /* Share */;
+		};
+		806CB1AB2FC00E1700A34AF8 /* Exceptions for "Tidepool" folder in "Share" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Sources/Models/Clip.swift,
+				Sources/Networking/JSON.swift,
+				Sources/Networking/TidepoolClient.swift,
+				Sources/Storage/ClipCache.swift,
+				Sources/Storage/SharedStorage.swift,
+			);
+			target = 806CB1912FC00B5300A34AF8 /* Share */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		806CB16A2FC005EC00A34AF8 /* Tidepool */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				806CB1AB2FC00E1700A34AF8 /* Exceptions for "Tidepool" folder in "Share" target */,
+			);
 			path = Tidepool;
+			sourceTree = "<group>";
+		};
+		806CB1932FC00B5300A34AF8 /* Share */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				806CB1A82FC00DB700A34AF8 /* Exceptions for "Share" folder in "Share" target */,
+			);
+			path = Share;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		806CB1652FC005EC00A34AF8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		806CB18F2FC00B5300A34AF8 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +101,7 @@
 			isa = PBXGroup;
 			children = (
 				806CB16A2FC005EC00A34AF8 /* Tidepool */,
+				806CB1932FC00B5300A34AF8 /* Share */,
 				806CB1692FC005EC00A34AF8 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +110,7 @@
 			isa = PBXGroup;
 			children = (
 				806CB1682FC005EC00A34AF8 /* Tidepool.app */,
+				806CB1922FC00B5300A34AF8 /* Share.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -55,10 +125,12 @@
 				806CB1642FC005EC00A34AF8 /* Sources */,
 				806CB1652FC005EC00A34AF8 /* Frameworks */,
 				806CB1662FC005EC00A34AF8 /* Resources */,
+				806CB1A12FC00B5300A34AF8 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				806CB19B2FC00B5300A34AF8 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				806CB16A2FC005EC00A34AF8 /* Tidepool */,
@@ -69,6 +141,28 @@
 			productName = Tidepool;
 			productReference = 806CB1682FC005EC00A34AF8 /* Tidepool.app */;
 			productType = "com.apple.product-type.application";
+		};
+		806CB1912FC00B5300A34AF8 /* Share */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 806CB19E2FC00B5300A34AF8 /* Build configuration list for PBXNativeTarget "Share" */;
+			buildPhases = (
+				806CB18E2FC00B5300A34AF8 /* Sources */,
+				806CB18F2FC00B5300A34AF8 /* Frameworks */,
+				806CB1902FC00B5300A34AF8 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				806CB1932FC00B5300A34AF8 /* Share */,
+			);
+			name = Share;
+			packageProductDependencies = (
+			);
+			productName = Share;
+			productReference = 806CB1922FC00B5300A34AF8 /* Share.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -82,6 +176,10 @@
 				TargetAttributes = {
 					806CB1672FC005EC00A34AF8 = {
 						CreatedOnToolsVersion = 26.5;
+					};
+					806CB1912FC00B5300A34AF8 = {
+						CreatedOnToolsVersion = 26.5;
+						LastSwiftMigration = 2650;
 					};
 				};
 			};
@@ -100,12 +198,20 @@
 			projectRoot = "";
 			targets = (
 				806CB1672FC005EC00A34AF8 /* Tidepool */,
+				806CB1912FC00B5300A34AF8 /* Share */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		806CB1662FC005EC00A34AF8 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		806CB1902FC00B5300A34AF8 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +228,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		806CB18E2FC00B5300A34AF8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		806CB19B2FC00B5300A34AF8 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 806CB1912FC00B5300A34AF8 /* Share */;
+			targetProxy = 806CB19A2FC00B5300A34AF8 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		806CB1712FC005ED00A34AF8 /* Debug */ = {
@@ -314,6 +435,69 @@
 			};
 			name = Release;
 		};
+		806CB19F2FC00B5300A34AF8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = Share/Share.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 7PF4JMJ3SH;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Share/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Share;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.deepwa7er.Tidepool.Share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Share/Share-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		806CB1A02FC00B5300A34AF8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = Share/Share.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 7PF4JMJ3SH;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Share/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Share;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.deepwa7er.Tidepool.Share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Share/Share-Bridging-Header.h";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -331,6 +515,15 @@
 			buildConfigurations = (
 				806CB1742FC005ED00A34AF8 /* Debug */,
 				806CB1752FC005ED00A34AF8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		806CB19E2FC00B5300A34AF8 /* Build configuration list for PBXNativeTarget "Share" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				806CB19F2FC00B5300A34AF8 /* Debug */,
+				806CB1A02FC00B5300A34AF8 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
