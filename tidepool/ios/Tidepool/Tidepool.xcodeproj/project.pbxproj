@@ -445,7 +445,7 @@
 				DEVELOPMENT_TEAM = 7PF4JMJ3SH;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Share/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Share;
+				INFOPLIST_KEY_CFBundleDisplayName = Tidepool;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -477,7 +477,7 @@
 				DEVELOPMENT_TEAM = 7PF4JMJ3SH;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Share/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Share;
+				INFOPLIST_KEY_CFBundleDisplayName = Tidepool;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
