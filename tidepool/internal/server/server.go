@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"embed"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -42,12 +43,13 @@ type Config struct {
 type server struct {
 	cfg Config
 	tpl *template.Template
+	hub *clipHub
 }
 
 // New builds the HTTP handler.
 func New(cfg Config) http.Handler {
 	tpl := template.Must(template.New("").Funcs(funcs).ParseFS(templatesFS, "templates/*.html"))
-	s := &server{cfg: cfg, tpl: tpl}
+	s := &server{cfg: cfg, tpl: tpl, hub: newClipHub()}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -56,6 +58,7 @@ func New(cfg Config) http.Handler {
 
 	r.Get("/", s.handleIndex)
 	r.Get("/clip", s.handleClipGet)
+	r.Get("/clip/stream", s.handleClipStream)
 	r.Post("/clip", s.handleClipSet)
 	r.Post("/files", s.handleUpload)
 	r.Get("/files/{id}", s.handleDownload)
@@ -122,11 +125,73 @@ func (s *server) handleClipSet(w http.ResponseWriter, r *http.Request) {
 	}
 	text := r.FormValue("text")
 	now := time.Now()
-	if err := s.cfg.DB.SetClip(r.Context(), text, s.device(r), now); err != nil {
+	device := s.device(r)
+	if err := s.cfg.DB.SetClip(r.Context(), text, device, now); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderClip(w, newClipView(store.Clip{Text: text, UpdatedAt: now, UpdatedBy: s.device(r)}))
+	clip := store.Clip{Text: text, UpdatedAt: now, UpdatedBy: device}
+	s.hub.publish(clip)
+	s.renderClip(w, newClipView(clip))
+}
+
+type clipEvent struct {
+	Text      string    `json:"text"`
+	UpdatedAt time.Time `json:"updated_at"`
+	UpdatedBy string    `json:"updated_by"`
+}
+
+func (s *server) handleClipStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	current, err := s.cfg.DB.GetClip(r.Context())
+	if err == nil {
+		if writeErr := writeClipEvent(w, current); writeErr != nil {
+			return
+		}
+		flusher.Flush()
+	}
+
+	ch := s.hub.subscribe()
+	defer s.hub.unsubscribe(ch)
+
+	keepalive := time.NewTicker(30 * time.Second)
+	defer keepalive.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case c := <-ch:
+			if err := writeClipEvent(w, c); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-keepalive.C:
+			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+func writeClipEvent(w io.Writer, c store.Clip) error {
+	payload, err := json.Marshal(clipEvent{Text: c.Text, UpdatedAt: c.UpdatedAt, UpdatedBy: c.UpdatedBy})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "event: clip\ndata: %s\n\n", payload)
+	return err
 }
 
 func (s *server) renderClip(w http.ResponseWriter, v clipView) {
