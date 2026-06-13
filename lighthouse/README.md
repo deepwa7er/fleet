@@ -68,13 +68,46 @@ The monitored set is the allowlist: every API request's unit is checked against
 it before any `systemctl`/`journalctl` runs, and all commands use explicit
 argument vectors (never a shell), so unit names cannot inject anything.
 
+## Docker containers
+
+Lighthouse can monitor Docker containers alongside systemd services. Add a
+`[docker]` section to the config listing the containers to show:
+
+```toml
+[docker]
+proxy_url = "http://127.0.0.1:2375"
+
+[[docker.containers]]
+container = "navidrome"   # container name as known to Docker
+name = "Music"            # optional label; omit to prettify the container name
+
+[[docker.containers]]
+container = "slskd"
+```
+
+Containers appear in the same list as services, with their state mapped onto the
+same vocabulary (`running` → active, `restarting` → activating, a non-zero exit →
+failed, …) and a health-check verdict shown as the sub-state when present. Logs
+and start/stop/restart work exactly as they do for units. The container list is
+the control allowlist — only listed containers can be inspected or controlled.
+
+Lighthouse never touches the Docker socket directly. It speaks the Docker Engine
+API to a **socket-proxy** (`deploy.sh` runs `wollomatic/socket-proxy`, bound to
+`127.0.0.1:2375`) that is allow-listed to exactly four operations — container
+list/inspect/logs (GET) and start/stop/restart (POST) — and denies everything
+else (create, delete, exec, images, networks, volumes, the daemon itself). See
+the privilege model below.
+
 ## API
 
-- `GET /api/services` — status of every configured service.
-- `GET /api/services/{unit}/logs?lines=N` — most recent N log lines (default 200).
-- `GET /api/services/{unit}/logs/stream` — live tail via Server-Sent Events.
-- `POST /api/services/{unit}/control/{action}` — `action` is `start`, `stop`, or
-  `restart`. Returns the unit's post-action status.
+Each service has a `source` (`systemd` or `docker`) and an `id` (a unit name or
+container name); the routes carry both.
+
+- `GET /api/services` — status of every monitored service across all sources.
+- `GET /api/services/{source}/{id}/logs?lines=N` — most recent N log lines (default 200).
+- `GET /api/services/{source}/{id}/logs/stream` — live tail via Server-Sent Events.
+- `POST /api/services/{source}/{id}/control/{action}` — `action` is `start`,
+  `stop`, or `restart`. Returns the post-action status.
 
 ## Service control & privilege model
 
@@ -94,6 +127,23 @@ split is: enrolling a service makes it **viewable** immediately, but
 **controllable** only after the next `deploy/deploy.sh` (which is also when the
 grant could be written — Lighthouse runs unprivileged and can't edit polkit
 rules itself).
+
+For **Docker**, the equivalent of the polkit grant is the socket-proxy's
+allowlist. The Docker socket is root-equivalent — anything that can create a
+container can mount the host and become root — so Lighthouse never gets it.
+Instead `deploy.sh` runs `wollomatic/socket-proxy` (secure-by-default: every
+method/path is denied unless explicitly allowed) configured to permit only:
+
+```
+GET  /containers/json , /containers/<id>/json , /containers/<id>/logs
+POST /containers/<id>/(start|stop|restart)
+```
+
+Container create, delete, exec, and every non-container endpoint (images,
+networks, volumes, the daemon) are denied at the proxy. The proxy is published
+on host loopback only and runs unprivileged (added to the host `docker` group
+just to read the socket). So a compromised Lighthouse can start/stop/restart the
+listed containers and read their logs — and nothing more.
 
 ## Deploy
 

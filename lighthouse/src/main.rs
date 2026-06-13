@@ -1,10 +1,13 @@
 mod api;
 mod config;
+mod docker;
+mod model;
 mod systemd;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use axum::Router;
@@ -28,6 +31,10 @@ struct Cli {
 /// Shared, read-only application state.
 pub struct AppState {
     pub config: Config,
+    /// HTTP client for the Docker socket-proxy. A connect timeout fails fast
+    /// when the proxy is down, but there is deliberately no request timeout —
+    /// the log-follow stream is long-lived.
+    pub http: reqwest::Client,
 }
 
 #[tokio::main]
@@ -45,14 +52,18 @@ async fn main() -> anyhow::Result<()> {
     let serve_dir = ServeDir::new(&config.static_dir)
         .fallback(ServeFile::new(config.static_dir.join("index.html")));
 
-    let state = Arc::new(AppState { config });
+    let http = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+        .context("building the Docker proxy HTTP client")?;
+    let state = Arc::new(AppState { config, http });
 
     let app = Router::new()
         .route("/api/services", get(api::list_services))
-        .route("/api/services/{unit}/logs", get(api::get_logs))
-        .route("/api/services/{unit}/logs/stream", get(api::stream_logs))
+        .route("/api/services/{source}/{id}/logs", get(api::get_logs))
+        .route("/api/services/{source}/{id}/logs/stream", get(api::stream_logs))
         .route(
-            "/api/services/{unit}/control/{action}",
+            "/api/services/{source}/{id}/control/{action}",
             post(api::control_service),
         )
         .fallback_service(serve_dir)

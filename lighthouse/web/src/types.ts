@@ -1,9 +1,14 @@
+/** Which backend manages a service. */
+export type Source = "systemd" | "docker";
+
 export interface ServiceStatus {
-  unit: string;
+  source: Source;
+  /** Identifier within the source: a unit name or a container name. */
+  id: string;
   name: string;
-  /** systemd ActiveState: active, inactive, failed, activating, … */
+  /** Normalized state: active, inactive, failed, activating, … */
   active_state: string;
-  /** systemd SubState: running, dead, exited, … */
+  /** Finer-grained state: running, dead, exited, restarting, … */
   sub_state: string;
   description: string;
   /** Human-readable "active since" timestamp, or null if not running. */

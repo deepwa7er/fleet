@@ -127,6 +127,35 @@ RULE
 chmod 644 /etc/polkit-1/rules.d/50-lighthouse.rules
 echo ">> Installed polkit rule for units: $(echo "$UNIT_LIST" | tr '\n' ' ')"
 
+# --- docker socket-proxy ----------------------------------------------------
+# Lighthouse talks to Docker only through this proxy (never the raw socket). It
+# is a secure-by-default filter that allows EXACTLY four operations — container
+# list/inspect/logs (GET) and start/stop/restart (POST) — and denies everything
+# else (create, delete, exec, images, networks, volumes, the daemon, …). That
+# keeps Docker control from becoming a root-equivalent grant, mirroring the
+# tightly-scoped polkit rule on the systemd side. It is published on host
+# loopback only, and runs unprivileged with just the host docker group added so
+# it can read the socket.
+# Created if absent; to change its settings, `docker rm -f` it and re-deploy.
+if command -v docker >/dev/null 2>&1; then
+  if ! docker ps -a --format '{{.Names}}' | grep -qx lighthouse-socket-proxy; then
+    DOCKER_GID="$(getent group docker | cut -d: -f3)"
+    docker run -d --name lighthouse-socket-proxy --restart unless-stopped \
+      --group-add "$DOCKER_GID" \
+      -p 127.0.0.1:2375:2375 \
+      -v /var/run/docker.sock:/var/run/docker.sock:ro \
+      wollomatic/socket-proxy:1 \
+      -loglevel=info -listenip=0.0.0.0 -allowfrom=0.0.0.0/0 \
+      -allowGET='(/v[0-9.]+)?/containers/(json|[^/]+/json|[^/]+/logs)' \
+      -allowPOST='(/v[0-9.]+)?/containers/[^/]+/(start|stop|restart)'
+    echo ">> Started lighthouse-socket-proxy on 127.0.0.1:2375"
+  else
+    echo ">> lighthouse-socket-proxy already present"
+  fi
+else
+  echo ">> docker not installed; skipping socket-proxy (systemd-only dashboard)"
+fi
+
 # --- systemd unit -----------------------------------------------------------
 install -m644 lighthouse.service /etc/systemd/system/lighthouse.service
 systemctl daemon-reload

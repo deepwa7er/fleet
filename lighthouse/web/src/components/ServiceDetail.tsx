@@ -40,7 +40,7 @@ export function ServiceDetail({ service, onChanged }: Props) {
     setPending(action);
     setError(null);
     try {
-      await controlService(service.unit, action);
+      await controlService(service.source, service.id, action);
       onChanged();
     } catch (err: unknown) {
       setError(String(err));
@@ -90,7 +90,7 @@ export function ServiceDetail({ service, onChanged }: Props) {
         <div className="bg-red-950/50 px-6 py-2 text-sm text-red-300">{error}</div>
       )}
       <div className="min-h-0 flex-1">
-        <LogViewer unit={service.unit} />
+        <LogViewer source={service.source} id={service.id} />
       </div>
     </div>
   );

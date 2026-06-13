@@ -23,6 +23,11 @@ pub struct Config {
     /// extra unit that isn't a member of the target. Empty means pure discovery.
     #[serde(default)]
     pub services: Vec<ServiceConfig>,
+    /// Optional Docker support. When present, the listed containers are
+    /// monitored alongside systemd services, reached through a socket-proxy
+    /// rather than the raw Docker socket. Absent means systemd-only.
+    #[serde(default)]
+    pub docker: Option<DockerConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -31,6 +36,33 @@ pub struct ServiceConfig {
     pub unit: String,
     /// Display label override. If absent, the unit name is prettified.
     pub name: Option<String>,
+}
+
+/// Docker integration settings.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DockerConfig {
+    /// Base URL of the docker-socket-proxy, e.g. `http://127.0.0.1:2375`.
+    /// Lighthouse never touches the raw Docker socket directly.
+    pub proxy_url: String,
+    /// Containers to monitor. This is also the control allowlist: only these
+    /// containers can be inspected, tailed, or controlled.
+    #[serde(default)]
+    pub containers: Vec<DockerContainerConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DockerContainerConfig {
+    /// Container name as known to Docker, e.g. `navidrome`.
+    pub container: String,
+    /// Display label override. If absent, the container name is prettified.
+    pub name: Option<String>,
+}
+
+impl DockerContainerConfig {
+    /// The display label: the override if set, else the prettified name.
+    pub fn display_name(&self) -> String {
+        self.name.clone().unwrap_or_else(|| prettify(&self.container))
+    }
 }
 
 fn default_target() -> String {
@@ -70,18 +102,18 @@ impl Config {
             .iter()
             .find(|s| s.unit == unit)
             .and_then(|s| s.name.clone())
-            .unwrap_or_else(|| prettify_unit(unit))
+            .unwrap_or_else(|| prettify(unit))
     }
 }
 
-/// Turn a unit name into a human label: drop the `.service` suffix and
+/// Turn a unit or container name into a human label: drop any `.suffix` and
 /// title-case the words separated by `-`/`_`. `sonar-discovery.service` becomes
-/// `Sonar Discovery`.
-fn prettify_unit(unit: &str) -> String {
-    let base = unit
+/// `Sonar Discovery`; `navidrome` becomes `Navidrome`.
+fn prettify(name: &str) -> String {
+    let base = name
         .rsplit_once('.')
         .map(|(stem, _ext)| stem)
-        .unwrap_or(unit);
+        .unwrap_or(name);
 
     base.split(['-', '_'])
         .filter(|word| !word.is_empty())

@@ -25,3 +25,20 @@ target = "lighthouse.target"
 #   [[services]]
 #   unit = "nginx.service"   # pinned even though it's not in the target
 #   name = "Web (nginx)"     # custom label; omit `name` to use the default
+
+# Optional Docker support. When present, the listed containers are monitored
+# alongside systemd services. Lighthouse reaches Docker only through a
+# socket-proxy (deploy.sh runs one bound to 127.0.0.1:2375) restricted to
+# container inspect/logs/start/stop/restart — it never touches the raw socket.
+# The container list is also the control allowlist. Omit this whole section for
+# a systemd-only dashboard.
+#
+#   [docker]
+#   proxy_url = "http://127.0.0.1:2375"
+#
+#   [[docker.containers]]
+#   container = "navidrome"   # container name as known to Docker
+#   name = "Music"            # custom label; omit to prettify the container name
+#
+#   [[docker.containers]]
+#   container = "slskd"
