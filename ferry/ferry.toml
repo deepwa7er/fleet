@@ -1,0 +1,21 @@
+# ferry config. This file is bundled into the binary and written to
+# ~/.config/ferry/ferry.toml on first run; edit it there (or pass a path as
+# the first argument). Edits take effect immediately; `port` requires a restart.
+
+port = 7777
+
+# Used when the input matches no command. {query} is replaced with the
+# percent-encoded input.
+fallback = "https://www.google.com/search?q={query}"
+
+[commands]
+# Static shortcuts: `b mail` opens the URL directly.
+mail = "https://mail.google.com"
+cal = "https://calendar.google.com"
+# A shortcut can point anywhere, including a self-hosted or tailnet service:
+# home = "https://my-server.example.ts.net/"
+
+# Parameterized shortcuts: `b gh axum` searches GitHub for "axum".
+gh = "https://github.com/search?q={query}"
+yt = "https://www.youtube.com/results?search_query={query}"
+w = "https://en.wikipedia.org/wiki/Special:Search?search={query}"
