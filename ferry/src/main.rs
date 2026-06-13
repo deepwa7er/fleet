@@ -8,9 +8,10 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 use axum::Router;
-use axum::extract::{Form, Query, State};
+use axum::extract::{Form, Query, Request, State};
 use axum::http::header::{CONTENT_TYPE, HOST};
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
@@ -137,6 +138,17 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Log every request as `METHOD uri -> status` to stdout (captured by the
+/// journal when run under systemd). Cheap, and handy for confirming requests
+/// actually arrive — e.g. from a phone's browser.
+async fn log_request(request: Request, next: Next) -> Response {
+    let method = request.method().clone();
+    let uri = request.uri().clone();
+    let response = next.run(request).await;
+    println!("{method} {uri} -> {}", response.status().as_u16());
+    response
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config_path = match explicit_config_path()? {
@@ -162,7 +174,8 @@ async fn main() -> anyhow::Result<()> {
         .with_state(Arc::new(AppState {
             config_path,
             write_lock: Mutex::new(()),
-        }));
+        }))
+        .layer(middleware::from_fn(log_request));
 
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, config.port));
     let listener = tokio::net::TcpListener::bind(addr)
