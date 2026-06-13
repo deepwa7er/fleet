@@ -20,7 +20,8 @@ interface Props {
 
 export function LogViewer({ unit }: Props) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [live, setLive] = useState(false);
+  // Live tailing is on by default; the user can uncheck it to freeze the view.
+  const [live, setLive] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
