@@ -1,0 +1,31 @@
+# Lighthouse configuration.
+#
+# `bind` is the address the dashboard listens on. Set it to the VPS's Tailscale
+# IP (a 100.x.x.x address) so the dashboard is reachable ONLY from your tailnet —
+# nothing is exposed on the public interface. `deploy/deploy.sh` fills this in
+# automatically from `tailscale ip -4` on first deploy, replacing the placeholder
+# below. For local development, set it to 127.0.0.1.
+bind = "100.64.0.1"
+port = 8080
+
+# Directory containing the built frontend (index.html + assets). The deploy
+# script installs the React build here.
+static_dir = "/opt/lighthouse/web"
+
+# Services to monitor. `unit` is the systemd unit name (the dashboard only ever
+# touches units listed here). `name` is the display label shown in the UI.
+[[services]]
+unit = "deepwa7er.service"
+name = "Deepwa7er"
+
+[[services]]
+unit = "notes.service"
+name = "Notes"
+
+[[services]]
+unit = "sonar-discovery.service"
+name = "Sonar Discovery"
+
+[[services]]
+unit = "tidepool.service"
+name = "Tidepool"

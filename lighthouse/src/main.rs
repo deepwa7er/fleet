@@ -1,0 +1,61 @@
+mod api;
+mod config;
+mod systemd;
+
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use anyhow::Context;
+use axum::Router;
+use axum::routing::get;
+use clap::Parser;
+use tower_http::services::ServeDir;
+
+use crate::config::Config;
+
+const DEFAULT_CONFIG_PATH: &str = "/etc/lighthouse/config.toml";
+
+/// Lighthouse — a dashboard for the status and logs of systemd services.
+#[derive(Debug, Parser)]
+#[command(version, about)]
+struct Cli {
+    /// Path to the configuration file. Created from the baseline if absent.
+    #[arg(short, long, default_value = DEFAULT_CONFIG_PATH)]
+    config: PathBuf,
+}
+
+/// Shared, read-only application state.
+pub struct AppState {
+    pub config: Config,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+
+    // Load up front so a broken config fails at startup, and to learn the
+    // listen address, port, and static directory.
+    let config = Config::load_or_create(&cli.config)?;
+    let addr = SocketAddr::new(config.bind, config.port);
+    // The frontend is a single page driven by internal state (no client-side
+    // routing), so ServeDir alone is correct: `/` resolves to index.html,
+    // `/assets/*` to the built bundles, and anything else is a genuine 404.
+    let serve_dir = ServeDir::new(&config.static_dir);
+
+    let state = Arc::new(AppState { config });
+
+    let app = Router::new()
+        .route("/api/services", get(api::list_services))
+        .route("/api/services/{unit}/logs", get(api::get_logs))
+        .route("/api/services/{unit}/logs/stream", get(api::stream_logs))
+        .fallback_service(serve_dir)
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("failed to bind {addr}"))?;
+    println!("lighthouse listening on http://{addr}");
+    axum::serve(listener, app).await.context("server error")?;
+    Ok(())
+}
