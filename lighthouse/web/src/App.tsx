@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { ServiceStatus } from "./types.ts";
-import { fetchServices } from "./api.ts";
+import { controlService, fetchServices, type ServiceAction } from "./api.ts";
 import { ServiceCard } from "./components/ServiceCard.tsx";
 import { ServiceDetail } from "./components/ServiceDetail.tsx";
 
 const POLL_INTERVAL_MS = 5_000;
+
+const ACTIONS: ServiceAction[] = ["start", "stop", "restart"];
+
+/** A valid control action from the `?action=` query, or null. Lets a link such
+ * as ferry's `b lh <svc> restart` issue the action on arrival. */
+function actionFromQuery(): ServiceAction | null {
+  const value = new URLSearchParams(window.location.search).get("action");
+  return ACTIONS.includes(value as ServiceAction) ? (value as ServiceAction) : null;
+}
 
 // Client-side routing on `/services/<unit>`. The unit in the path may be the
 // full unit name or its `.service`-stripped short form (what you'd type into
@@ -78,6 +87,22 @@ export function App() {
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, [services]);
+
+  // Run a control action supplied in the URL (e.g. ferry's `b lh <svc> restart`).
+  // It fires ONLY when the path resolves to a real service — never a fallback —
+  // so a typo'd name can't act on the wrong one. The query param is cleared
+  // first, so it runs once and a refresh won't re-issue it.
+  useEffect(() => {
+    if (services.length === 0) return;
+    const action = actionFromQuery();
+    const unit = matchUnit(services, unitFromPath());
+    if (!action || !unit) return;
+    history.replaceState(null, "", `/services/${encodeURIComponent(slugFor(unit))}`);
+    controlService(unit, action).then(
+      () => void refresh(),
+      (err: unknown) => setError(String(err)),
+    );
+  }, [services, refresh]);
 
   const selectedService = services.find((s) => s.unit === selected) ?? null;
 

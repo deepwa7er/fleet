@@ -76,6 +76,16 @@ argument vectors (never a shell), so unit names cannot inject anything.
 - `POST /api/services/{unit}/control/{action}` — `action` is `start`, `stop`, or
   `restart`. Returns the unit's post-action status.
 
+## Deep links
+
+The dashboard is a single page with client-side routing on the path:
+`/services/<unit>` opens that service (the unit name or its `.service`-stripped
+short form, e.g. `/services/ferry`). Append `?action=start|stop|restart` and the
+action is issued on load, then the query is cleared — but only when the path
+resolves to a real monitored service, so a mistyped name can't act on the wrong
+one. This is what lets a shortcut tool jump straight to "restart X and show its
+logs" (e.g. ferry's `b lh <service> <action>`).
+
 ## Alerting
 
 The dashboard is passive — you have to look at it. To be told when something
