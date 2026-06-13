@@ -1,0 +1,7 @@
+[Unit]
+Description=Services monitored by the Lighthouse dashboard
+# This target is a passive grouping anchor — it is never started. A service is
+# enrolled in the dashboard by becoming one of its dependencies:
+#   systemctl add-wants lighthouse.target <unit>
+# or by adding `WantedBy=lighthouse.target` to the unit's [Install] section.
+# Lighthouse reads the members via `systemctl show lighthouse.target -p Wants`.

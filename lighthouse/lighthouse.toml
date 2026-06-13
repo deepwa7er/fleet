@@ -12,20 +12,16 @@ port = 8080
 # script installs the React build here.
 static_dir = "/opt/lighthouse/web"
 
-# Services to monitor. `unit` is the systemd unit name (the dashboard only ever
-# touches units listed here). `name` is the display label shown in the UI.
-[[services]]
-unit = "deepwa7er.service"
-name = "Deepwa7er"
+# Services to monitor are discovered automatically: any service that is a member
+# of this systemd target shows up on the dashboard. Enroll one with
+#   systemctl add-wants lighthouse.target <unit>
+# or add `WantedBy=lighthouse.target` to the unit's [Install] section. Display
+# labels default to the prettified unit name (sonar-discovery → "Sonar Discovery").
+target = "lighthouse.target"
 
-[[services]]
-unit = "notes.service"
-name = "Notes"
-
-[[services]]
-unit = "sonar-discovery.service"
-name = "Sonar Discovery"
-
-[[services]]
-unit = "tidepool.service"
-name = "Tidepool"
+# Optional override layer. Leave empty for pure discovery. Use it to rename a
+# discovered service's label, or to pin an extra unit that isn't a target member:
+#
+#   [[services]]
+#   unit = "nginx.service"   # pinned even though it's not in the target
+#   name = "Web (nginx)"     # custom label; omit `name` to use the default

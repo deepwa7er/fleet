@@ -1,23 +1,12 @@
 # Local development config. Binds to localhost and serves the freshly built
 # frontend from web/dist. systemctl/journalctl only exist on the Linux VPS, so
-# the /api endpoints are exercised for real there — locally this is used to
-# verify the server boots, serves the SPA, and enforces the unit allowlist.
+# discovery returns empty locally; the pinned units below give the allowlist
+# something to resolve for route testing.
 bind = "127.0.0.1"
 port = 8080
 static_dir = "web/dist"
-
-[[services]]
-unit = "deepwa7er.service"
-name = "Deepwa7er"
+target = "lighthouse.target"
 
 [[services]]
 unit = "notes.service"
 name = "Notes"
-
-[[services]]
-unit = "sonar-discovery.service"
-name = "Sonar Discovery"
-
-[[services]]
-unit = "tidepool.service"
-name = "Tidepool"

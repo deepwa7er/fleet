@@ -1,6 +1,10 @@
-//! HTTP handlers. Every handler that touches a service first looks the unit up
-//! in the configured allowlist; an unconfigured unit returns `404` and no
-//! subprocess is ever spawned for it.
+//! HTTP handlers.
+//!
+//! The set of monitored services is discovered at request time from the
+//! configured systemd target (plus any units pinned in the config). That same
+//! set is the allowlist: every handler that touches a unit first resolves it
+//! against the monitored set, and an unknown unit returns `404` before any
+//! subprocess runs.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,6 +17,7 @@ use serde::Deserialize;
 use tokio_stream::{Stream, StreamExt};
 
 use crate::AppState;
+use crate::config::Config;
 use crate::systemd::{self, ServiceStatus};
 
 const DEFAULT_LOG_LINES: u32 = 200;
@@ -23,12 +28,19 @@ pub struct LogQuery {
     lines: Option<u32>,
 }
 
-/// `GET /api/services` — status of every configured service.
+/// A monitored service: its unit name and resolved display label.
+struct Monitored {
+    unit: String,
+    name: String,
+}
+
+/// `GET /api/services` — status of every monitored service.
 pub async fn list_services(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ServiceStatus>>, StatusCode> {
-    let mut statuses = Vec::with_capacity(state.config.services.len());
-    for svc in &state.config.services {
+    let services = monitored(&state.config).await;
+    let mut statuses = Vec::with_capacity(services.len());
+    for svc in services {
         match systemd::status(&svc.unit, &svc.name).await {
             Ok(status) => statuses.push(status),
             Err(err) => {
@@ -46,13 +58,13 @@ pub async fn get_logs(
     Path(unit): Path<String>,
     Query(query): Query<LogQuery>,
 ) -> Result<Json<Vec<systemd::LogEntry>>, StatusCode> {
-    let unit = allowlisted_unit(&state, &unit)?;
+    let svc = resolve(&state.config, &unit).await?;
     let lines = query.lines.unwrap_or(DEFAULT_LOG_LINES).clamp(1, MAX_LOG_LINES);
 
-    match systemd::recent_logs(&unit, lines).await {
+    match systemd::recent_logs(&svc.unit, lines).await {
         Ok(entries) => Ok(Json(entries)),
         Err(err) => {
-            eprintln!("failed to read logs for {unit}: {err:#}");
+            eprintln!("failed to read logs for {}: {err:#}", svc.unit);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -65,23 +77,18 @@ pub async fn control_service(
     State(state): State<Arc<AppState>>,
     Path((unit, action)): Path<(String, String)>,
 ) -> Result<Json<ServiceStatus>, StatusCode> {
-    let Some(svc) = state.config.find_unit(&unit) else {
-        return Err(StatusCode::NOT_FOUND);
-    };
-    let unit = svc.unit.clone();
-    let name = svc.name.clone();
-
+    let svc = resolve(&state.config, &unit).await?;
     let action = systemd::ServiceAction::parse(&action).ok_or(StatusCode::BAD_REQUEST)?;
 
-    if let Err(err) = systemd::control(&unit, action).await {
-        eprintln!("failed to {action:?} {unit}: {err:#}");
+    if let Err(err) = systemd::control(&svc.unit, action).await {
+        eprintln!("failed to {action:?} {}: {err:#}", svc.unit);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    match systemd::status(&unit, &name).await {
+    match systemd::status(&svc.unit, &svc.name).await {
         Ok(status) => Ok(Json(status)),
         Err(err) => {
-            eprintln!("failed to read status for {unit} after {action:?}: {err:#}");
+            eprintln!("failed to read status for {} after {action:?}: {err:#}", svc.unit);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -92,10 +99,10 @@ pub async fn stream_logs(
     State(state): State<Arc<AppState>>,
     Path(unit): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, StatusCode> {
-    let unit = allowlisted_unit(&state, &unit)?;
+    let svc = resolve(&state.config, &unit).await?;
 
-    let entries = systemd::follow_logs(&unit).map_err(|err| {
-        eprintln!("failed to follow logs for {unit}: {err:#}");
+    let entries = systemd::follow_logs(&svc.unit).map_err(|err| {
+        eprintln!("failed to follow logs for {}: {err:#}", svc.unit);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -103,12 +110,39 @@ pub async fn stream_logs(
     Ok(Sse::new(events).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
-/// Resolve `unit` against the configured allowlist, returning its canonical unit
-/// name. Unknown units yield `404` before any command runs.
-fn allowlisted_unit(state: &AppState, unit: &str) -> Result<String, StatusCode> {
-    state
-        .config
-        .find_unit(unit)
-        .map(|svc| svc.unit.clone())
+/// The monitored set: units that are members of the target, unioned with units
+/// pinned in the config, each paired with its display label. This is both the
+/// dashboard's service list and the allowlist for logs/control.
+async fn monitored(config: &Config) -> Vec<Monitored> {
+    let mut units = match systemd::discover_units(&config.target).await {
+        Ok(units) => units,
+        Err(err) => {
+            eprintln!("service discovery failed for target {}: {err:#}", config.target);
+            Vec::new()
+        }
+    };
+    for pinned in config.pinned_units() {
+        if !units.iter().any(|u| u == pinned) {
+            units.push(pinned.to_owned());
+        }
+    }
+    units.sort();
+    units.dedup();
+    units
+        .into_iter()
+        .map(|unit| {
+            let name = config.display_name(&unit);
+            Monitored { unit, name }
+        })
+        .collect()
+}
+
+/// Resolve a single unit against the monitored set (the allowlist gate). Unknown
+/// units yield `404` before any command runs.
+async fn resolve(config: &Config, unit: &str) -> Result<Monitored, StatusCode> {
+    monitored(config)
+        .await
+        .into_iter()
+        .find(|m| m.unit == unit)
         .ok_or(StatusCode::NOT_FOUND)
 }

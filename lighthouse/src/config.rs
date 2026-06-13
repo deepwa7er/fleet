@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use serde::Deserialize;
 
 /// The repo's example config doubles as the baseline written on first run, so
@@ -15,6 +15,13 @@ pub struct Config {
     pub port: u16,
     /// Directory holding the built frontend served at `/`.
     pub static_dir: PathBuf,
+    /// systemd target whose members are auto-discovered and monitored. A service
+    /// joins the dashboard by becoming a dependency of this target (see README).
+    #[serde(default = "default_target")]
+    pub target: String,
+    /// Optional override layer: rename a discovered service's label, or pin an
+    /// extra unit that isn't a member of the target. Empty means pure discovery.
+    #[serde(default)]
     pub services: Vec<ServiceConfig>,
 }
 
@@ -22,8 +29,12 @@ pub struct Config {
 pub struct ServiceConfig {
     /// systemd unit name, e.g. `notes.service`.
     pub unit: String,
-    /// Human-friendly label shown in the UI.
-    pub name: String,
+    /// Display label override. If absent, the unit name is prettified.
+    pub name: Option<String>,
+}
+
+fn default_target() -> String {
+    "lighthouse.target".to_owned()
 }
 
 impl Config {
@@ -43,17 +54,44 @@ impl Config {
             .with_context(|| format!("reading config {}", path.display()))?;
         let config: Config =
             toml::from_str(&text).with_context(|| format!("parsing config {}", path.display()))?;
-
-        if config.services.is_empty() {
-            bail!("config lists no services to monitor");
-        }
         Ok(config)
     }
 
-    /// Look up a configured service by its unit name. This is the allowlist that
-    /// gates every systemd/journal command — names not present here are rejected
-    /// before any subprocess runs.
-    pub fn find_unit(&self, unit: &str) -> Option<&ServiceConfig> {
-        self.services.iter().find(|s| s.unit == unit)
+    /// Units pinned in the config that should be monitored regardless of target
+    /// membership.
+    pub fn pinned_units(&self) -> impl Iterator<Item = &str> {
+        self.services.iter().map(|s| s.unit.as_str())
     }
+
+    /// The display label for a unit: the config override if one is set, else the
+    /// unit name prettified (`sonar-discovery.service` → `Sonar Discovery`).
+    pub fn display_name(&self, unit: &str) -> String {
+        self.services
+            .iter()
+            .find(|s| s.unit == unit)
+            .and_then(|s| s.name.clone())
+            .unwrap_or_else(|| prettify_unit(unit))
+    }
+}
+
+/// Turn a unit name into a human label: drop the `.service` suffix and
+/// title-case the words separated by `-`/`_`. `sonar-discovery.service` becomes
+/// `Sonar Discovery`.
+fn prettify_unit(unit: &str) -> String {
+    let base = unit
+        .rsplit_once('.')
+        .map(|(stem, _ext)| stem)
+        .unwrap_or(unit);
+
+    base.split(['-', '_'])
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

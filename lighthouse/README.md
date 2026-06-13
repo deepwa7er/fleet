@@ -34,18 +34,39 @@ There is no application-level auth because there is no public surface to protect
 bind = "100.x.x.x"          # the VPS's Tailscale IP
 port = 8080
 static_dir = "/opt/lighthouse/web"
+target = "lighthouse.target"  # services are discovered as members of this target
 
-[[services]]
-unit = "notes.service"
-name = "Notes"
-# … one block per monitored service
+# Optional override layer — leave empty for pure discovery.
+# [[services]]
+# unit = "nginx.service"      # pin a unit that isn't a target member
+# name = "Web (nginx)"        # custom label; omit to use the default
 ```
 
-Only units listed here can be queried — the unit in every API request is checked
-against this allowlist before any `systemctl`/`journalctl` command runs, and all
-commands are invoked with explicit argument vectors (never a shell), so unit
-names cannot inject anything. Edit this file and `systemctl restart lighthouse`
-to add or remove services; no rebuild needed.
+## Service discovery
+
+Lighthouse discovers which services to show from a passive systemd **target**
+(`lighthouse.target`). A service appears on the dashboard by becoming a member of
+that target. Two ways to enroll:
+
+```sh
+# Non-invasive (doesn't touch the unit file):
+systemctl add-wants lighthouse.target myapp.service
+
+# Or self-enrolling — add to the unit's [Install] section, then reenable:
+#   WantedBy=multi-user.target lighthouse.target
+```
+
+To un-enroll: `rm /etc/systemd/system/lighthouse.target.wants/myapp.service`.
+
+Discovery runs at request time, so an enrolled service appears (and an un-enrolled
+one disappears) on the next poll — no restart or redeploy needed **to view it**.
+Display labels default to the prettified unit name (`sonar-discovery.service` →
+"Sonar Discovery"); the optional `[[services]]` block overrides a label or pins a
+unit that isn't a target member.
+
+The monitored set is the allowlist: every API request's unit is checked against
+it before any `systemctl`/`journalctl` runs, and all commands use explicit
+argument vectors (never a shell), so unit names cannot inject anything.
 
 ## API
 
@@ -64,13 +85,15 @@ the `start`/`stop`/`restart` verbs on exactly the configured units — nothing e
 
 This keeps the service unprivileged: no root, no sudo, no setuid, so it remains
 compatible with the unit's `NoNewPrivileges=true` hardening. The polkit rule is a
-second enforcement layer behind the config allowlist (the API rejects unknown
+second enforcement layer behind the discovery allowlist (the API rejects unknown
 units with 404 before ever calling `systemctl`).
 
-The polkit rule is regenerated from the config on every deploy. So: adding a
-service to **view** only needs a config edit + `systemctl restart lighthouse`;
-adding one you can also **control** means re-running `deploy/deploy.sh` so the
-polkit grant picks it up.
+The polkit grant is regenerated on every deploy from the target's members (plus
+any pinned units). Because discovery is live but the polkit grant is static, the
+split is: enrolling a service makes it **viewable** immediately, but
+**controllable** only after the next `deploy/deploy.sh` (which is also when the
+grant could be written — Lighthouse runs unprivileged and can't edit polkit
+rules itself).
 
 ## Deploy
 

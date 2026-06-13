@@ -77,6 +77,34 @@ pub struct LogEntry {
     pub message: String,
 }
 
+/// Discover the `.service` units that are members (`Wants`) of `target`. A
+/// service is enrolled in the dashboard by becoming a dependency of the target
+/// (`systemctl add-wants <target> <unit>` or `WantedBy=<target>` in its
+/// `[Install]`). `systemctl show` needs no privilege; an unknown target simply
+/// yields an empty list.
+pub async fn discover_units(target: &str) -> anyhow::Result<Vec<String>> {
+    let output = Command::new("systemctl")
+        .args(["show", target, "--property=Wants", "--value", "--no-pager"])
+        .output()
+        .await
+        .context("running systemctl show on the target")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("systemctl show {target} failed: {}", stderr.trim());
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut units: Vec<String> = text
+        .split_whitespace()
+        .filter(|unit| unit.ends_with(".service"))
+        .map(str::to_owned)
+        .collect();
+    units.sort();
+    units.dedup();
+    Ok(units)
+}
+
 /// Query the current status of a single unit.
 pub async fn status(unit: &str, name: &str) -> anyhow::Result<ServiceStatus> {
     let output = Command::new("systemctl")
