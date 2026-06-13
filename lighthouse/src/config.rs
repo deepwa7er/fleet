@@ -8,7 +8,7 @@ use serde::Deserialize;
 /// the documented defaults and the runtime baseline can never drift apart.
 const BASELINE_CONFIG: &str = include_str!("../lighthouse.toml");
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     /// Address to listen on — set to the VPS's Tailscale IP for tailnet-only access.
     pub bind: IpAddr,
@@ -23,6 +23,27 @@ pub struct Config {
     /// extra unit that isn't a member of the target. Empty means pure discovery.
     #[serde(default)]
     pub services: Vec<ServiceConfig>,
+    /// Optional alerting. When present, a background watcher pushes a
+    /// notification when a monitored service fails or crash-loops. Absent means
+    /// no watcher runs.
+    #[serde(default)]
+    pub alerts: Option<AlertConfig>,
+}
+
+/// Alerting settings.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlertConfig {
+    /// URL to POST notifications to (e.g. an ntfy topic
+    /// `https://ntfy.sh/your-topic`). The body is the message; a `Title` header
+    /// carries the service name.
+    pub notify_url: String,
+    /// How often (seconds) to poll service state.
+    #[serde(default = "default_alert_interval")]
+    pub interval_secs: u64,
+}
+
+fn default_alert_interval() -> u64 {
+    30
 }
 
 #[derive(Debug, Clone, Deserialize)]

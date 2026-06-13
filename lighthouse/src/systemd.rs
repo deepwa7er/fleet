@@ -167,6 +167,25 @@ pub async fn control(unit: &str, action: ServiceAction) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A lightweight state probe for the alert watcher: the unit's `ActiveState`
+/// and how many times systemd has restarted it (`NRestarts` — climbs while a
+/// unit crash-loops). Needs no privilege, like the other `systemctl show` reads.
+pub async fn alert_snapshot(unit: &str) -> anyhow::Result<(String, u64)> {
+    let output = Command::new("systemctl")
+        .args(["show", unit, "--property=ActiveState,NRestarts", "--no-pager"])
+        .output()
+        .await
+        .context("running systemctl show for alerting")?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let props = parse_properties(&text);
+    let get = |key: &str| props.iter().find(|(k, _)| *k == key).map(|(_, v)| *v);
+
+    let active_state = get("ActiveState").unwrap_or("unknown").to_owned();
+    let n_restarts = get("NRestarts").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+    Ok((active_state, n_restarts))
+}
+
 /// Fetch the most recent `lines` log entries for a unit.
 pub async fn recent_logs(unit: &str, lines: u32) -> anyhow::Result<Vec<LogEntry>> {
     let output = Command::new("journalctl")

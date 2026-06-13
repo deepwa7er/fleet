@@ -76,6 +76,29 @@ argument vectors (never a shell), so unit names cannot inject anything.
 - `POST /api/services/{unit}/control/{action}` — `action` is `start`, `stop`, or
   `restart`. Returns the unit's post-action status.
 
+## Alerting
+
+The dashboard is passive — you have to look at it. To be told when something
+breaks, add an `[alerts]` section:
+
+```toml
+[alerts]
+notify_url = "https://ntfy.sh/your-secret-topic"
+interval_secs = 30
+```
+
+A background watcher then polls each monitored service and POSTs a notification
+when one **enters the failed state** or **starts crash-looping** (its restart
+count jumps), and once more when it **recovers** to a stable running state. It
+alerts on transitions only and seeds silently on startup, so a Lighthouse
+restart won't replay alerts and a crash loop notifies once, not every poll.
+
+Notifications are sent by shelling out to `curl` (no HTTP-client dependency),
+formatted for [ntfy](https://ntfy.sh): the body is the message and a `Title`
+header names the service. Point `notify_url` at an ntfy topic your phone is
+subscribed to (or any endpoint that accepts a POST). Omit the section to
+disable alerting entirely.
+
 ## Service control & privilege model
 
 Start/stop/restart go through `systemctl`, which talks to systemd over D-Bus; for

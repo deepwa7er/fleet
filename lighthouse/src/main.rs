@@ -1,3 +1,4 @@
+mod alerts;
 mod api;
 mod config;
 mod systemd;
@@ -44,6 +45,11 @@ async fn main() -> anyhow::Result<()> {
     // other non-API path falls back to index.html so the app can route.
     let serve_dir = ServeDir::new(&config.static_dir)
         .fallback(ServeFile::new(config.static_dir.join("index.html")));
+
+    // Start the alert watcher in the background (it no-ops if no [alerts] config).
+    if config.alerts.is_some() {
+        tokio::spawn(alerts::run(config.clone()));
+    }
 
     let state = Arc::new(AppState { config });
 

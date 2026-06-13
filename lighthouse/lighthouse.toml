@@ -25,3 +25,12 @@ target = "lighthouse.target"
 #   [[services]]
 #   unit = "nginx.service"   # pinned even though it's not in the target
 #   name = "Web (nginx)"     # custom label; omit `name` to use the default
+
+# Optional alerting. When present, a background watcher polls each monitored
+# service and POSTs a notification (e.g. to an ntfy topic your phone is
+# subscribed to) when one enters the failed state or starts crash-looping, and
+# once more when it recovers. Omit this section to disable alerting.
+#
+#   [alerts]
+#   notify_url = "https://ntfy.sh/your-secret-topic"
+#   interval_secs = 30   # how often to poll (optional; default 30)
