@@ -60,6 +60,11 @@ Defined in the `[commands]` table of the config:
 - A plain URL is a static shortcut: `b mail` → `https://mail.google.com`.
 - A URL containing `{query}` is parameterized: `b gh axum` substitutes the
   percent-encoded argument → `https://github.com/search?q=axum`.
+- A URL with positional placeholders `{1}`, `{2}`, … substitutes each
+  whitespace-separated argument independently, missing ones becoming empty.
+  E.g. `svc = "https://dash/services/{1}?action={2}"` turns `b svc nginx restart`
+  into `https://dash/services/nginx?action=restart`, and `b svc nginx` into
+  `https://dash/services/nginx?action=`.
 
 Command URLs must be absolute (`scheme://…`); a relative value would be
 resolved against ferry's own origin instead of sending the browser onward, so

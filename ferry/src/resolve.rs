@@ -15,8 +15,9 @@ pub enum Resolution {
 /// The first whitespace-separated word names a command; the rest is its
 /// argument. Rules, in order:
 /// - empty input, or the bare word `list` (unless shadowed by config): the list page
-/// - command whose template contains `{query}`: substitute the (encoded) argument
-/// - command without `{query}` and no argument: redirect to it directly
+/// - parameterized command (template contains `{query}` or `{1}`..`{9}`):
+///   substitute the (encoded) argument(s)
+/// - command with no placeholders and no argument: redirect to it directly
 /// - anything else (unknown command, or argument given to a command that
 ///   takes none): treat the whole input as a fallback search
 pub fn resolve(config: &Config, input: &str) -> Resolution {
@@ -31,7 +32,7 @@ pub fn resolve(config: &Config, input: &str) -> Resolution {
     };
 
     if let Some(template) = config.commands.get(name) {
-        if template.contains(QUERY_PLACEHOLDER) {
+        if is_parameterized(template) {
             return Resolution::Redirect(fill(template, args));
         }
         if args.is_empty() {
@@ -47,9 +48,28 @@ pub fn resolve(config: &Config, input: &str) -> Resolution {
     Resolution::Redirect(fill(&config.fallback, input))
 }
 
-fn fill(template: &str, query: &str) -> String {
-    let encoded = utf8_percent_encode(query, NON_ALPHANUMERIC).to_string();
-    template.replace(QUERY_PLACEHOLDER, &encoded)
+/// Highest positional placeholder supported: `{1}`..`{9}`.
+const MAX_POSITIONAL: usize = 9;
+
+/// Whether a template has any substitution placeholder — `{query}` (the whole
+/// argument string) or a positional `{1}`..`{9}` (one whitespace-separated arg).
+fn is_parameterized(template: &str) -> bool {
+    template.contains(QUERY_PLACEHOLDER)
+        || (1..=MAX_POSITIONAL).any(|i| template.contains(&format!("{{{i}}}")))
+}
+
+/// Substitute placeholders with percent-encoded arguments. `{query}` becomes
+/// the whole argument string; `{N}` becomes the Nth whitespace-separated
+/// argument, or empty if there are fewer than N.
+fn fill(template: &str, args: &str) -> String {
+    let encode = |value: &str| utf8_percent_encode(value, NON_ALPHANUMERIC).to_string();
+    let mut result = template.replace(QUERY_PLACEHOLDER, &encode(args));
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    for i in 1..=MAX_POSITIONAL {
+        let value = parts.get(i - 1).map(|part| encode(part)).unwrap_or_default();
+        result = result.replace(&format!("{{{i}}}"), &value);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -64,6 +84,7 @@ mod tests {
             mail = "https://mail.example/"
             gh = "https://github.com/search?q={query}"
             list = "https://lists.example/"
+            svc = "https://dash.example/services/{1}?action={2}"
             "#,
         )
         .unwrap()
@@ -110,6 +131,32 @@ mod tests {
     #[test]
     fn empty_input_shows_list_page() {
         assert_eq!(resolve(&config(), "  "), Resolution::ListPage);
+    }
+
+    #[test]
+    fn positional_args_substituted_independently() {
+        assert_eq!(
+            resolve(&config(), "svc navidrome restart"),
+            redirect("https://dash.example/services/navidrome?action=restart"),
+        );
+    }
+
+    #[test]
+    fn missing_positional_arg_is_empty() {
+        // `svc navidrome` with no action → `{2}` resolves to empty.
+        assert_eq!(
+            resolve(&config(), "svc navidrome"),
+            redirect("https://dash.example/services/navidrome?action="),
+        );
+    }
+
+    #[test]
+    fn positional_args_are_encoded() {
+        assert_eq!(
+            resolve(&config(), "svc a/b c d"),
+            // only {1} and {2} are used; the third arg is ignored
+            redirect("https://dash.example/services/a%2Fb?action=c"),
+        );
     }
 
     #[test]
