@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { LogEntry, Source } from "../types.ts";
+import type { LogEntry } from "../types.ts";
 import { fetchLogs, logStreamUrl } from "../api.ts";
 import { cn, formatTimestamp } from "../lib/utils.ts";
 
@@ -15,23 +15,22 @@ function priorityColor(priority: number): string {
 }
 
 interface Props {
-  source: Source;
-  id: string;
+  unit: string;
 }
 
-export function LogViewer({ source, id }: Props) {
+export function LogViewer({ unit }: Props) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   // Live tailing is on by default; the user can uncheck it to freeze the view.
   const [live, setLive] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Load recent logs whenever the selected service changes.
+  // Load recent logs whenever the selected unit changes.
   useEffect(() => {
     let cancelled = false;
     setLogs([]);
     setError(null);
-    fetchLogs(source, id).then(
+    fetchLogs(unit).then(
       (entries) => {
         if (!cancelled) setLogs(entries);
       },
@@ -42,13 +41,13 @@ export function LogViewer({ source, id }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [source, id]);
+  }, [unit]);
 
-  // Open the SSE stream while "Live" is on; close it on toggle off / change.
+  // Open the SSE stream while "Live" is on; close it on toggle off / unit change.
   useEffect(() => {
     if (!live) return;
-    const stream = new EventSource(logStreamUrl(source, id));
-    stream.onmessage = (event) => {
+    const source = new EventSource(logStreamUrl(unit));
+    source.onmessage = (event) => {
       const entry = JSON.parse(event.data) as LogEntry;
       setLogs((prev) => {
         const next = [...prev, entry];
@@ -57,9 +56,9 @@ export function LogViewer({ source, id }: Props) {
           : next;
       });
     };
-    stream.onerror = () => setError("log stream disconnected");
-    return () => stream.close();
-  }, [live, source, id]);
+    source.onerror = () => setError("log stream disconnected");
+    return () => source.close();
+  }, [live, unit]);
 
   // Keep the newest line in view.
   useEffect(() => {

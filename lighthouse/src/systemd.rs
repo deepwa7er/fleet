@@ -9,12 +9,11 @@
 use std::process::Stdio;
 
 use anyhow::{Context, bail};
+use serde::Serialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio_stream::Stream;
 use tokio_stream::wrappers::ReceiverStream;
-
-use crate::model::{LogEntry, ServiceAction, ServiceStatus, Source};
 
 /// systemd reports an unknown/unlimited memory figure as `u64::MAX`.
 const MEMORY_UNSET: u64 = u64::MAX;
@@ -25,6 +24,58 @@ const STATUS_PROPERTIES: &str =
 
 /// journald fields requested for log queries — keeps the payload small.
 const LOG_FIELDS: &str = "__REALTIME_TIMESTAMP,PRIORITY,MESSAGE";
+
+#[derive(Debug, Serialize)]
+pub struct ServiceStatus {
+    pub unit: String,
+    pub name: String,
+    /// `active`, `inactive`, `failed`, `activating`, … (systemd `ActiveState`).
+    pub active_state: String,
+    /// `running`, `dead`, `exited`, … (systemd `SubState`).
+    pub sub_state: String,
+    pub description: String,
+    /// Human-readable "active since" timestamp, or `None` if not running.
+    pub since: Option<String>,
+    pub memory_bytes: Option<u64>,
+    pub pid: Option<u32>,
+}
+
+/// A lifecycle action that may be performed on a service. The set is
+/// deliberately small — these are the only verbs the polkit grant permits.
+#[derive(Debug, Clone, Copy)]
+pub enum ServiceAction {
+    Start,
+    Stop,
+    Restart,
+}
+
+impl ServiceAction {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "start" => Some(Self::Start),
+            "stop" => Some(Self::Stop),
+            "restart" => Some(Self::Restart),
+            _ => None,
+        }
+    }
+
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Stop => "stop",
+            Self::Restart => "restart",
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct LogEntry {
+    /// Wall-clock time in microseconds since the Unix epoch.
+    pub timestamp_us: u64,
+    /// syslog priority 0 (emerg) – 7 (debug).
+    pub priority: u8,
+    pub message: String,
+}
 
 /// Discover the `.service` units that are members (`Wants`) of `target`. A
 /// service is enrolled in the dashboard by becoming a dependency of the target
@@ -84,8 +135,7 @@ pub async fn status(unit: &str, name: &str) -> anyhow::Result<ServiceStatus> {
         .map(str::to_owned);
 
     Ok(ServiceStatus {
-        source: Source::Systemd,
-        id: unit.to_owned(),
+        unit: unit.to_owned(),
         name: name.to_owned(),
         active_state: get("ActiveState").unwrap_or("unknown").to_owned(),
         sub_state: get("SubState").unwrap_or("unknown").to_owned(),
