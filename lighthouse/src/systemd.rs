@@ -40,6 +40,34 @@ pub struct ServiceStatus {
     pub pid: Option<u32>,
 }
 
+/// A lifecycle action that may be performed on a service. The set is
+/// deliberately small — these are the only verbs the polkit grant permits.
+#[derive(Debug, Clone, Copy)]
+pub enum ServiceAction {
+    Start,
+    Stop,
+    Restart,
+}
+
+impl ServiceAction {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "start" => Some(Self::Start),
+            "stop" => Some(Self::Stop),
+            "restart" => Some(Self::Restart),
+            _ => None,
+        }
+    }
+
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Stop => "stop",
+            Self::Restart => "restart",
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct LogEntry {
     /// Wall-clock time in microseconds since the Unix epoch.
@@ -88,6 +116,27 @@ pub async fn status(unit: &str, name: &str) -> anyhow::Result<ServiceStatus> {
         memory_bytes,
         pid,
     })
+}
+
+/// Start, stop, or restart a unit.
+///
+/// `systemctl` talks to systemd over D-Bus; for a non-root caller the action is
+/// authorized by polkit. The deploy-installed polkit rule grants the
+/// `lighthouse` user exactly these verbs on exactly the configured units, so no
+/// root, sudo, or setuid is involved (it works under `NoNewPrivileges=true`).
+pub async fn control(unit: &str, action: ServiceAction) -> anyhow::Result<()> {
+    let verb = action.verb();
+    let output = Command::new("systemctl")
+        .args([verb, unit])
+        .output()
+        .await
+        .with_context(|| format!("running systemctl {verb}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("systemctl {verb} {unit} failed: {}", stderr.trim());
+    }
+    Ok(())
 }
 
 /// Fetch the most recent `lines` log entries for a unit.

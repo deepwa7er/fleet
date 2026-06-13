@@ -58,6 +58,35 @@ pub async fn get_logs(
     }
 }
 
+/// `POST /api/services/{unit}/control/{action}` — start, stop, or restart a
+/// service. Returns the unit's status after the action completes so the UI can
+/// update immediately.
+pub async fn control_service(
+    State(state): State<Arc<AppState>>,
+    Path((unit, action)): Path<(String, String)>,
+) -> Result<Json<ServiceStatus>, StatusCode> {
+    let Some(svc) = state.config.find_unit(&unit) else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    let unit = svc.unit.clone();
+    let name = svc.name.clone();
+
+    let action = systemd::ServiceAction::parse(&action).ok_or(StatusCode::BAD_REQUEST)?;
+
+    if let Err(err) = systemd::control(&unit, action).await {
+        eprintln!("failed to {action:?} {unit}: {err:#}");
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    match systemd::status(&unit, &name).await {
+        Ok(status) => Ok(Json(status)),
+        Err(err) => {
+            eprintln!("failed to read status for {unit} after {action:?}: {err:#}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
 /// `GET /api/services/{unit}/logs/stream` — live log tail over Server-Sent Events.
 pub async fn stream_logs(
     State(state): State<Arc<AppState>>,

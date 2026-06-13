@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use axum::Router;
-use axum::routing::get;
+use axum::routing::{get, post};
 use clap::Parser;
 use tower_http::services::ServeDir;
 
@@ -49,6 +49,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/services", get(api::list_services))
         .route("/api/services/{unit}/logs", get(api::get_logs))
         .route("/api/services/{unit}/logs/stream", get(api::stream_logs))
+        .route(
+            "/api/services/{unit}/control/{action}",
+            post(api::control_service),
+        )
         .fallback_service(serve_dir)
         .with_state(state);
 

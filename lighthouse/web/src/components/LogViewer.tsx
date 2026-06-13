@@ -16,10 +16,9 @@ function priorityColor(priority: number): string {
 
 interface Props {
   unit: string;
-  name: string;
 }
 
-export function LogViewer({ unit, name }: Props) {
+export function LogViewer({ unit }: Props) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [live, setLive] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +67,9 @@ export function LogViewer({ unit, name }: Props) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-        <h2 className="font-medium text-slate-100">{name} — logs</h2>
+        <h3 className="text-sm font-medium tracking-wide text-slate-400 uppercase">
+          Logs
+        </h3>
         <label className="flex items-center gap-2 text-sm text-slate-300">
           <input
             type="checkbox"

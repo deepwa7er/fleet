@@ -52,6 +52,25 @@ to add or remove services; no rebuild needed.
 - `GET /api/services` — status of every configured service.
 - `GET /api/services/{unit}/logs?lines=N` — most recent N log lines (default 200).
 - `GET /api/services/{unit}/logs/stream` — live tail via Server-Sent Events.
+- `POST /api/services/{unit}/control/{action}` — `action` is `start`, `stop`, or
+  `restart`. Returns the unit's post-action status.
+
+## Service control & privilege model
+
+Start/stop/restart go through `systemctl`, which talks to systemd over D-Bus; for
+a non-root caller the action is authorized by **polkit**. `deploy.sh` installs
+`/etc/polkit-1/rules.d/50-lighthouse.rules` granting the `lighthouse` user exactly
+the `start`/`stop`/`restart` verbs on exactly the configured units — nothing else.
+
+This keeps the service unprivileged: no root, no sudo, no setuid, so it remains
+compatible with the unit's `NoNewPrivileges=true` hardening. The polkit rule is a
+second enforcement layer behind the config allowlist (the API rejects unknown
+units with 404 before ever calling `systemctl`).
+
+The polkit rule is regenerated from the config on every deploy. So: adding a
+service to **view** only needs a config edit + `systemctl restart lighthouse`;
+adding one you can also **control** means re-running `deploy/deploy.sh` so the
+polkit grant picks it up.
 
 ## Deploy
 
