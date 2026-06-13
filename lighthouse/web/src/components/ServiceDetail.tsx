@@ -21,7 +21,13 @@ export function ServiceDetail({ service, onChanged }: Props) {
   const [pending, setPending] = useState<ServiceAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const color = statusColor(service.active_state);
-  const isActive = service.active_state === "active";
+  // A crash-looping service is rarely caught in "active" — it cycles through
+  // activating / auto-restart / failed. `systemctl stop` is exactly what breaks
+  // that loop, so Stop must stay available in those states; only a cleanly
+  // stopped service ("inactive") disables it. Start is the inverse: offered
+  // only when the service isn't running or trying to.
+  const state = service.active_state;
+  const stopped = state === "inactive" || state === "failed";
 
   async function run(action: ServiceAction) {
     // Stopping or restarting causes downtime — confirm to avoid a misclick.
@@ -45,8 +51,8 @@ export function ServiceDetail({ service, onChanged }: Props) {
 
   const busy = pending !== null;
   const buttons: { action: ServiceAction; disabled: boolean }[] = [
-    { action: "start", disabled: busy || isActive },
-    { action: "stop", disabled: busy || !isActive },
+    { action: "start", disabled: busy || !stopped },
+    { action: "stop", disabled: busy || state === "inactive" },
     { action: "restart", disabled: busy },
   ];
 
