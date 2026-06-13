@@ -10,7 +10,7 @@ use anyhow::Context;
 use axum::Router;
 use axum::routing::{get, post};
 use clap::Parser;
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 
 use crate::config::Config;
 
@@ -38,10 +38,12 @@ async fn main() -> anyhow::Result<()> {
     // listen address, port, and static directory.
     let config = Config::load_or_create(&cli.config)?;
     let addr = SocketAddr::new(config.bind, config.port);
-    // The frontend is a single page driven by internal state (no client-side
-    // routing), so ServeDir alone is correct: `/` resolves to index.html,
-    // `/assets/*` to the built bundles, and anything else is a genuine 404.
-    let serve_dir = ServeDir::new(&config.static_dir);
+    // The frontend does client-side path routing (e.g. /services/<unit>), so a
+    // direct navigation or refresh on such a path must return the SPA shell
+    // rather than 404. `/` and real asset paths are served as files; every
+    // other non-API path falls back to index.html so the app can route.
+    let serve_dir = ServeDir::new(&config.static_dir)
+        .fallback(ServeFile::new(config.static_dir.join("index.html")));
 
     let state = Arc::new(AppState { config });
 

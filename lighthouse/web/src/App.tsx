@@ -7,6 +7,30 @@ import { ServiceDetail } from "./components/ServiceDetail.tsx";
 
 const POLL_INTERVAL_MS = 5_000;
 
+// Client-side routing on `/services/<unit>`. The unit in the path may be the
+// full unit name or its `.service`-stripped short form (what you'd type into
+// ferry, e.g. `lh ferry`); both resolve to the same service.
+
+/** The unit slug from the current path, or null when not on a service route. */
+function unitFromPath(): string | null {
+  const match = window.location.pathname.match(/^\/services\/(.+)$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/** Resolve a path slug to a real unit, matching the full or short name. */
+function matchUnit(services: ServiceStatus[], slug: string | null): string | null {
+  if (!slug) return null;
+  const found = services.find(
+    (s) => s.unit === slug || s.unit.replace(/\.service$/, "") === slug,
+  );
+  return found ? found.unit : null;
+}
+
+/** The short, URL-friendly form of a unit name. */
+function slugFor(unit: string): string {
+  return unit.replace(/\.service$/, "");
+}
+
 export function App() {
   const [services, setServices] = useState<ServiceStatus[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -21,6 +45,16 @@ export function App() {
     }
   }, []);
 
+  // Select a service and reflect it in the URL so it's deep-linkable and
+  // back/forward works.
+  const select = useCallback((unit: string) => {
+    setSelected(unit);
+    const path = `/services/${encodeURIComponent(slugFor(unit))}`;
+    if (window.location.pathname !== path) {
+      history.pushState(null, "", path);
+    }
+  }, []);
+
   // Poll service status on an interval.
   useEffect(() => {
     void refresh();
@@ -28,12 +62,22 @@ export function App() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  // Default the selection to the first service once they load.
+  // Once services load, select the one named in the URL (if any), else the
+  // first. Runs only while nothing is selected yet.
   useEffect(() => {
     if (selected === null && services.length > 0) {
-      setSelected(services[0].unit);
+      setSelected(matchUnit(services, unitFromPath()) ?? services[0].unit);
     }
   }, [services, selected]);
+
+  // Follow browser back/forward between service routes.
+  useEffect(() => {
+    function onPopState() {
+      setSelected(matchUnit(services, unitFromPath()) ?? services[0]?.unit ?? null);
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [services]);
 
   const selectedService = services.find((s) => s.unit === selected) ?? null;
 
@@ -55,7 +99,7 @@ export function App() {
               key={service.unit}
               service={service}
               selected={service.unit === selected}
-              onSelect={() => setSelected(service.unit)}
+              onSelect={() => select(service.unit)}
             />
           ))}
         </aside>
