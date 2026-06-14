@@ -38,13 +38,26 @@ pub struct Build {
     pub cmd: String,
 }
 
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ArtifactKind {
+    /// A single file (e.g. a binary), shipped with scp.
+    #[default]
+    File,
+    /// A directory tree (e.g. built web assets), shipped with rsync --delete.
+    Dir,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct Artifact {
     /// Local path produced by the build. `{workdir}` is expanded.
     pub src: String,
     /// Absolute remote path. Installed via an atomic rename, with the previous
-    /// file backed up and restored if the deploy fails its health check.
+    /// file/dir backed up and restored if the deploy fails its health check.
     pub dest: String,
+    #[serde(default)]
+    pub kind: ArtifactKind,
+    /// File mode (ignored for `dir` artifacts, which keep their source perms).
     #[serde(default = "default_mode")]
     pub mode: String,
 }

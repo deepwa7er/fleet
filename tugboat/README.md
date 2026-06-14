@@ -43,10 +43,17 @@ host = "deepwa7er"        # ssh alias; override with --host or TUGBOAT_HOST
 # {workdir} expands to a fresh temp dir for build output.
 cmd = "cargo build --release --target x86_64-unknown-linux-musl"
 
-[[artifacts]]             # one or more files to install
+[[artifacts]]             # one or more files/dirs to install
 src  = "target/x86_64-unknown-linux-musl/release/ferry"  # {workdir} expanded
 dest = "/usr/local/bin/ferry"                            # absolute remote path
-mode = "0755"             # optional, default 0755
+kind = "file"             # "file" (default, scp) or "dir" (rsync --delete)
+mode = "0755"             # optional, default 0755 (ignored for dirs)
+
+# A directory artifact — e.g. built web assets (lighthouse):
+# [[artifacts]]
+# kind = "dir"
+# src  = "web/dist"
+# dest = "/opt/lighthouse/web"
 
 [health]                  # optional; omit to use `systemctl is-active {name}`
 url = "http://127.0.0.1:7777/commands"   # curled on the host loopback
@@ -63,24 +70,27 @@ enroll = true             # systemctl add-wants lighthouse.target {name}.service
 ### How install + rollback work
 
 Each artifact is shipped to `<dest>.tug-new` next to its destination (same
-filesystem). On the host, in one transaction: back up the live file to
-`<dest>.tug-bak`, `mv` the new file over it (an atomic rename — safe even though
-a running ELF can't be written in place), restart the unit, then health-check.
-If the check never passes, every artifact is restored from its backup and the
-unit restarted on the old binary; tugboat exits non-zero.
+filesystem) — files via scp, dirs via `rsync --delete` (perms preserved, but
+not the local uid/gid). On the host, in one transaction: move the live file/dir
+aside to `<dest>.tug-bak`, rename the new one into place (atomic — safe even
+though a running ELF can't be written in place), restart the unit, then
+health-check. If the check never passes, every artifact is restored from its
+backup and the unit restarted on the old version; tugboat exits non-zero.
 
-## Scope and limits (v0.1)
+## Scope and limits
 
-Built for the compiled single-/multi-binary services (ferry, tidepool, …).
-Deliberately **not** yet handled:
+Built for services that **build locally** and ship a binary (± an asset tree).
+The whole fleet cross-compiles to a static musl binary on the dev machine
+(`x86_64-unknown-linux-musl`), so nothing is built on the VPS. Adopters: ferry,
+tidepool (Go), harbor, lighthouse.
 
-- **Build-on-VPS** (harbor, lighthouse build Rust on the box) — `build.cmd`
-  runs locally only.
-- **Asset trees** (lighthouse ships a `web/dist`) — artifacts are individual
-  files, not rsync'd directories.
-- **Unit / config installation** — tugboat swaps binaries and restarts; it does
-  not install systemd units or `/etc` config. Those stay in each service's
-  one-time setup.
+Deliberately **not** handled:
+
+- **Build-on-VPS** — `build.cmd` runs locally only. Cross-compiling instead
+  (the ferry model) removed the need; no service requires it.
+- **Unit / config / polkit installation** — tugboat swaps binaries/assets and
+  restarts; it does not install systemd units, `/etc` config, or polkit grants.
+  Those are each service's `provision.sh` / one-time setup, run on infra changes.
 - **Ruby/Python/Docker services** are out of scope.
 
 ### The lighthouse enrollment caveat

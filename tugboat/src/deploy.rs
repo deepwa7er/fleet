@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
-use crate::manifest::{Health, Manifest, Verify};
+use crate::manifest::{ArtifactKind, Health, Manifest, Verify};
 
 /// A temp directory that is removed when this guard drops.
 struct WorkDir(PathBuf);
@@ -56,18 +56,34 @@ pub fn run(
         run_local(&build_cmd, project_dir).context("build failed")?;
     }
 
-    // 2. Confirm every artifact exists locally before touching the host.
-    for (src, _) in &artifacts {
-        if !src.exists() {
-            bail!("artifact not found after build: {}", src.display());
+    // 2. Confirm every artifact exists locally, of the right kind, before
+    //    touching the host.
+    for (src, artifact) in &artifacts {
+        match artifact.kind {
+            ArtifactKind::File if !src.is_file() => {
+                bail!("file artifact not found after build: {}", src.display())
+            }
+            ArtifactKind::Dir if !src.is_dir() => {
+                bail!("dir artifact not found after build: {}", src.display())
+            }
+            _ => {}
         }
     }
 
     // 3. Ship each artifact next to its destination (same filesystem, so the
-    //    install step's rename is atomic).
+    //    install step's rename is atomic): files via scp, dirs via rsync.
     for (src, artifact) in &artifacts {
-        step("SHIP", &format!("{} → {}:{}", src.display(), host, artifact.dest));
-        scp(src, &format!("{host}:{}.tug-new", artifact.dest))?;
+        let staged = format!("{host}:{}.tug-new", artifact.dest);
+        match artifact.kind {
+            ArtifactKind::File => {
+                step("SHIP", &format!("{} → {}:{}", src.display(), host, artifact.dest));
+                scp(src, &staged)?;
+            }
+            ArtifactKind::Dir => {
+                step("SHIP DIR", &format!("{}/ → {}:{}", src.display(), host, artifact.dest));
+                rsync_dir(src, &staged)?;
+            }
+        }
     }
 
     // 4. Atomic install, restart, health-check, rollback-on-failure, enroll —
@@ -125,6 +141,25 @@ fn scp(local: &Path, remote: &str) -> Result<()> {
     Ok(())
 }
 
+/// Mirror a local directory's contents to a remote path (trailing slashes make
+/// rsync copy the contents into `remote`, and `--delete` removes stale files).
+///
+/// `--no-owner --no-group`: keep permissions/times but do NOT carry the local
+/// machine's uid/gid to the server — the files land owned by the remote SSH
+/// user, not whatever uid happens to match locally.
+fn rsync_dir(local: &Path, remote: &str) -> Result<()> {
+    let status = Command::new("rsync")
+        .args(["-az", "--no-owner", "--no-group", "--delete"])
+        .arg(format!("{}/", local.display()))
+        .arg(format!("{remote}/"))
+        .status()
+        .context("spawning rsync")?;
+    if !status.success() {
+        bail!("rsync failed: {}/ → {remote}/", local.display());
+    }
+    Ok(())
+}
+
 fn ssh_script(host: &str, script: &str) -> Result<()> {
     let mut child = Command::new("ssh")
         .arg(host)
@@ -166,22 +201,21 @@ fn shq(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// Shell-quote each item and join with spaces (for a bash array literal).
+fn join_quoted<'a>(items: impl Iterator<Item = &'a str>) -> String {
+    items.map(shq).collect::<Vec<_>>().join(" ")
+}
+
 /// Build the remote transaction script. Uses a token-replacement template so
 /// the bash (which is brace-heavy) stays readable.
 fn remote_script(manifest: &Manifest) -> String {
     let name = &manifest.name;
-    let dests = manifest
-        .artifacts
-        .iter()
-        .map(|a| shq(&a.dest))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let modes = manifest
-        .artifacts
-        .iter()
-        .map(|a| shq(&a.mode))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let dests = join_quoted(manifest.artifacts.iter().map(|a| a.dest.as_str()));
+    let modes = join_quoted(manifest.artifacts.iter().map(|a| a.mode.as_str()));
+    let kinds = join_quoted(manifest.artifacts.iter().map(|a| match a.kind {
+        ArtifactKind::File => "file",
+        ArtifactKind::Dir => "dir",
+    }));
 
     let (retries, interval_ms, healthcheck) = match &manifest.health {
         Some(Health { url: Some(url), retries, interval_ms }) => (
@@ -214,6 +248,7 @@ fn remote_script(manifest: &Manifest) -> String {
     TEMPLATE
         .replace("@DESTS@", &dests)
         .replace("@MODES@", &modes)
+        .replace("@KINDS@", &kinds)
         .replace("@NAME_Q@", &shq(name))
         .replace("@RETRIES@", &retries.to_string())
         .replace("@INTERVAL@", &interval_s)
@@ -231,13 +266,19 @@ sudo=""; [ "$(id -u)" -eq 0 ] || sudo="sudo"
 
 DESTS=( @DESTS@ )
 MODES=( @MODES@ )
+KINDS=( @KINDS@ )
 
-# Atomic install: back up the live file, then rename the new one over it (a
-# running ELF can't be written in place, but rename swaps the inode safely).
+# Atomic install: move the live file/dir aside to .tug-bak, then rename the new
+# one into place. rename swaps inodes safely even for a running ELF.
 for i in "${!DESTS[@]}"; do
-  d="${DESTS[$i]}"; mode="${MODES[$i]}"
-  $sudo chmod "$mode" "$d.tug-new"
-  if [ -e "$d" ]; then $sudo cp -a "$d" "$d.tug-bak"; fi
+  d="${DESTS[$i]}"; mode="${MODES[$i]}"; kind="${KINDS[$i]}"
+  if [ "$kind" = file ]; then
+    $sudo chmod "$mode" "$d.tug-new"
+    if [ -e "$d" ]; then $sudo cp -a "$d" "$d.tug-bak"; fi
+  else
+    $sudo rm -rf "$d.tug-bak"
+    if [ -e "$d" ]; then $sudo mv "$d" "$d.tug-bak"; fi
+  fi
   $sudo mv "$d.tug-new" "$d"
 done
 
@@ -252,15 +293,18 @@ done
 if [ -z "$healthy" ]; then
   echo "!! @NAME@ did not become healthy; rolling back" >&2
   for i in "${!DESTS[@]}"; do
-    d="${DESTS[$i]}"
-    if [ -e "$d.tug-bak" ]; then $sudo mv "$d.tug-bak" "$d"; fi
+    d="${DESTS[$i]}"; kind="${KINDS[$i]}"
+    if [ -e "$d.tug-bak" ]; then
+      [ "$kind" = dir ] && $sudo rm -rf "$d"
+      $sudo mv "$d.tug-bak" "$d"
+    fi
   done
   $sudo systemctl restart @NAME_Q@ || true
   $sudo systemctl --no-pager --lines=20 status @NAME_Q@ >&2 || true
   exit 1
 fi
 
-for i in "${!DESTS[@]}"; do $sudo rm -f "${DESTS[$i]}.tug-bak"; done
+for i in "${!DESTS[@]}"; do $sudo rm -rf "${DESTS[$i]}.tug-bak"; done
 echo "    @NAME@ is active and healthy"
 @ENROLL@
 "#;
@@ -275,7 +319,14 @@ fn print_plan(
     println!("    {build_cmd}");
     println!("  ship:");
     for (src, artifact) in artifacts {
-        println!("    {} → {} (mode {})", src.display(), artifact.dest, artifact.mode);
+        match artifact.kind {
+            ArtifactKind::File => {
+                println!("    {} → {} (file, mode {})", src.display(), artifact.dest, artifact.mode)
+            }
+            ArtifactKind::Dir => {
+                println!("    {}/ → {} (dir, rsync --delete)", src.display(), artifact.dest)
+            }
+        }
     }
     let health = match &manifest.health {
         Some(Health { url: Some(url), .. }) => format!("curl {url} (on host loopback)"),
