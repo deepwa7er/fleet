@@ -62,7 +62,15 @@ function entryRow(entry) {
   meta.className = "meta";
   meta.textContent = entry.phase || entry.status;
 
-  main.append(dot, name, meta);
+  main.append(dot, name);
+  if (entry.next_steps) {
+    const chip = document.createElement("span");
+    chip.className = "next-chip";
+    chip.textContent = "next";
+    chip.title = "has documented next steps";
+    main.append(chip);
+  }
+  main.append(meta);
   li.append(main);
 
   if (entry.summary) {
@@ -72,17 +80,17 @@ function entryRow(entry) {
     li.append(sum);
   }
 
-  // Live commit activity (truthful recency), when available.
-  if (entry.activity) {
+  // Latest commit (truthful recency), when available.
+  const latest = entry.recent && entry.recent[0];
+  if (latest) {
     const act = document.createElement("div");
     act.className = "row-act";
-    const when = relTime(entry.activity.date);
-    act.textContent = `↻ ${when} · ${entry.activity.sha} ${entry.activity.message}`;
-    act.title = entry.activity.message;
+    act.textContent = `↻ ${relTime(latest.date)} · ${latest.sha} ${latest.message}`;
+    act.title = latest.message;
     li.append(act);
   }
 
-  const open = () => openNote(entry.name, entry.repo);
+  const open = () => openNote(entry);
   li.addEventListener("click", open);
   li.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
@@ -147,26 +155,66 @@ function fillServices(services) {
 // ── note overlay ─────────────────────────────────────────────────────────────
 const overlay = document.getElementById("overlay");
 
-async function openNote(name, repo) {
+function section(title) {
+  const h = document.createElement("h4");
+  h.className = "sheet-section";
+  h.textContent = title;
+  return h;
+}
+
+async function openNote(entry) {
+  const name = entry.name;
   document.getElementById("sheet-title").textContent = name;
   const repoLink = document.getElementById("sheet-repo");
-  if (repo) {
-    repoLink.href = `https://github.com/${repo}`;
+  if (entry.repo) {
+    repoLink.href = `https://github.com/${entry.repo}`;
     repoLink.classList.remove("hidden");
   } else {
     repoLink.classList.add("hidden");
   }
+
   const body = document.getElementById("sheet-body");
-  body.textContent = "loading…";
+  body.replaceChildren();
   overlay.classList.remove("hidden");
 
+  // Next steps (from the note's ## Next section).
+  if (entry.next_steps) {
+    const box = document.createElement("div");
+    box.className = "markdown next-box";
+    box.innerHTML = entry.next_steps; // trusted: our own note content
+    body.append(section("Next steps"), box);
+  }
+
+  // Recent work (from git).
+  if (entry.recent && entry.recent.length) {
+    const ul = document.createElement("ul");
+    ul.className = "recent";
+    for (const c of entry.recent) {
+      const li = document.createElement("li");
+      const when = document.createElement("span");
+      when.className = "rc-when";
+      when.textContent = relTime(c.date);
+      const msg = document.createElement("span");
+      msg.className = "rc-msg";
+      msg.textContent = c.message;
+      li.append(when, msg);
+      ul.append(li);
+    }
+    body.append(section("Recent work"), ul);
+  }
+
+  // Full note.
+  const note = document.createElement("div");
+  note.className = "markdown";
+  note.textContent = "loading note…";
+  body.append(section("Note"), note);
   try {
     const res = await fetch(`${API}/api/note/${encodeURIComponent(name)}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const note = await res.json();
-    body.innerHTML = note.html; // trusted: our own secondbrain notes, rendered server-side
+    const data = await res.json();
+    note.innerHTML = data.html; // trusted: our own secondbrain notes, rendered server-side
   } catch (e) {
-    body.textContent = `couldn't load note (${e.message || e})`;
+    note.textContent = `couldn't load note (${e.message || e})`;
   }
 }
 
@@ -202,6 +250,8 @@ function showError(message) {
 }
 
 // ── data ─────────────────────────────────────────────────────────────────
+let lastState = null;
+
 async function load() {
   if (!API) {
     showError("no API configured");
@@ -211,6 +261,7 @@ async function load() {
     const res = await fetch(`${API}/api/state`, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const state = await res.json();
+    lastState = state;
     fill("fleet", state.projects);
     fill("areas", state.areas);
     fillServices(state.services);
@@ -224,13 +275,15 @@ async function load() {
 // Deep-link: #note=<name> opens that note on load / hash change.
 function openFromHash() {
   const m = location.hash.match(/^#note=(.+)$/);
-  if (m) openNote(decodeURIComponent(m[1]));
+  if (!m) return;
+  const name = decodeURIComponent(m[1]);
+  const all = lastState ? [...(lastState.projects || []), ...(lastState.areas || [])] : [];
+  openNote(all.find((e) => e.name === name) || { name });
 }
 window.addEventListener("hashchange", openFromHash);
 
 // ── boot ─────────────────────────────────────────────────────────────────
 tick();
 setInterval(tick, 1000 * 15);
-load();
+load().then(openFromHash);
 setInterval(load, 1000 * 60);
-openFromHash();

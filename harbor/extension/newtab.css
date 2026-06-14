@@ -127,6 +127,14 @@ body {
 .entry { cursor: pointer; border-radius: 8px; margin: 0 -8px; padding: 4px 8px; transition: background 100ms ease; }
 .entry:hover, .entry:focus-visible { background: rgba(255,255,255,0.05); outline: none; }
 
+/* "next" chip on cards with documented next steps */
+.next-chip {
+  font-size: 9.5px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase;
+  color: var(--accent); background: rgba(54,201,192,0.12);
+  border: 1px solid rgba(54,201,192,0.35); border-radius: 999px;
+  padding: 1px 7px; margin-left: 8px;
+}
+
 /* Live commit activity line */
 .row-act {
   margin: 3px 0 0 19px; font-size: 11px; line-height: 1.3;
@@ -173,6 +181,22 @@ body {
 }
 .sheet-close:hover { background: rgba(255,255,255,0.06); color: var(--ink); }
 .sheet-body { overflow-y: auto; padding: 20px 24px; }
+
+/* Detail sections (Next steps / Recent work / Note) */
+.sheet-section {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.2px;
+  color: var(--ink-dim); margin: 20px 0 10px;
+}
+.sheet-section:first-child { margin-top: 0; }
+.next-box {
+  background: rgba(54,201,192,0.06); border: 1px solid rgba(54,201,192,0.25);
+  border-radius: 10px; padding: 12px 16px;
+}
+.next-box p:last-child, .next-box ul:last-child { margin-bottom: 0; }
+.recent { list-style: none; display: flex; flex-direction: column; gap: 7px; font-size: 13px; }
+.recent li { display: flex; gap: 12px; }
+.rc-when { flex: none; width: 64px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.rc-msg { color: var(--ink-dim); }
 
 /* Rendered markdown */
 .markdown { color: var(--ink-dim); font-size: 14px; line-height: 1.6; }

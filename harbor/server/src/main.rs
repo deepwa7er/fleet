@@ -70,11 +70,14 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Cached commit activity with its fetch time, for TTL expiry.
+/// Cached recent-commit list with its fetch time, for TTL expiry.
 struct CachedActivity {
     fetched: Instant,
-    value: Option<Activity>,
+    value: Vec<Activity>,
 }
+
+/// How many recent commits to fetch per project.
+const RECENT_COMMITS: u32 = 5;
 
 /// Builds snapshots: git sync + frontmatter parse (blocking), then async
 /// enrichment — GitHub commit activity (TTL-cached) and lighthouse health.
@@ -114,7 +117,7 @@ impl Updater {
         .await
         .context("refresh task panicked")??;
 
-        self.attach_activity(&mut state.projects).await;
+        self.attach_recent(&mut state.projects).await;
 
         if let Some(url) = self.config.lighthouse_url.as_deref() {
             match lighthouse::services(&self.http, url).await {
@@ -126,9 +129,9 @@ impl Updater {
         Ok(state)
     }
 
-    /// Attach last-commit activity to each project that has a `repo`, fetching
-    /// from GitHub only for repos whose cached value has expired.
-    async fn attach_activity(&self, projects: &mut [Entry]) {
+    /// Attach recent commits to each project that has a `repo`, fetching from
+    /// GitHub only for repos whose cached value has expired.
+    async fn attach_recent(&self, projects: &mut [Entry]) {
         let ttl = Duration::from_secs(self.config.activity_ttl_secs);
         let token = self.config.github_token.clone();
 
@@ -137,7 +140,7 @@ impl Updater {
         repos.dedup();
 
         // Split into cache hits and repos that need a fetch.
-        let mut resolved: HashMap<String, Option<Activity>> = HashMap::new();
+        let mut resolved: HashMap<String, Vec<Activity>> = HashMap::new();
         let mut need: Vec<String> = Vec::new();
         {
             let cache = self.activity.lock().await;
@@ -155,8 +158,10 @@ impl Updater {
             let results = futures::future::join_all(need.into_iter().map(|repo| {
                 let token = token.clone();
                 async move {
-                    let activity = github::latest_commit(&self.http, token.as_deref(), &repo).await;
-                    (repo, activity)
+                    let commits =
+                        github::recent_commits(&self.http, token.as_deref(), &repo, RECENT_COMMITS)
+                            .await;
+                    (repo, commits)
                 }
             }))
             .await;
@@ -165,7 +170,7 @@ impl Updater {
             for (repo, result) in results {
                 let value = result.unwrap_or_else(|e| {
                     tracing::warn!(repo = %repo, error = %e, "activity fetch failed");
-                    None
+                    Vec::new()
                 });
                 cache.insert(
                     repo.clone(),
@@ -180,7 +185,7 @@ impl Updater {
 
         for project in projects.iter_mut() {
             if let Some(repo) = &project.repo {
-                project.activity = resolved.get(repo).cloned().flatten();
+                project.recent = resolved.get(repo).cloned().unwrap_or_default();
             }
         }
     }

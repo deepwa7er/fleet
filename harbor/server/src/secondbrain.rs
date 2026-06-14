@@ -28,9 +28,13 @@ pub struct Entry {
     pub phase: Option<String>,
     pub updated: String,
 
-    /// Live last-commit activity, attached after parsing (not from frontmatter).
+    /// Recent commits (newest first), attached after parsing (not frontmatter).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent: Vec<Activity>,
+
+    /// Rendered HTML of the note's `## Next` section, if present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub activity: Option<Activity>,
+    pub next_steps: Option<String>,
 }
 
 /// The full snapshot the API serves.
@@ -112,20 +116,65 @@ fn read_dir(dir: &Path, note_paths: &mut HashMap<String, PathBuf>) -> Vec<Entry>
 /// Render the markdown body (everything after the frontmatter) of a note file
 /// to HTML, for the note detail view.
 pub fn render_note(path: &Path) -> Result<String> {
-    use pulldown_cmark::{Options, Parser, html};
-
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading {}", path.display()))?;
-    let body = strip_frontmatter(&text);
+    Ok(render_markdown(strip_frontmatter(&text)))
+}
+
+/// Render a markdown string to HTML.
+fn render_markdown(md: &str) -> String {
+    use pulldown_cmark::{Options, Parser, html};
 
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
-    let parser = Parser::new_ext(body, options);
+    let parser = Parser::new_ext(md, options);
 
     let mut out = String::new();
     html::push_html(&mut out, parser);
-    Ok(out)
+    out
+}
+
+/// Extract the body of a `## Next` (or `## Next steps`) section from a note's
+/// markdown, rendered to HTML. Case-insensitive; runs until the next heading at
+/// the same or higher level. Returns `None` if there is no such section.
+fn next_steps_html(text: &str) -> Option<String> {
+    let body = strip_frontmatter(text);
+    let lines: Vec<&str> = body.lines().collect();
+
+    for (i, line) in lines.iter().enumerate() {
+        let Some((level, title)) = heading(line) else {
+            continue;
+        };
+        let title = title.trim().to_ascii_lowercase();
+        if title != "next" && title != "next steps" {
+            continue;
+        }
+        // Collect until the next heading at the same or higher level.
+        let mut end = i + 1;
+        while end < lines.len() {
+            if let Some((lvl, _)) = heading(lines[end]) {
+                if lvl <= level {
+                    break;
+                }
+            }
+            end += 1;
+        }
+        let chunk = lines[i + 1..end].join("\n");
+        let chunk = chunk.trim();
+        return (!chunk.is_empty()).then(|| render_markdown(chunk));
+    }
+    None
+}
+
+/// Parse a markdown ATX heading line into (level, title), if it is one.
+fn heading(line: &str) -> Option<(usize, &str)> {
+    let hashes = line.bytes().take_while(|b| *b == b'#').count();
+    if (1..=6).contains(&hashes) && line.as_bytes().get(hashes) == Some(&b' ') {
+        Some((hashes, line[hashes + 1..].trim()))
+    } else {
+        None
+    }
 }
 
 /// The markdown body after a leading frontmatter block (or the whole text if
@@ -153,8 +202,9 @@ fn parse_file(path: &Path) -> Result<Option<Entry>> {
     let Some(frontmatter) = extract_frontmatter(&text) else {
         return Ok(None);
     };
-    let entry: Entry = serde_yaml::from_str(frontmatter)
+    let mut entry: Entry = serde_yaml::from_str(frontmatter)
         .with_context(|| format!("parsing frontmatter of {}", path.display()))?;
+    entry.next_steps = next_steps_html(&text);
     Ok(Some(entry))
 }
 

@@ -28,17 +28,20 @@ struct GitActor {
     date: String,
 }
 
-/// Fetch the latest commit on the default branch of `repo` ("owner/name").
+/// Fetch the most recent `n` commits on the default branch of `repo`
+/// ("owner/name"), newest first.
 ///
-/// Returns `Ok(None)` when there's nothing to show — no commits, a private repo
-/// with no token, a rate-limit response, etc. Activity is best-effort: a missing
-/// signal should never blank the dashboard, so non-success is not an error.
-pub async fn latest_commit(
+/// Returns `Ok(vec![])` when there's nothing to show — no commits, a private
+/// repo with no token, a rate-limit response, etc. Activity is best-effort: a
+/// missing signal should never blank the dashboard, so non-success is not an
+/// error.
+pub async fn recent_commits(
     http: &reqwest::Client,
     token: Option<&str>,
     repo: &str,
-) -> Result<Option<Activity>> {
-    let url = format!("https://api.github.com/repos/{repo}/commits?per_page=1");
+    n: u32,
+) -> Result<Vec<Activity>> {
+    let url = format!("https://api.github.com/repos/{repo}/commits?per_page={n}");
     let mut req = http
         .get(&url)
         .header("User-Agent", "harbor")
@@ -51,17 +54,16 @@ pub async fn latest_commit(
     let resp = req.send().await.with_context(|| format!("GET {url}"))?;
     if !resp.status().is_success() {
         tracing::debug!(repo, status = %resp.status(), "no commit activity");
-        return Ok(None);
+        return Ok(Vec::new());
     }
 
     let commits: Vec<CommitResp> = resp.json().await.context("parsing commits")?;
-    let Some(commit) = commits.into_iter().next() else {
-        return Ok(None);
-    };
-
-    Ok(Some(Activity {
-        sha: commit.sha.chars().take(7).collect(),
-        date: commit.commit.committer.date,
-        message: commit.commit.message.lines().next().unwrap_or("").to_string(),
-    }))
+    Ok(commits
+        .into_iter()
+        .map(|c| Activity {
+            sha: c.sha.chars().take(7).collect(),
+            date: c.commit.committer.date,
+            message: c.commit.message.lines().next().unwrap_or("").to_string(),
+        })
+        .collect())
 }
