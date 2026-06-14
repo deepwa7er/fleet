@@ -63,7 +63,7 @@ body {
 /* Grid of cards */
 .grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 18px;
   flex: 1;
 }
@@ -107,27 +107,6 @@ body {
 .dot.status-idea     { background: var(--warn);    box-shadow: 0 0 10px rgba(242,180,65,0.6); }
 .dot.status-learning { background: var(--learn); }
 .dot.status-archived { background: var(--ink-faint); }
-
-/* Quick launch */
-.links { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-.chip {
-  font-size: 13px; color: var(--ink); text-decoration: none;
-  padding: 7px 12px; border-radius: 999px;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid var(--panel-line);
-  transition: background 120ms ease, border-color 120ms ease;
-}
-.chip:hover { background: rgba(54,201,192,0.14); border-color: rgba(54,201,192,0.4); }
-
-.omni input {
-  width: 100%; padding: 11px 14px;
-  background: rgba(0,0,0,0.25);
-  border: 1px solid var(--panel-line);
-  border-radius: 10px;
-  color: var(--ink); font-size: 14px;
-}
-.omni input::placeholder { color: var(--ink-faint); }
-.omni input:focus { outline: none; border-color: rgba(54,201,192,0.5); }
 
 /* Waterline footer */
 .waterline {

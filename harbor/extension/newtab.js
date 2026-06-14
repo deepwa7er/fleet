@@ -107,9 +107,6 @@ async function load() {
   }
 }
 
-// The command box is inert until wired to ferry; just stop it reloading the tab.
-document.getElementById("omni").addEventListener("submit", (e) => e.preventDefault());
-
 // ── boot ─────────────────────────────────────────────────────────────────
 tick();
 setInterval(tick, 1000 * 15);

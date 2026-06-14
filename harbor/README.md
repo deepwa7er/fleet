@@ -5,7 +5,7 @@ A personal mission-control **Chrome new-tab page** — a live view into the
 `deepwa7er` VPS.
 
 Open a new tab and you see your **Fleet** (every project with its current
-status), your **Areas** (the VPS), and a quick-launch strip.
+status) and your **Areas** (the VPS).
 
 ## Components
 
@@ -65,11 +65,8 @@ computer's extension queries it.
 
 **v0.1.0 — deployed.** Running on deepwa7er (systemd `harbor.service`, bound to
 the tailnet IP on :8090), serving live project/area state from a GitHub checkout
-of secondbrain. Quick-launch chips are static; the `b …` box is inert pending
-ferry wiring.
+of secondbrain.
 
 ### Next
 
-- Deploy to the VPS (`server/deploy/`).
 - Live VPS service health by consuming lighthouse's `/api/services`.
-- Wire the `b …` box and chips to ferry.
