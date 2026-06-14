@@ -24,8 +24,8 @@ source_dir = "/srv/harbor/secondbrain"
 git_remote = "git@github.com:deepwa7er/secondbrain.git"
 branch = "main"
 
-# How often to pull + re-parse (seconds). Keep modest to be kind to GitHub.
-refresh_secs = 300
+# How often to pull + re-parse (seconds).
+refresh_secs = 60
 
 # Read-only, tailnet-bound service: "*" is fine. Set a specific extension
 # origin (chrome-extension://<id>) to lock it down.
