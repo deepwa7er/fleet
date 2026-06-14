@@ -23,6 +23,9 @@ rsync -az "$SCRIPT_DIR/harbor.service" "$HARBOR_SSH_HOST:/tmp/harbor.service.new
 ssh "$HARBOR_SSH_HOST" 'bash -s' <<'EOF'
 set -euo pipefail
 
+# Served at /extension by harbor-server; tugboat ships harbor.crx + updates.xml here.
+install -d -o harbor -g harbor -m 0755 /srv/harbor/dist
+
 mkdir -p /etc/harbor
 if [ ! -f /etc/harbor/harbor.toml ]; then
   install -m 0644 /tmp/harbor.toml.new /etc/harbor/harbor.toml

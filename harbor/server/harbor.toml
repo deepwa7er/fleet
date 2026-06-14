@@ -40,3 +40,8 @@ activity_ttl_secs = 600
 # Read-only, tailnet-bound service: "*" is fine. Set a specific extension
 # origin (chrome-extension://<id>) to lock it down.
 allow_origin = "*"
+
+# Self-hosted extension distribution: harbor serves harbor.crx + updates.xml from
+# this dir (relative to WorkingDirectory=/srv/harbor) at /extension, so tailnet
+# devices force-install + auto-update. tugboat ships the artifacts here.
+extension_dir = "dist"

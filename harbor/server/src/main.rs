@@ -22,6 +22,7 @@ use axum::http::Method;
 use axum::routing::get;
 use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
 
 use crate::config::Config;
 use crate::github::Activity;
@@ -54,6 +55,9 @@ async fn main() -> Result<()> {
         .route("/api/state", get(api::get_state))
         .route("/api/note/{name}", get(api::get_note))
         .route("/healthz", get(api::healthz))
+        // Self-hosted extension distribution: serves harbor.crx + updates.xml so
+        // tailnet devices force-install and auto-update over the tailnet.
+        .nest_service("/extension", ServeDir::new(&config.extension_dir))
         .layer(cors)
         .with_state(shared);
 

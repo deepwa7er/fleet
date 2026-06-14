@@ -56,6 +56,13 @@ pub struct Config {
     /// tailnet-bound service; set a specific origin to lock it down.
     #[serde(default = "default_allow_origin")]
     pub allow_origin: String,
+
+    /// Directory of self-hosted browser-extension artifacts (`harbor.crx` +
+    /// `updates.xml`), served at `/extension`. Relative to the working
+    /// directory (`/srv/harbor` on the VPS → `/srv/harbor/dist`). This is how
+    /// the harbor extension is distributed + auto-updated to tailnet devices.
+    #[serde(default = "default_extension_dir")]
+    pub extension_dir: PathBuf,
 }
 
 fn default_branch() -> String {
@@ -72,6 +79,10 @@ fn default_activity_ttl_secs() -> u64 {
 
 fn default_allow_origin() -> String {
     "*".to_string()
+}
+
+fn default_extension_dir() -> PathBuf {
+    PathBuf::from("dist")
 }
 
 impl Config {

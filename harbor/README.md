@@ -67,6 +67,35 @@ computer's extension queries it.
 5. Enroll in lighthouse so harbor monitors itself (tugboat also does this on
    every deploy): `systemctl add-wants lighthouse.target harbor.service`.
 
+## Installing the extension (self-hosted, auto-updating)
+
+harbor-server distributes its own extension over the tailnet: it serves a
+signed `harbor.crx` and an update manifest at `/extension`, and tailnet devices
+**force-install + auto-update** from them via a managed browser policy. No
+Chrome Web Store, no developer-mode nag.
+
+- **Signing key:** `~/.config/harbor/extension.pem` (outside the repo — it
+  *defines* the extension ID `mphgmoeghlcdljjpglbhhfpgmicoenlm`, so back it up;
+  losing it changes the ID). `extension/pack.sh` packs + signs the crx and
+  writes `build/updates.xml`; `tugboat` runs it on every deploy and ships both
+  to `/srv/harbor/dist`.
+- **Install on a device** (Chromium-family browser; example for Helium on
+  Fedora — adjust the dir for your browser, e.g. `/etc/opt/chrome` or
+  `/etc/brave`):
+  ```sh
+  sudo install -Dm644 extension/helium-policy.json \
+    /etc/helium/policies/managed/harbor.json
+  ```
+  Restart the browser, open `helium://policy` to confirm
+  `ExtensionInstallForcelist` loaded, then `helium://extensions` — harbor
+  installs itself and updates whenever you bump `version` + redeploy.
+- **To release an update:** bump `version` in `extension/manifest.json`, then
+  `tugboat` (from this repo). Devices pick it up on their next update poll.
+
+> Note: harbor is served over plain **HTTP** on the tailnet. If a browser
+> refuses to force-install an extension over HTTP, front `/extension` with
+> `tailscale serve --https` (as ferry does) and switch the URLs to `https`.
+
 ## Status
 
 **v0.1.0 — deployed.** Running on deepwa7er (systemd `harbor.service`, bound to
