@@ -15,6 +15,10 @@ cal = "https://calendar.google.com"
 # A shortcut can point anywhere, including a self-hosted or tailnet service:
 # home = "https://my-server.example.ts.net/"
 
+# driftword — pronounceable fake-word generator (tailnet service).
+drift = "http://deepwa7er.tailcfab97.ts.net:8091"
+words = "http://deepwa7er.tailcfab97.ts.net:8091"
+
 # Parameterized shortcuts: `b gh axum` searches GitHub for "axum".
 gh = "https://github.com/search?q={query}"
 yt = "https://www.youtube.com/results?search_query={query}"
