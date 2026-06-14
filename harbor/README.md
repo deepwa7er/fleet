@@ -79,22 +79,29 @@ Chrome Web Store, no developer-mode nag.
   losing it changes the ID). `extension/pack.sh` packs + signs the crx and
   writes `build/updates.xml`; `tugboat` runs it on every deploy and ships both
   to `/srv/harbor/dist`.
-- **Install on a device** (Chromium-family browser; example for Helium on
-  Fedora — adjust the dir for your browser, e.g. `/etc/opt/chrome` or
-  `/etc/brave`):
+- **Install on a device.** Drop `extension/helium-policy.json` into the
+  browser's managed-policy dir (root-owned), then fully restart the browser:
   ```sh
   sudo install -Dm644 extension/helium-policy.json \
-    /etc/helium/policies/managed/harbor.json
+    /etc/chromium/policies/managed/harbor.json   # see path note below
   ```
-  Restart the browser, open `helium://policy` to confirm
-  `ExtensionInstallForcelist` loaded, then `helium://extensions` — harbor
-  installs itself and updates whenever you bump `version` + redeploy.
+  Confirm at `chrome://policy` (`helium://policy`) that
+  `ExtensionInstallForcelist` is active, then `chrome://extensions` — harbor
+  installs itself (force-installed; "installed by your organization") and
+  updates whenever you bump `version` + redeploy.
 - **To release an update:** bump `version` in `extension/manifest.json`, then
   `tugboat` (from this repo). Devices pick it up on their next update poll.
 
-> Note: harbor is served over plain **HTTP** on the tailnet. If a browser
-> refuses to force-install an extension over HTTP, front `/extension` with
-> `tailscale serve --https` (as ferry does) and switch the URLs to `https`.
+> **Managed-policy dir** is per-browser and *not* always the brand name. Helium
+> (verified on `helium-bin` / Fedora) keeps upstream Chromium's compiled-in path
+> `/etc/chromium/policies/managed/` — *not* `/etc/helium` or
+> `/etc/net.imput.helium`. Chrome uses `/etc/opt/chrome/policies/managed/`,
+> Brave `/etc/brave/policies/managed/`. To find a fork's real path, grep its ELF:
+> `grep -aoE '/etc/[A-Za-z0-9_.+-]+/policies' <binary> | sort -u`.
+>
+> Plain **HTTP** over the tailnet works for force-install (verified on Helium
+> 148) — no HTTPS needed. If a stricter browser ever refuses, front `/extension`
+> with `tailscale serve --https` (as ferry does) and switch the URLs to `https`.
 
 ## Status
 
