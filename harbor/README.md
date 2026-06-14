@@ -49,17 +49,23 @@ computer's extension queries it.
    The script prints a public key — add it to the secondbrain repo on GitHub
    (**Settings → Deploy keys → Add**, leave *Allow write access* unchecked). This
    is what lets the VPS read the private repo.
-2. **Deploy the server** (builds the release on the VPS, installs the systemd
-   unit bound to the Tailscale IP on `:8090` — tailnet-only, no public exposure;
+2. **Provision the unit + config** (installs the systemd unit bound to the
+   Tailscale IP on `:8090` — tailnet-only, no public exposure — and the starter
+   config). One-time / on unit changes:
+   ```sh
+   server/deploy/provision.sh
+   ```
+3. **Ship the binary** with [tugboat](https://github.com/deepwa7er/tugboat)
+   (static musl cross-compile → atomic swap → restart → health-check → rollback;
    on first start it clones secondbrain via the deploy key):
    ```sh
-   server/deploy/deploy.sh
+   tugboat            # reads ./deploy.toml
    ```
-3. Point `extension/config.js` at `http://deepwa7er.tailcfab97.ts.net:8090` (or
+4. Point `extension/config.js` at `http://deepwa7er.tailcfab97.ts.net:8090` (or
    the IP `http://100.98.184.58:8090`) and reload the extension. Plain HTTP is
    fine — the tailnet encrypts transport.
-4. Enroll in lighthouse so harbor monitors itself:
-   `systemctl add-wants lighthouse.target harbor.service`.
+5. Enroll in lighthouse so harbor monitors itself (tugboat also does this on
+   every deploy): `systemctl add-wants lighthouse.target harbor.service`.
 
 ## Status
 

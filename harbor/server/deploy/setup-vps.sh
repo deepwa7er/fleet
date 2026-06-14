@@ -60,5 +60,6 @@ cat <<'EOF'
 Next:
   1. Add the deploy key printed above to the GitHub secondbrain repo
      (Settings -> Deploy keys; read-only).
-  2. Run: server/deploy/deploy.sh
+  2. Provision the unit + config:  server/deploy/provision.sh
+  3. Ship the binary with tugboat:  tugboat   (reads ./deploy.toml)
 EOF

@@ -1,0 +1,23 @@
+# tugboat deploy manifest — github.com/deepwa7er/tugboat
+#   deploy:  tugboat --manifest deploy.toml      (from this directory)
+#
+# Routine deploy (ship a new binary). One-time provisioning — the `harbor`
+# service user + read-only deploy key, and installing the systemd unit — is
+# server/deploy/setup-vps.sh and server/deploy/harbor.service (see README).
+name = "harbor"
+host = "deepwa7er"
+
+[build]
+# Static musl cross-compile of harbor-server (in ./server). reqwest+rustls pulls
+# in `ring`, which needs the target C compiler, not just the linker.
+cmd = "rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true; cd server && CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc AR_x86_64_unknown_linux_musl=x86_64-linux-musl-ar cargo build --release --target x86_64-unknown-linux-musl"
+
+[[artifacts]]
+src = "server/target/x86_64-unknown-linux-musl/release/harbor-server"
+dest = "/usr/local/bin/harbor-server"
+
+# harbor binds the tailnet IP (no loopback), so health is the unit's active
+# state. (default health = `systemctl is-active harbor`)
+
+[lighthouse]
+enroll = true
