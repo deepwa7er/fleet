@@ -32,9 +32,9 @@ pub struct Entry {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent: Vec<Activity>,
 
-    /// Rendered HTML of the note's `## Next` section, if present.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_steps: Option<String>,
+    /// Individual items from the note's `## Next` section (one per bullet).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub next_items: Vec<String>,
 }
 
 /// The full snapshot the API serves.
@@ -135,10 +135,11 @@ fn render_markdown(md: &str) -> String {
     out
 }
 
-/// Extract the body of a `## Next` (or `## Next steps`) section from a note's
-/// markdown, rendered to HTML. Case-insensitive; runs until the next heading at
-/// the same or higher level. Returns `None` if there is no such section.
-fn next_steps_html(text: &str) -> Option<String> {
+/// Extract the bullet items of a `## Next` (or `## Next steps`) section from a
+/// note's markdown. Case-insensitive heading; the section runs until the next
+/// heading at the same or higher level. Each top-level `-`/`*` bullet becomes
+/// one item (marker stripped). Returns an empty vec if there is no such section.
+fn next_items(text: &str) -> Vec<String> {
     let body = strip_frontmatter(text);
     let lines: Vec<&str> = body.lines().collect();
 
@@ -160,9 +161,28 @@ fn next_steps_html(text: &str) -> Option<String> {
             }
             end += 1;
         }
-        let chunk = lines[i + 1..end].join("\n");
-        let chunk = chunk.trim();
-        return (!chunk.is_empty()).then(|| render_markdown(chunk));
+        return lines[i + 1..end]
+            .iter()
+            .filter_map(|l| bullet_text(l))
+            .collect();
+    }
+    Vec::new()
+}
+
+/// If a line is a top-level markdown bullet (`- ` or `* `), return its text.
+fn bullet_text(line: &str) -> Option<String> {
+    let t = line.trim_start();
+    // Only top-level bullets (not indented sub-items).
+    if line.starts_with(' ') || line.starts_with('\t') {
+        return None;
+    }
+    for marker in ["- ", "* "] {
+        if let Some(rest) = t.strip_prefix(marker) {
+            let item = rest.trim();
+            if !item.is_empty() {
+                return Some(item.to_string());
+            }
+        }
     }
     None
 }
@@ -204,7 +224,7 @@ fn parse_file(path: &Path) -> Result<Option<Entry>> {
     };
     let mut entry: Entry = serde_yaml::from_str(frontmatter)
         .with_context(|| format!("parsing frontmatter of {}", path.display()))?;
-    entry.next_steps = next_steps_html(&text);
+    entry.next_items = next_items(&text);
     Ok(Some(entry))
 }
 

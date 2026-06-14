@@ -63,11 +63,11 @@ function entryRow(entry) {
   meta.textContent = entry.phase || entry.status;
 
   main.append(dot, name);
-  if (entry.next_steps) {
+  if (entry.next_items && entry.next_items.length) {
     const chip = document.createElement("span");
     chip.className = "next-chip";
-    chip.textContent = "next";
-    chip.title = "has documented next steps";
+    chip.textContent = `next ${entry.next_items.length}`;
+    chip.title = "documented next steps";
     main.append(chip);
   }
   main.append(meta);
@@ -110,6 +110,52 @@ function fill(listId, entries) {
     return;
   }
   for (const entry of entries) ul.append(entryRow(entry));
+}
+
+// ── aggregated "Next up" across all projects/areas ───────────────────────────
+const STATUS_RANK = { active: 0, ongoing: 1, shipped: 2, stable: 3, learning: 4, idea: 5, archived: 6 };
+
+function buildNextUp(state) {
+  const ul = document.getElementById("nextup");
+  const sec = document.getElementById("nextup-section");
+  ul.replaceChildren();
+
+  const entries = [...(state.projects || []), ...(state.areas || [])];
+  const rows = [];
+  for (const e of entries) {
+    for (const text of e.next_items || []) rows.push({ entry: e, text });
+  }
+  rows.sort((a, b) =>
+    (STATUS_RANK[a.entry.status] ?? 9) - (STATUS_RANK[b.entry.status] ?? 9) ||
+    a.entry.name.localeCompare(b.entry.name));
+
+  if (rows.length === 0) { sec.classList.add("hidden"); return; }
+  sec.classList.remove("hidden");
+
+  for (const { entry, text } of rows) {
+    const li = document.createElement("li");
+    li.tabIndex = 0;
+
+    const dot = document.createElement("span");
+    dot.className = `dot status-${entry.status}`;
+    dot.title = entry.status;
+
+    const txt = document.createElement("span");
+    txt.className = "todo-text";
+    txt.textContent = text;
+
+    const proj = document.createElement("span");
+    proj.className = "todo-proj";
+    proj.textContent = entry.name;
+
+    li.append(dot, txt, proj);
+    const open = () => openNote(entry);
+    li.addEventListener("click", open);
+    li.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    });
+    ul.append(li);
+  }
 }
 
 // ── services rendering ───────────────────────────────────────────────────────
@@ -178,10 +224,17 @@ async function openNote(entry) {
   overlay.classList.remove("hidden");
 
   // Next steps (from the note's ## Next section).
-  if (entry.next_steps) {
+  if (entry.next_items && entry.next_items.length) {
     const box = document.createElement("div");
-    box.className = "markdown next-box";
-    box.innerHTML = entry.next_steps; // trusted: our own note content
+    box.className = "next-box";
+    const ul = document.createElement("ul");
+    ul.className = "next-list";
+    for (const item of entry.next_items) {
+      const li = document.createElement("li");
+      li.textContent = item;
+      ul.append(li);
+    }
+    box.append(ul);
     body.append(section("Next steps"), box);
   }
 
@@ -237,6 +290,7 @@ function setStatus(text, kind) {
 }
 
 function showError(message) {
+  document.getElementById("nextup-section").classList.add("hidden");
   for (const id of ["fleet", "areas", "services"]) {
     const ul = document.getElementById(id);
     ul.removeAttribute("aria-busy");
@@ -262,6 +316,7 @@ async function load() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const state = await res.json();
     lastState = state;
+    buildNextUp(state);
     fill("fleet", state.projects);
     fill("areas", state.areas);
     fillServices(state.services);

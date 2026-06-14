@@ -127,6 +127,26 @@ body {
 .entry { cursor: pointer; border-radius: 8px; margin: 0 -8px; padding: 4px 8px; transition: background 100ms ease; }
 .entry:hover, .entry:focus-visible { background: rgba(255,255,255,0.05); outline: none; }
 
+/* Aggregated "Next up" section */
+.nextup-section { margin-bottom: 18px; }
+.nextup-list li {
+  display: flex; align-items: center; gap: 10px; font-size: 13.5px;
+  cursor: pointer; border-radius: 8px; margin: 0 -8px; padding: 5px 8px;
+  transition: background 100ms ease;
+}
+.nextup-list li:hover, .nextup-list li:focus-visible { background: rgba(255,255,255,0.05); outline: none; }
+.todo-text { flex: 1; color: var(--ink); }
+.todo-proj {
+  flex: none; font-size: 11px; color: var(--ink-faint);
+  padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,0.04);
+  border: 1px solid var(--panel-line);
+}
+
+/* Next-steps list in the detail overlay */
+.next-list { list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.next-list li { position: relative; padding-left: 18px; color: var(--ink); font-size: 13.5px; line-height: 1.5; }
+.next-list li::before { content: "▸"; position: absolute; left: 0; color: var(--accent); }
+
 /* "next" chip on cards with documented next steps */
 .next-chip {
   font-size: 9.5px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase;
