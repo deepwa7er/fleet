@@ -228,9 +228,16 @@ To tear it all down: `sudo tailscale serve --https=8443 off` and
 
 ### Redeploying
 
-Once the steps above are done, ship a new build with `./deploy.sh`. It rebuilds
-the static binary, uploads it, restarts the service, health-checks it on
-loopback, and rolls the binary back if the new one fails to come up. It leaves
-the config, systemd unit, and tailscale serve mapping alone. Override defaults
-via the environment (e.g. `FERRY_SSH_HOST`, `FERRY_REMOTE_BIN`, `FERRY_URL`) —
-see the top of the script.
+Once the steps above are done, ship a new build with
+[tugboat](https://github.com/deepwa7er/tugboat):
+
+```sh
+tugboat            # reads ./deploy.toml
+```
+
+It rebuilds the static musl binary, uploads it, swaps it in atomically,
+restarts the service, health-checks it on loopback, and rolls the binary back
+if the new one fails to come up — then re-asserts ferry's enrollment in
+`lighthouse.target`. It leaves the config, systemd unit, and tailscale serve
+mapping alone. The deploy is described by `deploy.toml`; the tailnet verify URL
+lives in the untracked `deploy.local.toml`.
