@@ -1,0 +1,19 @@
+# tugboat deploy manifest — github.com/deepwa7er/tugboat
+#   deploy:  tugboat --manifest deploy.toml      (from this directory)
+name = "tidepool"
+host = "deepwa7er"
+
+[build]
+# Pure-Go static cross-compile for the VPS (linux/amd64). Templates + CSS are
+# embedded in the binary, so this one file is the whole deploy.
+cmd = "GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o {workdir}/tidepool ."
+
+[[artifacts]]
+src = "{workdir}/tidepool"
+dest = "/usr/local/bin/tidepool"
+
+# tidepool joins the tailnet via tsnet and has no loopback listener, so there's
+# nothing to curl on the host. Health defaults to `systemctl is-active tidepool`.
+
+[lighthouse]
+enroll = true

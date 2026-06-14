@@ -2,6 +2,7 @@
 /tsnet-state/
 /tidepool
 /tidepool-*
+/deploy.local.toml
 *.db
 *.db-journal
 *.db-shm
