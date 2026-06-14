@@ -6,19 +6,20 @@ export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
 }
 
-/** Tailwind classes for a systemd ActiveState's status dot and text. */
+/** Tailwind classes for a systemd ActiveState's status dot and text (DG-001
+ * flat functional status ramp; the color is the datum). */
 export function statusColor(state: string): { dot: string; text: string } {
   switch (state) {
     case "active":
-      return { dot: "bg-emerald-500", text: "text-emerald-400" };
+      return { dot: "bg-active", text: "text-active" };
     case "failed":
-      return { dot: "bg-red-500", text: "text-red-400" };
+      return { dot: "bg-failed", text: "text-failed" };
     case "activating":
     case "deactivating":
     case "reloading":
-      return { dot: "bg-amber-500", text: "text-amber-400" };
+      return { dot: "bg-warn", text: "text-warn" };
     default:
-      return { dot: "bg-slate-500", text: "text-slate-400" };
+      return { dot: "bg-idle", text: "text-ink-muted" };
   }
 }
 

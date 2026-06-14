@@ -108,25 +108,42 @@ export function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b border-slate-800 px-6 py-4">
-        <h1 className="text-lg font-semibold text-slate-100">Lighthouse</h1>
-        <span className="text-sm text-slate-500">service dashboard</span>
+      <header className="flex items-baseline gap-3 border-b border-rule-strong px-6 py-4">
+        <h1 className="text-lg font-bold uppercase tracking-[0.2em] text-ink">
+          Lighthouse
+        </h1>
+        <span className="text-xs uppercase tracking-wider text-ink-muted">
+          Service dashboard · deepwa7er
+        </span>
+        <span className="ml-auto text-[10px] uppercase tracking-wider text-ink-faint">
+          DOC. LH-001 · REV 0.1.0
+        </span>
       </header>
       <div className="flex min-h-0 flex-1">
-        <aside className="w-80 shrink-0 space-y-2 overflow-auto border-r border-slate-800 p-4">
-          {error && (
-            <div className="rounded bg-red-950/50 p-2 text-sm text-red-300">
-              {error}
-            </div>
-          )}
-          {services.map((service) => (
-            <ServiceCard
-              key={service.unit}
-              service={service}
-              selected={service.unit === selected}
-              onSelect={() => select(service.unit)}
-            />
-          ))}
+        <aside className="flex w-80 shrink-0 flex-col overflow-auto border-r border-rule">
+          <div className="border-b border-rule px-4 py-2 text-[10px] font-bold uppercase tracking-[0.15em] text-ink-muted">
+            Services · {services.length}
+          </div>
+          <div className="space-y-2 p-4">
+            {error && (
+              <div className="border-l-2 border-failed bg-failed/10 px-3 py-2 text-xs text-failed">
+                {error}
+              </div>
+            )}
+            {services.map((service) => (
+              <ServiceCard
+                key={service.unit}
+                service={service}
+                selected={service.unit === selected}
+                onSelect={() => select(service.unit)}
+              />
+            ))}
+            {services.length === 0 && !error && (
+              <div className="text-xs uppercase tracking-wide text-ink-faint">
+                Loading…
+              </div>
+            )}
+          </div>
         </aside>
         <main className="min-w-0 flex-1">
           {selectedService ? (
@@ -136,7 +153,7 @@ export function App() {
               onChanged={() => void refresh()}
             />
           ) : (
-            <div className="flex h-full items-center justify-center text-slate-600">
+            <div className="flex h-full items-center justify-center text-sm uppercase tracking-wide text-ink-faint">
               Select a service
             </div>
           )}

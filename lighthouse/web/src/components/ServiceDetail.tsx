@@ -12,9 +12,9 @@ interface Props {
 }
 
 const ACTION_STYLES: Record<ServiceAction, string> = {
-  start: "bg-emerald-600 hover:bg-emerald-500",
-  stop: "bg-red-700 hover:bg-red-600",
-  restart: "bg-sky-700 hover:bg-sky-600",
+  start: "text-active hover:border-active",
+  stop: "text-failed hover:border-failed",
+  restart: "text-accent hover:border-accent",
 };
 
 export function ServiceDetail({ service, onChanged }: Props) {
@@ -58,13 +58,13 @@ export function ServiceDetail({ service, onChanged }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-4 border-b border-slate-800 px-6 py-4">
+      <div className="flex items-center justify-between gap-4 border-b border-rule-strong px-6 py-4">
         <div className="flex min-w-0 items-center gap-3">
-          <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", color.dot)} />
-          <h2 className="truncate text-lg font-medium text-slate-100">
+          <span className={cn("h-2 w-2 shrink-0", color.dot)} />
+          <h2 className="truncate text-lg font-bold text-ink">
             {service.name}
           </h2>
-          <span className={cn("shrink-0 text-sm", color.text)}>
+          <span className={cn("shrink-0 text-xs uppercase tracking-wide", color.text)}>
             {service.active_state} · {service.sub_state}
           </span>
         </div>
@@ -76,7 +76,7 @@ export function ServiceDetail({ service, onChanged }: Props) {
               onClick={() => run(action)}
               disabled={disabled}
               className={cn(
-                "rounded px-3 py-1.5 text-sm font-medium text-white capitalize transition",
+                "border border-rule-strong bg-surface px-3 py-1.5 text-xs uppercase tracking-wide",
                 ACTION_STYLES[action],
                 disabled && "cursor-not-allowed opacity-40",
               )}
@@ -87,7 +87,9 @@ export function ServiceDetail({ service, onChanged }: Props) {
         </div>
       </div>
       {error && (
-        <div className="bg-red-950/50 px-6 py-2 text-sm text-red-300">{error}</div>
+        <div className="border-l-2 border-failed bg-failed/10 px-6 py-2 text-xs text-failed">
+          {error}
+        </div>
       )}
       <div className="min-h-0 flex-1">
         <LogViewer unit={service.unit} />
