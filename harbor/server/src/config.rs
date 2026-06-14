@@ -35,6 +35,23 @@ pub struct Config {
     #[serde(default = "default_refresh_secs")]
     pub refresh_secs: u64,
 
+    /// Optional GitHub token for fetching per-project commit activity. Public
+    /// repos work without it; private repos need a token with read access.
+    /// When unset, only public repos get activity.
+    #[serde(default)]
+    pub github_token: Option<String>,
+
+    /// How long (seconds) a fetched commit-activity entry stays fresh before it
+    /// is re-fetched. Decoupled from `refresh_secs` to respect GitHub rate
+    /// limits — commit activity changes slowly.
+    #[serde(default = "default_activity_ttl_secs")]
+    pub activity_ttl_secs: u64,
+
+    /// Optional lighthouse base URL (e.g. `http://100.98.184.58:8080`). When set,
+    /// harbor fetches `/api/services` and includes live VPS service health.
+    #[serde(default)]
+    pub lighthouse_url: Option<String>,
+
     /// CORS allow-origin. `"*"` (the default) is appropriate for a read-only,
     /// tailnet-bound service; set a specific origin to lock it down.
     #[serde(default = "default_allow_origin")]
@@ -47,6 +64,10 @@ fn default_branch() -> String {
 
 fn default_refresh_secs() -> u64 {
     300
+}
+
+fn default_activity_ttl_secs() -> u64 {
+    600
 }
 
 fn default_allow_origin() -> String {

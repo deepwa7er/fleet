@@ -32,6 +32,10 @@
         <ul id="areas" class="rows" aria-busy="true">
           <li class="loading">loading…</li>
         </ul>
+        <h3 class="subhead">VPS services</h3>
+        <ul id="services" class="rows compact">
+          <li class="loading">—</li>
+        </ul>
       </article>
     </section>
 
@@ -40,6 +44,19 @@
       <span class="ver">harbor v0.1.0</span>
     </footer>
   </main>
+
+  <!-- Note detail overlay -->
+  <div id="overlay" class="overlay hidden" role="dialog" aria-modal="true">
+    <div class="sheet">
+      <header class="sheet-head">
+        <h3 id="sheet-title">—</h3>
+        <a id="sheet-repo" class="chip hidden" target="_blank" rel="noreferrer">repo ↗</a>
+        <button id="sheet-close" class="sheet-close" aria-label="close">✕</button>
+      </header>
+      <div id="sheet-body" class="sheet-body markdown"></div>
+    </div>
+  </div>
+
   <script src="config.js"></script>
   <script src="newtab.js"></script>
 </body>

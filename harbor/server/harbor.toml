@@ -27,6 +27,16 @@ branch = "main"
 # How often to pull + re-parse (seconds).
 refresh_secs = 60
 
+# Live VPS service health: harbor fetches lighthouse's /api/services.
+lighthouse_url = "http://100.98.184.58:8080"
+
+# Optional: a GitHub token so PRIVATE repos (lighthouse, sonar) also show commit
+# activity. Public repos work without it. Use a fine-grained, read-only token.
+# github_token = "github_pat_…"
+
+# How long a fetched commit-activity entry stays fresh (seconds).
+activity_ttl_secs = 600
+
 # Read-only, tailnet-bound service: "*" is fine. Set a specific extension
 # origin (chrome-extension://<id>) to lock it down.
 allow_origin = "*"
