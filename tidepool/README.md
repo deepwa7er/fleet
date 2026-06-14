@@ -11,7 +11,10 @@ The iPhone "app" is a PWA served from the same binary.
   public ports, listens only on the tailscale interface.
 - SQLite (pure-Go via `modernc.org/sqlite`) for metadata; blobs on local disk.
 - Server-rendered HTML + [htmx](https://htmx.org) for partial updates.
-- Tailwind via the standalone CLI (no Node toolchain).
+- Hand-authored CSS (`internal/server/static/app.css`) — no build step, no
+  Node/Tailwind toolchain. Styled after the DG-001 design guide (U.S. Graphics
+  school): paper + ink, monospace, hairline rules, the files list as a real
+  data table.
 - Optional `tidepool-clipd` daemon per device: watches the OS clipboard,
   posts changes, and subscribes to `GET /clip/stream` (SSE) so remote
   changes apply locally. Shells out to pbcopy/pbpaste on macOS and
@@ -28,30 +31,24 @@ The iPhone "app" is a PWA served from the same binary.
 │   │   ├── hub.go                # clip pub/sub for SSE
 │   │   ├── views.go              # view models + format helpers
 │   │   ├── templates/*.html      # embedded
-│   │   └── static/               # embedded (manifest, generated app.css)
+│   │   └── static/               # embedded (manifest, app.css, icons)
 │   └── store/
 │       └── store.go              # SQLite wrapper (files + clip)
 ├── cmd/
 │   └── tidepool-clipd/
 │       └── main.go               # per-device clipboard sync daemon
-├── web/input.css                 # Tailwind entry (not embedded)
-├── tailwind.config.js
 ├── Makefile
 └── README.md
 ```
 
 ## First-time setup
 
-1. Install the standalone Tailwind CLI (no npm):
-   ```sh
-   make tailwind-install
-   ```
-2. Generate placeholder PWA icons (needs imagemagick) or drop in your own
+1. Generate placeholder PWA icons (needs imagemagick) or drop in your own
    `internal/server/static/icon-{192,512}.png`:
    ```sh
    make icons
    ```
-3. Build and run in dev mode (plain HTTP on `localhost:8080`):
+2. Build and run in dev mode (plain HTTP on `localhost:8080`):
    ```sh
    make dev
    ```

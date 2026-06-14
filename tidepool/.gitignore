@@ -2,7 +2,6 @@
 /tsnet-state/
 /tidepool
 /tidepool-*
-/web/static/app.css
 *.db
 *.db-journal
 *.db-shm

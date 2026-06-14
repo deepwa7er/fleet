@@ -1,11 +1,249 @@
-/* Placeholder. Run `make css` (Tailwind standalone CLI) to generate the real file. */
-body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background: #f8fafc; color: #0f172a; }
-main { max-width: 42rem; margin: 0 auto; padding: 1rem; }
-section { background: #fff; border: 1px solid #e2e8f0; border-radius: 1rem; padding: 1rem; margin: 1rem 0; }
-h1 { font-size: 1.5rem; font-weight: 600; }
-h2 { font-size: 0.75rem; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
-button { background: #0f172a; color: #fff; border: 0; border-radius: 0.5rem; padding: 0.375rem 0.75rem; font-size: 0.875rem; cursor: pointer; }
-input, textarea { width: 100%; border: 1px solid #cbd5e1; border-radius: 0.5rem; padding: 0.5rem; font-size: 0.875rem; }
-ul { list-style: none; padding: 0; margin: 0; }
-li { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-top: 1px solid #f1f5f9; }
-a { color: #1d4ed8; }
+/* tidepool — UI stylesheet
+ * Styled after DG-001 (U.S. Graphics school): light "paper + ink" discipline,
+ * monospace-forward, hairline rules, flat fills, sharp corners, tabular
+ * numerals, a single amber signal accent. No gradients, glow, blur, or soft
+ * shadows. Hand-authored tokens — no build step.
+ */
+
+:root {
+  /* Type */
+  --font-mono: "Berkeley Mono", "JetBrains Mono", "IBM Plex Mono", ui-monospace,
+               SFMono-Regular, Menlo, Consolas, monospace;
+  --fs-base: 14px;
+  --lh-base: 1.45;
+
+  /* Paper + ink base. */
+  --bg:          #f4f3ee;
+  --surface:     #fafaf8;
+  --ink:         #1a1a1a;
+  --ink-muted:   #5a584f;
+  --ink-faint:   #8a877c;
+  --rule:        #d2d0c8;   /* hairline borders */
+  --rule-strong: #b4b1a7;
+
+  /* One signal accent — caution amber. Action / attention, not decoration. */
+  --accent:      #e8590c;
+  --danger:      #c92a2a;
+
+  /* Spacing scale — fixed, modular. */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px;
+  --s5: 24px; --s6: 32px; --s7: 48px;
+
+  --border: 1px solid var(--rule);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { height: 100%; }
+
+body {
+  font: var(--fs-base)/var(--lh-base) var(--font-mono);
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100%;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Container ───────────────────────────────────────────────────────────── */
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--s5) var(--s4) var(--s6);
+}
+
+/* ── Documentation furniture ─────────────────────────────────────────────── */
+.docbar {
+  display: flex;
+  gap: var(--s4);
+  padding-bottom: var(--s2);
+  margin-bottom: var(--s4);
+  border-bottom: var(--border);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.docbar .spacer { margin-left: auto; }
+
+/* ── Masthead ────────────────────────────────────────────────────────────── */
+.masthead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding-bottom: var(--s3);
+  margin-bottom: var(--s5);
+  border-bottom: 1px solid var(--rule-strong);
+}
+.masthead h1 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.masthead .note {
+  font-size: 11px;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ── Panels ──────────────────────────────────────────────────────────────── */
+.panel {
+  background: var(--surface);
+  border: var(--border);
+  padding: var(--s4);
+  margin-bottom: var(--s4);
+}
+.panel:last-child { margin-bottom: 0; }
+.panel-head {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--ink-muted);
+  padding-bottom: var(--s2);
+  margin-bottom: var(--s3);
+  border-bottom: var(--border);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.btn {
+  font: inherit;
+  font-size: 13px;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  color: var(--ink);
+  padding: var(--s2) var(--s4);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.btn:hover { border-color: var(--ink); }
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.btn--primary:hover { background: #d24f08; border-color: #d24f08; }
+.btn-row { display: flex; gap: var(--s2); flex-shrink: 0; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ── Clipboard ───────────────────────────────────────────────────────────── */
+.clip-form { display: flex; flex-direction: column; gap: var(--s3); }
+.clip-text {
+  font: inherit;
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--rule-strong);
+  background: var(--bg);
+  color: var(--ink);
+  padding: var(--s2) var(--s3);
+}
+.clip-text:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.clip-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+.clip-meta {
+  font-size: 11px;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Upload ──────────────────────────────────────────────────────────────── */
+.upload-form { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: stretch; }
+.file-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-muted);
+  border: 1px solid var(--rule-strong);
+  background: var(--bg);
+  padding: var(--s1) var(--s2);
+}
+.file-input::file-selector-button {
+  font: inherit;
+  font-size: 13px;
+  margin-right: var(--s3);
+  border: none;
+  border-right: 1px solid var(--rule-strong);
+  background: var(--surface);
+  color: var(--ink);
+  padding: var(--s2) var(--s3);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.file-input::file-selector-button:hover { background: var(--bg); }
+
+/* ── Files table (the datasheet) ─────────────────────────────────────────── */
+.files { width: 100%; border-collapse: collapse; font-size: 13px; }
+.files th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--ink-muted);
+  padding: 0 var(--s3) var(--s2);
+  border-bottom: 1px solid var(--rule-strong);
+}
+.files td {
+  padding: var(--s2) var(--s3);
+  border-bottom: var(--border);
+  vertical-align: baseline;
+}
+.files tbody tr:last-child td { border-bottom: none; }
+.files .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--ink-muted);
+}
+.files .act { text-align: right; width: 1%; white-space: nowrap; }
+.files .empty td {
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 12px;
+}
+
+.file-name {
+  max-width: 0;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-name a { color: var(--ink); text-decoration: none; }
+.file-name a:hover { text-decoration: underline; text-decoration-color: var(--accent); }
+.col-from { color: var(--ink-faint); white-space: nowrap; }
+
+.btn-del {
+  font: inherit;
+  font-size: 11px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--danger);
+  padding: var(--s1) var(--s2);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.btn-del:hover { border-color: var(--danger); }
+
+/* Hide the low-priority "From" column on narrow screens. */
+@media (max-width: 480px) {
+  .col-from { display: none; }
+}
