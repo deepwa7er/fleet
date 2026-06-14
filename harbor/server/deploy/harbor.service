@@ -14,7 +14,9 @@ RestartSec=2
 # Pull the private secondbrain repo using the read-only deploy key, with GitHub's
 # host key pinned (both provisioned by deploy/setup-vps.sh).
 Environment=HOME=/srv/harbor
-Environment=GIT_SSH_COMMAND=ssh -i /etc/harbor/deploy_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/etc/harbor/known_hosts -o StrictHostKeyChecking=yes
+# Quoted: systemd splits Environment= values on whitespace, so the whole
+# command (with its -o options) must be a single double-quoted token.
+Environment="GIT_SSH_COMMAND=ssh -i /etc/harbor/deploy_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/etc/harbor/known_hosts -o StrictHostKeyChecking=yes"
 
 # Least privilege: an unprivileged service account. It clones/pulls into
 # /srv/harbor and otherwise writes nothing.

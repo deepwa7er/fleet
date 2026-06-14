@@ -55,16 +55,18 @@ computer's extension queries it.
    ```sh
    server/deploy/deploy.sh
    ```
-3. Point `extension/config.js` at `https://deepwa7er.tailcfab97.ts.net:8090` (or
-   `http://100.98.184.58:8090`) and reload the extension.
+3. Point `extension/config.js` at `http://deepwa7er.tailcfab97.ts.net:8090` (or
+   the IP `http://100.98.184.58:8090`) and reload the extension. Plain HTTP is
+   fine — the tailnet encrypts transport.
 4. Enroll in lighthouse so harbor monitors itself:
    `systemctl add-wants lighthouse.target harbor.service`.
 
 ## Status
 
-**v0.1.0 — working prototype.** Live project/area state end-to-end. Not yet
-deployed to the VPS. Quick-launch chips are static; the `b …` box is inert
-pending ferry wiring.
+**v0.1.0 — deployed.** Running on deepwa7er (systemd `harbor.service`, bound to
+the tailnet IP on :8090), serving live project/area state from a GitHub checkout
+of secondbrain. Quick-launch chips are static; the `b …` box is inert pending
+ferry wiring.
 
 ### Next
 
