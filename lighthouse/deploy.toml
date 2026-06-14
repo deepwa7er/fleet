@@ -1,0 +1,28 @@
+# tugboat deploy manifest — github.com/deepwa7er/tugboat
+#   deploy:  tugboat --manifest deploy.toml      (from this directory)
+#
+# Routine deploy: build the frontend + backend locally, ship the binary and the
+# built web assets. Infra provisioning (systemd unit + target, config, service
+# user, and the polkit control grant regenerated from lighthouse.target
+# membership) is deploy/provision.sh — re-run it when you enroll a new service.
+name = "lighthouse"
+host = "deepwa7er"
+
+[build]
+# Frontend (bun) then a static musl cross-compile of the backend. No Node/Rust
+# toolchain needed on the VPS.
+cmd = "(cd web && bun install && bun run build) && CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --target x86_64-unknown-linux-musl"
+
+[[artifacts]]
+src = "target/x86_64-unknown-linux-musl/release/lighthouse"
+dest = "/usr/local/bin/lighthouse"
+
+[[artifacts]]
+kind = "dir"
+src = "web/dist"
+dest = "/opt/lighthouse/web"
+
+# lighthouse binds the tailnet IP (no loopback), so health is the unit's active
+# state. (default health = `systemctl is-active lighthouse`)
+
+# Not enrolled: lighthouse is the monitor, not a member of its own target.
