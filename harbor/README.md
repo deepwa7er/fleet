@@ -70,38 +70,53 @@ computer's extension queries it.
 ## Installing the extension (self-hosted, auto-updating)
 
 harbor-server distributes its own extension over the tailnet: it serves a
-signed `harbor.crx` and an update manifest at `/extension`, and tailnet devices
-**force-install + auto-update** from them via a managed browser policy. No
-Chrome Web Store, no developer-mode nag.
+signed `harbor.crx` and an update manifest at `/extension`. Devices install it
+from there and **auto-update** over the tailnet — no Chrome Web Store. The
+*install* mechanism differs by OS (see below); auto-update is the same
+everywhere (the crx's manifest `update_url` points back at `/extension`).
 
 - **Signing key:** `~/.config/harbor/extension.pem` (outside the repo — it
   *defines* the extension ID `mphgmoeghlcdljjpglbhhfpgmicoenlm`, so back it up;
   losing it changes the ID). `extension/pack.sh` packs + signs the crx and
   writes `build/updates.xml`; `tugboat` runs it on every deploy and ships both
   to `/srv/harbor/dist`.
-- **Install on a device.** Drop `extension/helium-policy.json` into the
-  browser's managed-policy dir (root-owned), then fully restart the browser:
-  ```sh
-  sudo install -Dm644 extension/helium-policy.json \
-    /etc/chromium/policies/managed/harbor.json   # see path note below
-  ```
-  Confirm at `chrome://policy` (`helium://policy`) that
-  `ExtensionInstallForcelist` is active, then `chrome://extensions` — harbor
-  installs itself (force-installed; "installed by your organization") and
-  updates whenever you bump `version` + redeploy.
-- **To release an update:** bump `version` in `extension/manifest.json`, then
+- **Release an update:** bump `version` in `extension/manifest.json`, then
   `tugboat` (from this repo). Devices pick it up on their next update poll.
+
+### Linux — force-install via managed policy
+
+Drop `extension/helium-policy.json` into the browser's managed-policy dir
+(root-owned), then fully restart the browser:
+```sh
+sudo install -Dm644 extension/helium-policy.json \
+  /etc/chromium/policies/managed/harbor.json   # see path note below
+```
+Confirm at `chrome://policy` (`helium://policy`) that `ExtensionInstallForcelist`
+is active, then `chrome://extensions` — harbor installs itself (force-installed,
+"installed by your organization", can't be removed). Verified on Helium /
+Fedora.
 
 > **Managed-policy dir** is per-browser and *not* always the brand name. Helium
 > (verified on `helium-bin` / Fedora) keeps upstream Chromium's compiled-in path
 > `/etc/chromium/policies/managed/` — *not* `/etc/helium` or
 > `/etc/net.imput.helium`. Chrome uses `/etc/opt/chrome/policies/managed/`,
 > Brave `/etc/brave/policies/managed/`. To find a fork's real path, grep its ELF:
-> `grep -aoE '/etc/[A-Za-z0-9_.+-]+/policies' <binary> | sort -u`.
->
-> Plain **HTTP** over the tailnet works for force-install (verified on Helium
-> 148) — no HTTPS needed. If a stricter browser ever refuses, front `/extension`
-> with `tailscale serve --https` (as ferry does) and switch the URLs to `https`.
+> `grep -aoE '/etc/[A-Za-z0-9_.+-]+/policies' <binary> | sort -u`. Plain **HTTP**
+> over the tailnet is accepted (verified Helium 148) — no HTTPS needed.
+
+### macOS — sideload the crx
+
+macOS (like Windows) **refuses to force-install a non-Web-Store extension unless
+the machine is enterprise-managed** (MDM / cloud-managed). On an unmanaged Mac a
+config-profile policy loads but the entry is `[BLOCKED]`. So don't use a policy
+there — **sideload the signed crx** instead (Helium, being ungoogled-based,
+permits local crx installs that stock Chrome blocks):
+
+1. Download it: `curl -o ~/Downloads/harbor.crx http://deepwa7er.tailcfab97.ts.net:8090/extension/harbor.crx`
+2. `helium://extensions` → Developer mode **on** → drag `harbor.crx` onto the
+   page → **Add**.
+3. Turn Developer mode **off** — it stays enabled (it's a real install, not an
+   unpacked one), and auto-updates from the same `update_url`.
 
 ## Status
 
