@@ -11,15 +11,20 @@ WorkingDirectory=/srv/harbor
 Restart=on-failure
 RestartSec=2
 
-# Least privilege: an unprivileged service account that only needs to *read* the
-# (world-readable) push-to-deploy working tree at /srv/harbor/secondbrain.
+# Pull the private secondbrain repo using the read-only deploy key, with GitHub's
+# host key pinned (both provisioned by deploy/setup-vps.sh).
+Environment=HOME=/srv/harbor
+Environment=GIT_SSH_COMMAND=ssh -i /etc/harbor/deploy_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/etc/harbor/known_hosts -o StrictHostKeyChecking=yes
+
+# Least privilege: an unprivileged service account. It clones/pulls into
+# /srv/harbor and otherwise writes nothing.
 User=harbor
 Group=harbor
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-# harbor writes nothing; no ReadWritePaths needed.
+ReadWritePaths=/srv/harbor
 
 [Install]
 WantedBy=multi-user.target

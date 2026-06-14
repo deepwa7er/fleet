@@ -1,12 +1,12 @@
 # harbor-server configuration (VPS baseline).
 #
-# secondbrain is hosted on THIS VPS as the canonical hub: your computers push
-# edits straight here over the tailnet (push-to-deploy), which updates the
-# working tree at `source_dir`. harbor just reads that tree — there is no
-# `git_remote` and no GitHub involved.
+# secondbrain is hosted on GitHub (private). harbor keeps its own checkout on the
+# VPS by pulling from GitHub on each refresh, then reads it. The VPS authenticates
+# with a read-only deploy key provisioned by deploy/setup-vps.sh (the systemd unit
+# points git at it via GIT_SSH_COMMAND).
 #
 # For local development, copy this to `harbor.local.toml`, point `source_dir` at
-# your local secondbrain checkout, and bind to 127.0.0.1.
+# your local secondbrain checkout, drop `git_remote`, and bind to 127.0.0.1.
 # Run with:  harbor-server harbor.local.toml
 
 # Tailscale IP, so harbor is reachable only from the tailnet — no public
@@ -14,11 +14,18 @@
 bind = "100.98.184.58"
 port = 8090
 
-# The push-to-deploy working tree (see deploy/setup-vps.sh). harbor reads it and
-# re-parses every refresh_secs, so a `git push` shows up within that window.
+# harbor's own checkout of secondbrain (created on first run by cloning
+# git_remote). harbor only ever reads it.
 source_dir = "/srv/harbor/secondbrain"
 
-refresh_secs = 60
+# Private secondbrain repo. harbor clones it if source_dir is missing and
+# hard-resets to origin/<branch> on each refresh. Auth is the read-only deploy
+# key (see deploy/setup-vps.sh).
+git_remote = "git@github.com:deepwa7er/secondbrain.git"
+branch = "main"
+
+# How often to pull + re-parse (seconds). Keep modest to be kind to GitHub.
+refresh_secs = 300
 
 # Read-only, tailnet-bound service: "*" is fine. Set a specific extension
 # origin (chrome-extension://<id>) to lock it down.

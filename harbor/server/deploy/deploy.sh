@@ -2,9 +2,11 @@
 #
 # Build harbor-server on the VPS and (re)install it as a systemd service.
 #
-# Re-runnable. Run deploy/setup-vps.sh ONCE first (it creates the secondbrain
-# hub repo and the 'harbor' service user). Mirrors lighthouse's deploy model:
-# rsync the source up, build the release on the VPS, install binary + unit.
+# Re-runnable. Run deploy/setup-vps.sh ONCE first (it creates the 'harbor'
+# service user and the read-only deploy key, which must be added to GitHub).
+# Mirrors lighthouse's deploy model: rsync the source up, build the release on
+# the VPS, install binary + unit. On first start the service clones secondbrain
+# from GitHub using the deploy key.
 #
 # Host: set HARBOR_SSH_HOST (defaults to the `deepwa7er` ssh alias).
 set -euo pipefail
