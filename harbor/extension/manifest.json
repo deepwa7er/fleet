@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "harbor",
+  "version": "0.1.0",
+  "description": "Personal mission-control new tab — a live view into the secondbrain portfolio and the deepwa7er VPS.",
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  },
+  "host_permissions": [
+    "http://127.0.0.1:8090/*",
+    "https://deepwa7er.tailcfab97.ts.net:8090/*"
+  ]
+}

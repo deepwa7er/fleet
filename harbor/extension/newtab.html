@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>harbor</title>
+  <link rel="stylesheet" href="newtab.css">
+</head>
+<body>
+  <main class="harbor">
+    <header class="masthead">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <h1>harbor</h1>
+      </div>
+      <div class="now">
+        <div id="clock" class="clock">—</div>
+        <div id="greeting" class="greeting">welcome aboard</div>
+      </div>
+    </header>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Fleet</h2>
+        <ul id="fleet" class="rows" aria-busy="true">
+          <li class="loading">loading…</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>Areas</h2>
+        <ul id="areas" class="rows" aria-busy="true">
+          <li class="loading">loading…</li>
+        </ul>
+      </article>
+
+      <article class="card launch">
+        <h2>Quick launch</h2>
+        <div class="links">
+          <a class="chip" href="http://100.98.184.58:8080">lighthouse ↗</a>
+          <a class="chip" href="https://github.com/deepwa7er">github ↗</a>
+          <a class="chip" href="https://github.com/deepwa7er/secondbrain">secondbrain ↗</a>
+        </div>
+        <form id="omni" class="omni">
+          <input type="text" placeholder="b …  (ferry command — wiring TBD)" aria-label="command">
+        </form>
+      </article>
+    </section>
+
+    <footer class="waterline">
+      <span id="status">connecting…</span>
+      <span class="ver">harbor v0.1.0</span>
+    </footer>
+  </main>
+  <script src="config.js"></script>
+  <script src="newtab.js"></script>
+</body>
+</html>
