@@ -198,6 +198,37 @@ function fillServices(services) {
   }
 }
 
+// ── external app links (launchable tailnet services) ─────────────────────────
+function fillExternalLinks(links) {
+  const ul = document.getElementById("external-links");
+  const sec = document.getElementById("apps-section");
+  ul.replaceChildren();
+  if (!links || links.length === 0) {
+    sec.classList.add("hidden");
+    return;
+  }
+  sec.classList.remove("hidden");
+  for (const link of links) {
+    const li = document.createElement("li");
+    const main = document.createElement("div");
+    main.className = "row-main";
+
+    const a = document.createElement("a");
+    a.className = "name applink";
+    a.href = link.url;
+    a.rel = "noreferrer";
+    a.textContent = link.name;
+
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    try { meta.textContent = new URL(link.url).host; } catch { meta.textContent = link.url; }
+
+    main.append(a, meta);
+    li.append(main);
+    ul.append(li);
+  }
+}
+
 // ── note overlay ─────────────────────────────────────────────────────────────
 const overlay = document.getElementById("overlay");
 
@@ -320,6 +351,7 @@ async function load() {
     fill("fleet", state.projects);
     fill("areas", state.areas);
     fillServices(state.services);
+    fillExternalLinks(state.external_links);
     const commit = state.source && state.source.commit ? ` @${state.source.commit}` : "";
     setStatus(`live · secondbrain${commit} · refreshed ${ago(state.generated_at)}`, "ok");
   } catch (e) {

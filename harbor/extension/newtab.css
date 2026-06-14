@@ -143,6 +143,9 @@ body {
 .rows > li:last-child { border-bottom: none; }
 .row-main { display: flex; align-items: baseline; gap: var(--s2); font-size: 13px; }
 .rows .name { font-weight: 500; color: var(--ink); }
+.rows a.name { text-decoration: none; }
+.rows a.name:hover, .rows a.name:focus-visible { color: var(--accent); text-decoration: underline; }
+.rows a.name::after { content: " ↗"; color: var(--ink-faint); font-size: 11px; }
 .rows .meta {
   margin-left: auto; color: var(--ink-muted); font-size: 11px;
   letter-spacing: 0.5px; text-transform: uppercase;

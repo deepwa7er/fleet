@@ -1,7 +1,17 @@
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+/// A persistent link to an external tailnet service, shown on the new-tab page
+/// as a launchable card (distinct from secondbrain project/area notes). Declared
+/// in the config so the extension stays a dumb view — it renders whatever links
+/// the server provides.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalLink {
+    pub name: String,
+    pub url: String,
+}
 
 /// Runtime configuration, loaded from a TOML file.
 ///
@@ -56,6 +66,11 @@ pub struct Config {
     /// tailnet-bound service; set a specific origin to lock it down.
     #[serde(default = "default_allow_origin")]
     pub allow_origin: String,
+
+    /// Persistent links to other tailnet services, rendered as launchable cards
+    /// on the new-tab page (e.g. the driftword generator).
+    #[serde(default)]
+    pub external_links: Vec<ExternalLink>,
 
     /// Directory of self-hosted browser-extension artifacts (`harbor.crx` +
     /// `updates.xml`), served at `/extension`. Relative to the working

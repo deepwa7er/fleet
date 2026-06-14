@@ -45,3 +45,9 @@ allow_origin = "*"
 # this dir (relative to WorkingDirectory=/srv/harbor) at /extension, so tailnet
 # devices force-install + auto-update. tugboat ships the artifacts here.
 extension_dir = "dist"
+
+# Launchable links to other tailnet services, shown as an "Apps" card on the
+# new-tab page.
+[[external_links]]
+name = "driftword"
+url = "http://deepwa7er.tailcfab97.ts.net:8091"

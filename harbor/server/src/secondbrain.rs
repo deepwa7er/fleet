@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::config::ExternalLink;
 use crate::git;
 use crate::github::Activity;
 use crate::lighthouse::ServiceHealth;
@@ -48,6 +49,9 @@ pub struct State {
     /// Live VPS service health from lighthouse (empty if not configured).
     #[serde(default)]
     pub services: Vec<ServiceHealth>,
+    /// Persistent launchable links to other tailnet services, from config.
+    #[serde(default)]
+    pub external_links: Vec<ExternalLink>,
     /// Map of entry name → markdown file path, for the note endpoint. Not served.
     #[serde(skip)]
     pub note_paths: HashMap<String, PathBuf>,
@@ -83,6 +87,7 @@ pub fn build(source_dir: &Path, remote: Option<&str>) -> Result<State> {
         projects,
         areas,
         services: Vec::new(),
+        external_links: Vec::new(),
         note_paths,
     })
 }

@@ -123,6 +123,9 @@ impl Updater {
 
         self.attach_recent(&mut state.projects).await;
 
+        // Static, config-declared links to other tailnet services.
+        state.external_links = self.config.external_links.clone();
+
         if let Some(url) = self.config.lighthouse_url.as_deref() {
             match lighthouse::services(&self.http, url).await {
                 Ok(services) => state.services = services,
