@@ -541,13 +541,23 @@ fn render_commands_page(config: &Config, notice: Option<&Notice>, form: &FormVal
   <input type="hidden" name="original" value="{name}">
   <input name="name" value="{name}" aria-label="command name" required>
   <input name="url" value="{url}" aria-label="URL" required>
-  <button type="submit">Save</button>
-  <button type="submit" class="danger" formaction="/commands/delete" formnovalidate
+  <button type="submit" class="btn">Save</button>
+  <button type="submit" class="btn danger" formaction="/commands/delete" formnovalidate
     onclick="return confirm('Delete this command?')">Delete</button>
 </form>
 "#
         ));
     }
+
+    // The command list is the datasheet: a labeled column header over one row
+    // per command (each row its own form). Empty state is explicit, not blank.
+    let table = if config.commands.is_empty() {
+        "<p class=\"empty\">No commands yet.</p>\n".to_string()
+    } else {
+        format!(
+            "<div class=\"cmd-head\"><span>Command</span><span>URL</span><span class=\"act-col\">Actions</span></div>\n{rows}"
+        )
+    };
 
     let notice_html = match notice {
         Some(notice) => {
@@ -559,44 +569,120 @@ fn render_commands_page(config: &Config, notice: Option<&Notice>, form: &FormVal
 
     let form_html = format!(
         r#"<form class="add" method="post" action="/commands">
-  <input name="names" placeholder="name(s), space-separated (e.g. mail m)" value="{names}" required autofocus>
-  <input name="url" placeholder="https://…  (use {{query}} for arguments)" value="{url}" required>
-  <button type="submit">Add</button>
+  <label class="field"><span class="field-label">Name(s)</span>
+    <input name="names" placeholder="mail m" value="{names}" required autofocus></label>
+  <label class="field field--grow"><span class="field-label">URL</span>
+    <input name="url" placeholder="https://…  (use {{query}} for arguments)" value="{url}" required></label>
+  <button type="submit" class="btn btn--primary">Add</button>
 </form>
 "#,
         names = escape_html(&form.names),
         url = escape_html(&form.url),
     );
 
+    // Styled after DG-001 (U.S. Graphics school): light "paper + ink", mono,
+    // hairline rules, flat fills, sharp corners, single amber signal accent.
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ferry commands</title>
 <link rel="search" type="application/opensearchdescription+xml" href="/opensearch.xml" title="ferry">
 <style>
-  body {{ font-family: ui-monospace, monospace; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }}
-  .notice {{ padding: 0.5rem 0.75rem; border-radius: 4px; margin: 0.5rem 0; }}
-  .notice.ok {{ background: #e7f6e7; }}
-  .notice.error {{ background: #fce8e6; }}
-  form.add, form.row {{ display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }}
-  form.add {{ margin: 1rem 0; }}
-  form.row {{ padding: 0.3rem 0; border-bottom: 1px solid #ddd; }}
-  input {{ padding: 0.35rem; font: inherit; }}
-  form.add input[name="names"], form.row input[name="name"] {{ flex: 0 0 9rem; }}
-  input[name="url"] {{ flex: 1 1 18rem; }}
-  button {{ padding: 0.35rem 0.8rem; font: inherit; cursor: pointer; }}
-  button.danger {{ color: #b00; }}
-  .fallback {{ margin-top: 1.5rem; color: #666; }}
+  :root {{
+    --font-mono: "Berkeley Mono", "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --bg: #f4f3ee; --surface: #fafaf8; --ink: #1a1a1a; --ink-muted: #5a584f; --ink-faint: #8a877c;
+    --rule: #d2d0c8; --rule-strong: #b4b1a7; --accent: #e8590c; --danger: #c92a2a;
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    font: 14px/1.45 var(--font-mono); background: var(--bg); color: var(--ink);
+    max-width: 64rem; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6);
+    -webkit-font-smoothing: antialiased;
+  }}
+  code {{ background: var(--surface); border: 1px solid var(--rule); padding: 0 var(--s1); }}
+  .docbar {{
+    display: flex; gap: var(--s4); padding-bottom: var(--s2); margin-bottom: var(--s4);
+    border-bottom: 1px solid var(--rule); font-size: 10px; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--ink-faint);
+  }}
+  .docbar .spacer {{ margin-left: auto; }}
+  .masthead {{
+    display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3);
+    padding-bottom: var(--s3); margin-bottom: var(--s5); border-bottom: 1px solid var(--rule-strong);
+  }}
+  .masthead h1 {{ font-size: 22px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; margin: 0; }}
+  .masthead .note {{ font-size: 11px; color: var(--ink-muted); }}
+  .notice {{
+    padding: var(--s2) var(--s3); margin: 0 0 var(--s4);
+    border: 1px solid var(--rule-strong); font-size: 13px;
+  }}
+  .notice.ok {{ border-left: 3px solid var(--accent); }}
+  .notice.error {{ border-left: 3px solid var(--danger); color: var(--danger); }}
+  .panel {{ background: var(--surface); border: 1px solid var(--rule); padding: var(--s4); margin-bottom: var(--s4); }}
+  .panel-head {{
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--ink-muted); margin: 0 0 var(--s3); padding-bottom: var(--s2); border-bottom: 1px solid var(--rule);
+  }}
+  input {{
+    font: inherit; padding: var(--s2); border: 1px solid var(--rule-strong);
+    background: var(--bg); color: var(--ink); border-radius: 0;
+  }}
+  input:focus {{ outline: 2px solid var(--accent); outline-offset: -1px; }}
+  .btn {{
+    font: inherit; font-size: 13px; padding: var(--s2) var(--s3); cursor: pointer;
+    border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink);
+    border-radius: 0; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap;
+  }}
+  .btn:hover {{ border-color: var(--ink); }}
+  .btn--primary {{ background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }}
+  .btn--primary:hover {{ background: #d24f08; border-color: #d24f08; }}
+  .btn.danger {{ color: var(--danger); }}
+  .btn.danger:hover {{ border-color: var(--danger); }}
+  form.add {{ display: flex; gap: var(--s3); align-items: flex-end; flex-wrap: wrap; }}
+  .field {{ display: flex; flex-direction: column; gap: var(--s1); }}
+  .field--grow {{ flex: 1 1 22rem; }}
+  .field-label {{ font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-muted); }}
+  .field input {{ width: 100%; }}
+  .cmd-head {{
+    display: grid; grid-template-columns: 12rem 1fr auto; gap: var(--s2);
+    padding: 0 0 var(--s2); border-bottom: 1px solid var(--rule-strong);
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-muted);
+  }}
+  .cmd-head .act-col {{ text-align: right; }}
+  form.row {{
+    display: grid; grid-template-columns: 12rem 1fr auto auto; gap: var(--s2);
+    align-items: center; padding: var(--s2) 0; border-bottom: 1px solid var(--rule); margin: 0;
+  }}
+  form.row:last-of-type {{ border-bottom: none; }}
+  .empty {{ color: var(--ink-faint); font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; margin: 0; }}
+  .fallback {{
+    margin: var(--s5) 0 0; padding-top: var(--s3); border-top: 1px solid var(--rule-strong);
+    color: var(--ink-muted); font-size: 12px;
+  }}
+  @media (max-width: 640px) {{
+    .cmd-head {{ display: none; }}
+    form.row {{ grid-template-columns: 1fr; }}
+  }}
 </style>
 </head>
 <body>
-<h1>ferry</h1>
-{notice_html}{form_html}{rows}<p class="fallback">Fallback: <code>{fallback}</code></p>
+<div class="docbar"><span>DOC. FRY-001</span><span>Address-bar redirector</span><span class="spacer">{count} command(s)</span></div>
+<header class="masthead"><h1>ferry</h1><span class="note">type <code>b &lt;cmd&gt;</code> in the address bar</span></header>
+{notice_html}<section class="panel">
+<h2 class="panel-head">Add command</h2>
+{form_html}</section>
+<section class="panel">
+<h2 class="panel-head">Commands</h2>
+{table}</section>
+<p class="fallback">Fallback <code>{fallback}</code></p>
 </body>
 </html>
 "#,
+        count = config.commands.len(),
         fallback = escape_html(&config.fallback),
     )
 }
