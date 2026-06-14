@@ -37,15 +37,35 @@ locally). Whatever URL you set there must also be in `manifest.json`
 
 ## Deploy to the VPS (tailnet)
 
-> Not yet automated — this is the planned path, mirroring ferry/lighthouse.
+secondbrain is hosted on the VPS as the **canonical hub**: your computers push
+edits straight to it over the tailnet (push-to-deploy), harbor reads the working
+tree and serves it, and any computer's extension queries it. No GitHub, no
+deploy key.
 
-- Build a static Linux binary, ship it, run it as a systemd unit bound to the
-  Tailscale IP on `:8090` (tailnet-only, no public exposure / no auth).
-- `server/harbor.toml` is the VPS baseline: it sets `git_remote` so harbor keeps
-  its own checkout of the **private** secondbrain repo in sync. The VPS therefore
-  needs read access — add a **read-only deploy key** for `deepwa7er/secondbrain`.
-- Point `extension/config.js` at `https://deepwa7er.tailcfab97.ts.net:8090`.
-- Enroll the unit in `lighthouse.target` so harbor monitors itself.
+1. **One-time hub + service-account setup** (creates the push-to-deploy
+   secondbrain repo and the unprivileged `harbor` user):
+   ```sh
+   server/deploy/setup-vps.sh
+   ```
+   Then point each computer's secondbrain at the VPS and push (the script prints
+   the exact commands):
+   ```sh
+   git -C ~/secondbrain remote add vps deepwa7er:/srv/harbor/secondbrain
+   git -C ~/secondbrain push -u vps main
+   ```
+2. **Deploy the server** (builds the release on the VPS, installs the systemd
+   unit bound to the Tailscale IP on `:8090` — tailnet-only, no public exposure):
+   ```sh
+   server/deploy/deploy.sh
+   ```
+3. Point `extension/config.js` at `https://deepwa7er.tailcfab97.ts.net:8090` (or
+   `http://100.98.184.58:8090`) and reload the extension.
+4. Enroll in lighthouse so harbor monitors itself:
+   `systemctl add-wants lighthouse.target harbor.service`.
+
+> **⚠️ Backup:** the VPS hub has no off-site backup yet — a deliberate "later"
+> item. Until then the VPS is the only copy of secondbrain (plus whatever git
+> clones live on your computers).
 
 ## Status
 
@@ -55,7 +75,7 @@ pending ferry wiring.
 
 ### Next
 
-- Deploy to deepwa7er.
+- Run the VPS hub + deploy (`server/deploy/`), migrate secondbrain off GitHub.
+- Add an off-site **backup** for the VPS hub (deliberately deferred).
 - Live VPS service health by consuming lighthouse's `/api/services`.
 - Wire the `b …` box and chips to ferry.
-- Optional GitHub enrichment (commit counts / last-commit dates) per `repo`.

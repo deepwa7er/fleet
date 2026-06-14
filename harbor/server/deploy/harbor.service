@@ -1,0 +1,25 @@
+[Unit]
+Description=harbor — secondbrain new-tab API
+Documentation=https://github.com/deepwa7er (harbor)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Reads /etc/harbor/harbor.toml; binds the tailnet IP on :8090.
+ExecStart=/usr/local/bin/harbor-server /etc/harbor/harbor.toml
+WorkingDirectory=/srv/harbor
+Restart=on-failure
+RestartSec=2
+
+# Least privilege: an unprivileged service account that only needs to *read* the
+# (world-readable) push-to-deploy working tree at /srv/harbor/secondbrain.
+User=harbor
+Group=harbor
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# harbor writes nothing; no ReadWritePaths needed.
+
+[Install]
+WantedBy=multi-user.target
