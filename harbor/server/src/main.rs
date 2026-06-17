@@ -9,6 +9,7 @@ mod git;
 mod github;
 mod lighthouse;
 mod secondbrain;
+mod topology;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;

@@ -229,6 +229,322 @@ function fillExternalLinks(links) {
   }
 }
 
+// ── graph view ───────────────────────────────────────────────────────────────
+// A dependency-free force-directed view over state.projects + state.topology:
+// project & machine nodes, codebase / runs-on edges to machines, and the typed
+// edges between projects. Live service health colours the runs-on edges.
+const SVGNS = "http://www.w3.org/2000/svg";
+
+function svgEl(tag, attrs) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+const graph = (() => {
+  const svg = document.getElementById("graph-svg");
+  const frame = svg.parentElement;
+  const emptyMsg = document.getElementById("graph-empty");
+
+  let nodes = new Map();   // id → node
+  let edges = [];          // edge descriptors (with their <line>/<text> elements)
+  let services = [];       // latest state.services, for health
+  let sig = null;          // structural signature, to detect topology changes
+  let raf = null;
+  let temp = 0;
+  let W = 0, H = 0;
+  let visible = false;
+  let drag = null;         // { node, moved, startX, startY }
+
+  // Aggregate the health of a set of units into a runs-edge class.
+  function runsHealth(units) {
+    let known = false, failed = false, allActive = true;
+    for (const u of units) {
+      if (!u) { allActive = false; continue; }
+      const s = services.find((x) => x.unit === u);
+      if (!s) { allActive = false; continue; }
+      known = true;
+      if (s.active_state === "failed") failed = true;
+      if (s.active_state !== "active") allActive = false;
+    }
+    if (!known) return "";
+    if (failed) return "h-failed";
+    return allActive ? "h-active" : "";
+  }
+
+  function unitTitle(units) {
+    return units
+      .map((u) => {
+        const s = services.find((x) => x.unit === u);
+        return s ? `${u}: ${s.active_state}/${s.sub_state}` : `${u}: unknown`;
+      })
+      .join("\n");
+  }
+
+  // Compute the desired nodes + edges from a snapshot. Returns null when there
+  // is no topology to draw.
+  function model(state) {
+    const topo = state.topology;
+    if (!topo) return null;
+
+    const wantNodes = new Map();
+    const areaByName = new Map((state.areas || []).map((a) => [a.name, a]));
+    for (const m of topo.machines || []) {
+      wantNodes.set(`m:${m.id}`, {
+        id: `m:${m.id}`, type: "machine", label: m.label,
+        role: m.role || "", entry: areaByName.get(m.id) || null,
+      });
+    }
+    for (const p of state.projects || []) {
+      wantNodes.set(`p:${p.name}`, {
+        id: `p:${p.name}`, type: "project", label: p.name, status: p.status, entry: p,
+      });
+    }
+
+    const wantEdges = [];
+    const has = (id) => wantNodes.has(id);
+    for (const [name, place] of Object.entries(topo.placements || {})) {
+      const from = `p:${name}`;
+      if (!has(from)) continue;
+      if (place.codebase && has(`m:${place.codebase}`)) {
+        wantEdges.push({ from, to: `m:${place.codebase}`, cls: "e-codebase", units: [] });
+      }
+      // Collapse multiple runs_on entries to the same machine into one edge.
+      const byMachine = new Map();
+      for (const r of place.runs_on || []) {
+        if (!has(`m:${r.machine}`)) continue;
+        const list = byMachine.get(r.machine) || [];
+        if (r.unit) list.push(r.unit);
+        byMachine.set(r.machine, list);
+      }
+      for (const [machine, units] of byMachine) {
+        wantEdges.push({ from, to: `m:${machine}`, cls: "e-runs", units });
+      }
+    }
+    for (const e of topo.edges || []) {
+      const from = `p:${e.from}`, to = `p:${e.to}`;
+      if (has(from) && has(to)) wantEdges.push({ from, to, cls: "e-link", label: e.kind, units: [] });
+    }
+
+    const signature = JSON.stringify({
+      n: [...wantNodes.keys()].sort(),
+      e: wantEdges.map((e) => `${e.from}>${e.to}:${e.cls}:${e.label || ""}`).sort(),
+    });
+    return { wantNodes, wantEdges, signature };
+  }
+
+  // Rebuild the SVG DOM for the current node/edge set, preserving the positions
+  // of nodes that survive a structural change.
+  function rebuild(wantNodes, wantEdges) {
+    const next = new Map();
+    for (const [id, n] of wantNodes) {
+      const prev = nodes.get(id);
+      const node = prev ? Object.assign(prev, { entry: n.entry, status: n.status, role: n.role }) : n;
+      if (!prev) { node.x = 0; node.y = 0; node.vx = 0; node.vy = 0; node.fixed = false; node.placed = false; }
+      // Box geometry from label length (monospace).
+      const pad = node.type === "machine" ? 12 : 10;
+      node.w = 16 + node.label.length * 6.8 + pad;
+      node.h = 22;
+      next.set(id, node);
+    }
+    nodes = next;
+    edges = wantEdges;
+
+    svg.replaceChildren();
+    const edgeLayer = svgEl("g", {});
+    const labelLayer = svgEl("g", {});
+    const nodeLayer = svgEl("g", {});
+    svg.append(edgeLayer, labelLayer, nodeLayer);
+
+    for (const e of edges) {
+      e.line = svgEl("line", { class: `g-edge ${e.cls}` });
+      if (e.cls === "e-runs") {
+        e.line.classList.add(...runsHealth(e.units).split(" ").filter(Boolean));
+        const t = svgEl("title", {}); t.textContent = unitTitle(e.units); e.line.append(t);
+      }
+      edgeLayer.append(e.line);
+      if (e.label) {
+        e.text = svgEl("text", { class: "g-elabel" });
+        e.text.textContent = e.label;
+        labelLayer.append(e.text);
+      }
+    }
+
+    for (const node of nodes.values()) {
+      const g = svgEl("g", {
+        class: `g-node n-${node.type}`, tabindex: "0",
+        role: "button", "aria-label": node.label,
+      });
+      g.append(svgEl("rect", { class: "n-box", x: -node.w / 2, y: -node.h / 2, width: node.w, height: node.h }));
+      const ledCls = node.type === "machine" ? `role-${node.role}` : `status-${node.status}`;
+      g.append(svgEl("rect", { class: `n-led ${ledCls}`, x: -node.w / 2 + 6, y: -3, width: 6, height: 6 }));
+      const label = svgEl("text", { class: "n-label", x: -node.w / 2 + 16, y: 0 });
+      label.textContent = node.label;
+      g.append(label);
+      node.el = g;
+      attachDrag(node);
+      nodeLayer.append(g);
+    }
+  }
+
+  // Refresh only the live health of runs-on edges (no relayout).
+  function refreshHealth() {
+    for (const e of edges) {
+      if (e.cls !== "e-runs") continue;
+      e.line.setAttribute("class", `g-edge ${e.cls}`);
+      e.line.classList.add(...runsHealth(e.units).split(" ").filter(Boolean));
+      const t = e.line.querySelector("title");
+      if (t) t.textContent = unitTitle(e.units);
+    }
+  }
+
+  function attachDrag(node) {
+    node.el.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault();
+      drag = { node, moved: false, startX: ev.clientX, startY: ev.clientY };
+      node.fixed = true;
+      node.el.setPointerCapture(ev.pointerId);
+      reheat(0.6);
+    });
+    node.el.addEventListener("pointermove", (ev) => {
+      if (!drag || drag.node !== node) return;
+      if (Math.abs(ev.clientX - drag.startX) + Math.abs(ev.clientY - drag.startY) > 4) drag.moved = true;
+      const r = svg.getBoundingClientRect();
+      node.x = ev.clientX - r.left;
+      node.y = ev.clientY - r.top;
+      reheat(0.4);
+    });
+    const end = () => {
+      if (!drag || drag.node !== node) return;
+      if (!drag.moved) { node.fixed = false; openGraphNode(node); }
+      drag = null;
+    };
+    node.el.addEventListener("pointerup", end);
+    node.el.addEventListener("pointercancel", end);
+    node.el.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openGraphNode(node); }
+    });
+  }
+
+  function openGraphNode(node) {
+    if (node.entry) openNote(node.entry);
+  }
+
+  function reheat(t) { temp = Math.max(temp, t * Math.min(W, H)); start(); }
+
+  function start() {
+    if (raf) return;
+    const loop = () => {
+      step();
+      placeFrame();
+      if (temp > 0.5 || drag) { raf = requestAnimationFrame(loop); }
+      else { raf = null; }
+    };
+    raf = requestAnimationFrame(loop);
+  }
+
+  function stop() { if (raf) { cancelAnimationFrame(raf); raf = null; } }
+
+  // One Fruchterman–Reingold step with cooling + light centre gravity.
+  function step() {
+    const arr = [...nodes.values()];
+    const k = Math.sqrt((W * H) / Math.max(arr.length, 1)) * 0.78;
+    const cx = W / 2, cy = H / 2;
+    for (const n of arr) { n.dx = 0; n.dy = 0; }
+
+    for (let i = 0; i < arr.length; i++) {
+      for (let j = i + 1; j < arr.length; j++) {
+        const a = arr[i], b = arr[j];
+        let dx = a.x - b.x, dy = a.y - b.y;
+        let d = Math.hypot(dx, dy) || 0.01;
+        const f = (k * k) / d;
+        dx /= d; dy /= d;
+        a.dx += dx * f; a.dy += dy * f;
+        b.dx -= dx * f; b.dy -= dy * f;
+      }
+    }
+    for (const e of edges) {
+      const a = nodes.get(e.from), b = nodes.get(e.to);
+      if (!a || !b) continue;
+      let dx = a.x - b.x, dy = a.y - b.y;
+      let d = Math.hypot(dx, dy) || 0.01;
+      const f = (d * d) / k;
+      dx /= d; dy /= d;
+      a.dx -= dx * f; a.dy -= dy * f;
+      b.dx += dx * f; b.dy += dy * f;
+    }
+    for (const n of arr) {
+      n.dx += (cx - n.x) * 0.014;
+      n.dy += (cy - n.y) * 0.014;
+    }
+    const padX = 64, padY = 28;
+    for (const n of arr) {
+      if (n.fixed) continue;
+      const d = Math.hypot(n.dx, n.dy);
+      if (d > 0) {
+        const m = Math.min(d, temp) / d;
+        n.x += n.dx * m;
+        n.y += n.dy * m;
+      }
+      n.x = Math.max(padX, Math.min(W - padX, n.x));
+      n.y = Math.max(padY, Math.min(H - padY, n.y));
+    }
+    temp *= 0.96;
+  }
+
+  function placeFrame() {
+    for (const n of nodes.values()) n.el.setAttribute("transform", `translate(${n.x.toFixed(1)} ${n.y.toFixed(1)})`);
+    for (const e of edges) {
+      const a = nodes.get(e.from), b = nodes.get(e.to);
+      if (!a || !b) continue;
+      e.line.setAttribute("x1", a.x); e.line.setAttribute("y1", a.y);
+      e.line.setAttribute("x2", b.x); e.line.setAttribute("y2", b.y);
+      if (e.text) { e.text.setAttribute("x", (a.x + b.x) / 2); e.text.setAttribute("y", (a.y + b.y) / 2 - 3); }
+    }
+  }
+
+  // Measure the frame and seed positions for any node that lacks one.
+  function ensureLayout() {
+    const r = frame.getBoundingClientRect();
+    W = r.width || 800; H = r.height || 480;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const arr = [...nodes.values()];
+    arr.forEach((n, i) => {
+      if (n.placed) return;
+      const ang = (i / arr.length) * Math.PI * 2;
+      const rad = Math.min(W, H) * 0.3;
+      n.x = W / 2 + Math.cos(ang) * rad + (Math.random() - 0.5) * 40;
+      n.y = H / 2 + Math.sin(ang) * rad + (Math.random() - 0.5) * 40;
+      n.placed = true;
+    });
+    reheat(0.9);
+  }
+
+  function update(state) {
+    services = state.services || [];
+    const m = model(state);
+    if (!m) { emptyMsg.classList.remove("hidden"); svg.style.display = "none"; sig = null; stop(); return; }
+    emptyMsg.classList.add("hidden"); svg.style.display = "";
+    if (m.signature !== sig) {
+      rebuild(m.wantNodes, m.wantEdges);
+      sig = m.signature;
+      if (visible) ensureLayout();
+    } else {
+      refreshHealth();
+    }
+  }
+
+  function show() { visible = true; if (nodes.size) ensureLayout(); }
+  function hide() { visible = false; stop(); }
+
+  window.addEventListener("resize", () => {
+    if (!visible || !nodes.size) return;
+    ensureLayout();
+  });
+
+  return { update, show, hide };
+})();
+
 // ── note overlay ─────────────────────────────────────────────────────────────
 const overlay = document.getElementById("overlay");
 
@@ -352,6 +668,7 @@ async function load() {
     fill("areas", state.areas);
     fillServices(state.services);
     fillExternalLinks(state.external_links);
+    graph.update(state);
     const commit = state.source && state.source.commit ? ` @${state.source.commit}` : "";
     setStatus(`live · secondbrain${commit} · refreshed ${ago(state.generated_at)}`, "ok");
   } catch (e) {
@@ -368,6 +685,25 @@ function openFromHash() {
   openNote(all.find((e) => e.name === name) || { name });
 }
 window.addEventListener("hashchange", openFromHash);
+
+// ── view toggle (List / Graph) ───────────────────────────────────────────────
+const listView = document.getElementById("list-view");
+const graphView = document.getElementById("graph-view");
+const tabList = document.getElementById("tab-list");
+const tabGraph = document.getElementById("tab-graph");
+
+function selectView(which) {
+  const isGraph = which === "graph";
+  graphView.classList.toggle("hidden", !isGraph);
+  listView.classList.toggle("hidden", isGraph);
+  tabGraph.classList.toggle("active", isGraph);
+  tabList.classList.toggle("active", !isGraph);
+  tabGraph.setAttribute("aria-selected", String(isGraph));
+  tabList.setAttribute("aria-selected", String(!isGraph));
+  if (isGraph) graph.show(); else graph.hide();
+}
+tabList.addEventListener("click", () => selectView("list"));
+tabGraph.addEventListener("click", () => selectView("graph"));
 
 // ── boot ─────────────────────────────────────────────────────────────────
 tick();

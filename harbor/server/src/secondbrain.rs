@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -9,6 +9,7 @@ use crate::config::ExternalLink;
 use crate::git;
 use crate::github::Activity;
 use crate::lighthouse::ServiceHealth;
+use crate::topology::Topology;
 
 /// One project or area, as declared by a secondbrain file's frontmatter.
 ///
@@ -52,6 +53,10 @@ pub struct State {
     /// Persistent launchable links to other tailnet services, from config.
     #[serde(default)]
     pub external_links: Vec<ExternalLink>,
+    /// Declared graph topology (machines, placements, edges). `None` when the
+    /// secondbrain has no `topology.yaml` — the graph view degrades gracefully.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topology: Option<Topology>,
     /// Map of entry name → markdown file path, for the note endpoint. Not served.
     #[serde(skip)]
     pub note_paths: HashMap<String, PathBuf>,
@@ -77,6 +82,14 @@ pub fn build(source_dir: &Path, remote: Option<&str>) -> Result<State> {
     projects.sort_by(|a, b| status_rank(&a.status).cmp(&status_rank(&b.status)).then(a.name.cmp(&b.name)));
     areas.sort_by(|a, b| a.name.cmp(&b.name));
 
+    // Read declared graph topology and prune any references to projects/machines
+    // that don't exist, so the served graph only points at real nodes.
+    let topology = crate::topology::load(source_dir).map(|mut t| {
+        let project_names: HashSet<String> = projects.iter().map(|p| p.name.clone()).collect();
+        t.validate(&project_names);
+        t
+    });
+
     Ok(State {
         generated_at: now_unix(),
         source: Source {
@@ -88,6 +101,7 @@ pub fn build(source_dir: &Path, remote: Option<&str>) -> Result<State> {
         areas,
         services: Vec::new(),
         external_links: Vec::new(),
+        topology,
         note_paths,
     })
 }

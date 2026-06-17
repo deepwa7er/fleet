@@ -5,7 +5,10 @@ A personal mission-control **Chrome new-tab page** — a live view into the
 `deepwa7er` VPS.
 
 Open a new tab and you see your **Fleet** (every project with its current
-status) and your **Areas** (the VPS).
+status) and your **Areas** (the VPS). A **Graph** view (toggle in the header)
+shows the whole portfolio as a force-directed map: every project and machine as
+a node, which machine each codebase lives on, where each service runs (coloured
+by live health), and the typed connections between projects.
 
 ## Components
 
@@ -19,6 +22,13 @@ server/      harbor-server — Rust/Axum service that reads a checkout of the
 The extension fetches `GET /api/state` from the server and renders it. Project
 state is the **frontmatter** in the secondbrain files (see that repo's
 `SCHEMA.md`) — harbor reads structured fields, it does not scrape prose.
+
+The **graph** is driven the same way: a single `topology.yaml` at the
+secondbrain root declares the machines, each project's codebase/runtime
+placement, and the typed edges between projects (the structured form of
+PORTFOLIO.md's integration map). harbor reads only what's declared there —
+dangling references are pruned and logged, and a missing `topology.yaml` simply
+disables the graph view. See the secondbrain `SCHEMA.md` for the field reference.
 
 ## Run it locally (full pipeline)
 

@@ -10,7 +10,7 @@
   <main class="harbor">
     <div class="docbar">
       <span>DOC. HBR-001</span>
-      <span>REV. 0.2.0</span>
+      <span>REV. 0.3.0</span>
       <span class="spacer">CLASSIFICATION · PERSONAL</span>
     </div>
 
@@ -28,6 +28,12 @@
       </div>
     </header>
 
+    <nav class="viewtabs" role="tablist" aria-label="view">
+      <button id="tab-list" class="viewtab active" role="tab" aria-selected="true">List</button>
+      <button id="tab-graph" class="viewtab" role="tab" aria-selected="false">Graph</button>
+    </nav>
+
+    <div id="list-view">
     <section id="nextup-section" class="nextup-section hidden">
       <article class="card">
         <h2>Next up</h2>
@@ -61,10 +67,26 @@
         </ul>
       </article>
     </section>
+    </div><!-- /list-view -->
+
+    <section id="graph-view" class="graph-view hidden" role="tabpanel" aria-label="graph">
+      <div class="graph-frame">
+        <svg id="graph-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+        <p id="graph-empty" class="graph-empty hidden">no topology.yaml — graph view has nothing to draw</p>
+        <ul class="graph-legend">
+          <li><span class="lg-swatch lg-project"></span>project</li>
+          <li><span class="lg-swatch lg-machine"></span>machine</li>
+          <li><span class="lg-line lg-runs-active"></span>runs on (live)</li>
+          <li><span class="lg-line lg-runs-failed"></span>runs on (down)</li>
+          <li><span class="lg-line lg-codebase"></span>codebase</li>
+          <li><span class="lg-line lg-link"></span>connection</li>
+        </ul>
+      </div>
+    </section>
 
     <footer class="waterline">
       <span id="status">connecting…</span>
-      <span class="ver">harbor v0.2.0</span>
+      <span class="ver">harbor v0.3.0</span>
     </footer>
   </main>
 

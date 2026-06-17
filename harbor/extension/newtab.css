@@ -112,6 +112,85 @@ body {
   letter-spacing: 0.5px; text-transform: uppercase;
 }
 
+/* ── View tabs (List / Graph) ────────────────────────────────────────────── */
+.viewtabs {
+  display: flex; gap: 0; margin-bottom: var(--s4);
+  border-bottom: var(--border);
+}
+.viewtab {
+  font: inherit; font-size: 11px; font-weight: 700;
+  letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--ink-faint); background: none; border: none; cursor: pointer;
+  padding: var(--s2) var(--s4); border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.viewtab:hover { color: var(--ink-muted); }
+.viewtab.active { color: var(--ink); border-bottom-color: var(--accent); }
+
+/* ── Graph view ──────────────────────────────────────────────────────────── */
+.graph-view { flex: 1; display: flex; }
+.graph-frame {
+  position: relative; flex: 1; min-height: 480px;
+  background: var(--surface); border: var(--border);
+}
+#graph-svg { display: block; width: 100%; height: 100%; cursor: grab; }
+#graph-svg:active { cursor: grabbing; }
+.graph-empty {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--ink-faint); font-size: 12px; letter-spacing: 0.5px; text-transform: uppercase;
+}
+
+/* Graph edges. */
+.g-edge { stroke-width: 1; fill: none; }
+.g-edge.e-codebase { stroke: var(--rule-strong); stroke-dasharray: 3 3; }
+.g-edge.e-runs { stroke: var(--st-idle); }
+.g-edge.e-runs.h-active { stroke: var(--st-active); }
+.g-edge.e-runs.h-failed { stroke: var(--danger); }
+.g-edge.e-link { stroke: var(--ink-faint); }
+.g-elabel {
+  fill: var(--ink-faint); font: 9px/1 var(--font-mono);
+  letter-spacing: 0.5px; text-transform: uppercase; text-anchor: middle;
+  pointer-events: none; -webkit-user-select: none; user-select: none;
+}
+
+/* Graph nodes. */
+.g-node { cursor: pointer; }
+.g-node .n-box { fill: var(--bg); stroke: var(--rule-strong); stroke-width: 1; }
+.g-node.n-machine .n-box { stroke: var(--accent); stroke-width: 1.5; fill: var(--surface-2); }
+.g-node:hover .n-box, .g-node:focus-visible .n-box { stroke: var(--accent); }
+.g-node .n-label {
+  fill: var(--ink); font: 11px/1 var(--font-mono); dominant-baseline: middle;
+  -webkit-user-select: none; user-select: none;
+}
+.g-node.n-machine .n-label { font-weight: 700; letter-spacing: 0.5px; }
+.g-node .n-led { stroke: none; }
+.n-led.status-active   { fill: var(--st-active); }
+.n-led.status-ongoing  { fill: var(--st-active); }
+.n-led.status-shipped  { fill: var(--st-shipped); }
+.n-led.status-stable   { fill: var(--st-idle); }
+.n-led.status-idea     { fill: var(--st-idea); }
+.n-led.status-learning { fill: var(--st-learning); }
+.n-led.status-archived { fill: var(--st-archived); }
+.n-led.role-server { fill: var(--accent); }
+.n-led.role-dev    { fill: var(--st-shipped); }
+
+/* Graph legend. */
+.graph-legend {
+  position: absolute; right: var(--s3); bottom: var(--s3);
+  list-style: none; display: flex; flex-direction: column; gap: var(--s1);
+  padding: var(--s2) var(--s3); background: var(--bg); border: var(--border);
+  font-size: 10px; color: var(--ink-muted); letter-spacing: 0.5px;
+}
+.graph-legend li { display: flex; align-items: center; gap: var(--s2); }
+.lg-swatch { width: 10px; height: 10px; flex: none; }
+.lg-project { background: var(--bg); border: 1px solid var(--rule-strong); }
+.lg-machine { background: var(--surface-2); border: 1.5px solid var(--accent); }
+.lg-line { width: 14px; height: 0; flex: none; border-top: 1px solid; }
+.lg-runs-active { border-top-color: var(--st-active); }
+.lg-runs-failed { border-top-color: var(--danger); }
+.lg-codebase { border-top: 1px dashed var(--rule-strong); }
+.lg-link { border-top-color: var(--ink-faint); }
+
 /* ── Card grid ───────────────────────────────────────────────────────────── */
 .grid {
   display: grid;
