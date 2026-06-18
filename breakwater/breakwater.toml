@@ -1,0 +1,33 @@
+# breakwater — tailnet reverse proxy.
+#
+# Routes HTTPS by hostname to local services. The listeners bind the Tailscale
+# IP, so breakwater is reachable only from the tailnet — the tailnet is the
+# security boundary, the same model as the rest of the deepwa7er fleet.
+#
+# This file is the committed example. The live config is installed at
+# /etc/breakwater/breakwater.toml by deploy/provision.sh; adding a service is a
+# new [[routes]] block here followed by a config reload.
+
+# TLS listener — the front door. Every service is reached as
+# https://<name>.internal.deepwa7er.com on the tailnet IP.
+https_addr = "100.98.184.58:443"
+
+# Plain-HTTP listener; 308-redirects everything to its https:// equivalent.
+http_redirect_addr = "100.98.184.58:80"
+
+# Loopback-only health endpoint for tugboat's deploy health check.
+health_addr = "127.0.0.1:8079"
+
+[tls]
+# Wildcard certificate for *.internal.deepwa7er.com. Loaded at startup; a later
+# step adds ACME DNS-01 (Cloudflare) auto-renewal that rewrites these files.
+cert = "/etc/breakwater/certs/fullchain.pem"
+key = "/etc/breakwater/certs/privkey.pem"
+
+[[routes]]
+host = "lighthouse.internal.deepwa7er.com"
+upstream = "127.0.0.1:8080"
+
+[[routes]]
+host = "buoy.internal.deepwa7er.com"
+upstream = "127.0.0.1:8092"
