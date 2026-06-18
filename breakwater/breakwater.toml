@@ -35,7 +35,8 @@ cloudflare_zone = "deepwa7er.com"
 # Token file (DNS:Edit + Zone:Read), installed on the host at mode 600.
 cloudflare_token_file = "/etc/breakwater/cloudflare-token"
 # Account key + issued cert/key are cached here so restarts don't re-issue.
-cache_dir = "/etc/breakwater/acme"
+# This is writable service state (systemd manages it via StateDirectory).
+cache_dir = "/var/lib/breakwater/acme"
 # Use the Let's Encrypt staging directory while testing to avoid rate limits:
 #   directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
 

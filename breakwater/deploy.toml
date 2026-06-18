@@ -1,0 +1,30 @@
+# tugboat deploy manifest — github.com/deepwa7er/tugboat
+#   deploy:  tugboat            (from this directory)
+#
+# Routine deploy: cross-compile the static musl binary locally and ship it.
+# Infrastructure (service user, systemd unit, /etc/breakwater config, the
+# Cloudflare token) is deploy/provision.sh — a one-time/on-change step, not run
+# here. See README.md for the first-deploy order.
+name = "breakwater"
+host = "deepwa7er"
+
+[build]
+# Static musl release build for the VPS. The target is installed on demand so a
+# fresh dev machine works; the musl linker must be on PATH (see README).
+cmd = "rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true; CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --target x86_64-unknown-linux-musl"
+
+[[artifacts]]
+src = "target/x86_64-unknown-linux-musl/release/breakwater"
+dest = "/usr/local/bin/breakwater"
+
+[health]
+# breakwater opens its loopback health port only after TLS is ready. On the very
+# first start that means *after* an ACME issuance (DNS propagation + validation),
+# which can take a minute or two — so allow generous time. Restarts with a cached
+# certificate come up almost immediately.
+url = "http://127.0.0.1:8079/healthz"
+retries = 240
+interval_ms = 1000
+
+[lighthouse]
+enroll = true
