@@ -50,5 +50,33 @@ host = "lighthouse.internal.deepwa7er.com"
 upstream = "100.98.184.58:8080"
 
 [[routes]]
+host = "harbor.internal.deepwa7er.com"
+upstream = "100.98.184.58:8090"
+
+[[routes]]
+host = "driftword.internal.deepwa7er.com"
+upstream = "100.98.184.58:8091"
+
+[[routes]]
 host = "buoy.internal.deepwa7er.com"
 upstream = "100.98.184.58:8092"
+
+[[routes]]
+host = "ferry.internal.deepwa7er.com"
+upstream = "127.0.0.1:7777"
+
+[[routes]]
+host = "music.internal.deepwa7er.com"
+upstream = "127.0.0.1:4533"
+
+[[routes]]
+host = "discovery.internal.deepwa7er.com"
+upstream = "127.0.0.1:8765"
+
+[[routes]]
+host = "slskd.internal.deepwa7er.com"
+upstream = "127.0.0.1:5030"
+
+# Note: tidepool is intentionally NOT routed here. It runs as its own Tailscale
+# node (tsnet, `-tls`) and serves HTTPS itself at https://tidepool — there is no
+# plain-HTTP backend to proxy to.
