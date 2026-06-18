@@ -11,9 +11,17 @@ http-body-util = "0.1"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util"] }
-# ring (not the default aws-lc-rs): cross-compiles cleanly to musl with no C/cmake
-# toolchain, keeping the build-locally-ship-a-static-binary model intact.
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+toml = "0.8"
+
+# TLS + ACME. Every crypto-bearing dependency is pinned to the ring provider
+# (not the default aws-lc-rs) so the whole tree cross-compiles cleanly to musl
+# with no C/cmake toolchain, keeping the build-locally-ship-a-static-binary model.
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 rustls-pemfile = "2"
-toml = "0.8"
+webpki-roots = "0.26"
+arc-swap = "1"
+instant-acme = { version = "0.8", default-features = false, features = ["hyper-rustls", "ring", "rcgen"] }
+x509-parser = "0.16"
+hickory-resolver = { version = "0.24", default-features = false, features = ["tokio-runtime"] }

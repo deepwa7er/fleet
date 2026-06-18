@@ -230,11 +230,11 @@ fn forward_request_headers(incoming: &HeaderMap, client_ip: IpAddr, is_upgrade: 
         out.insert(HeaderName::from_static("x-forwarded-host"), host.clone());
     }
 
-    if is_upgrade {
-        if let Some(upgrade) = incoming.get(header::UPGRADE) {
-            out.insert(header::UPGRADE, upgrade.clone());
-            out.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
-        }
+    if is_upgrade
+        && let Some(upgrade) = incoming.get(header::UPGRADE)
+    {
+        out.insert(header::UPGRADE, upgrade.clone());
+        out.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
     }
 
     out

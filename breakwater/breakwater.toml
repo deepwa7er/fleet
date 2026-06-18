@@ -18,11 +18,26 @@ http_redirect_addr = "100.98.184.58:80"
 # Loopback-only health endpoint for tugboat's deploy health check.
 health_addr = "127.0.0.1:8079"
 
-[tls]
-# Wildcard certificate for *.internal.deepwa7er.com. Loaded at startup; a later
-# step adds ACME DNS-01 (Cloudflare) auto-renewal that rewrites these files.
-cert = "/etc/breakwater/certs/fullchain.pem"
-key = "/etc/breakwater/certs/privkey.pem"
+# Automatic certificates via ACME DNS-01 (Cloudflare). breakwater obtains and
+# renews a wildcard cert in-process and hot-swaps it with no downtime.
+#
+# Alternatively, omit [acme] and use a static cert from disk (e.g. for local
+# testing):
+#   [tls]
+#   cert = "/etc/breakwater/certs/fullchain.pem"
+#   key  = "/etc/breakwater/certs/privkey.pem"
+# Exactly one of [acme] or [tls] must be set.
+[acme]
+domains = ["*.internal.deepwa7er.com"]
+contact = "mailto:hello@joemafrici.com"
+# Cloudflare DNS zone hosting the challenge records.
+cloudflare_zone = "deepwa7er.com"
+# Token file (DNS:Edit + Zone:Read), installed on the host at mode 600.
+cloudflare_token_file = "/etc/breakwater/cloudflare-token"
+# Account key + issued cert/key are cached here so restarts don't re-issue.
+cache_dir = "/etc/breakwater/acme"
+# Use the Let's Encrypt staging directory while testing to avoid rate limits:
+#   directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
 
 [[routes]]
 host = "lighthouse.internal.deepwa7er.com"

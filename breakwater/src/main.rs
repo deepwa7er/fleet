@@ -20,9 +20,10 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
+use breakwater::cert::{self, CertMaterial};
 use breakwater::config::Config;
 use breakwater::proxy::{self, Router};
-use breakwater::tls;
+use breakwater::tls::{self, CertResolver};
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/breakwater/breakwater.toml";
 
@@ -38,7 +39,17 @@ async fn main() -> anyhow::Result<()> {
     let config_path = config_path_from_args()?;
     let config = Config::load(&config_path)?;
 
-    let acceptor = tls::acceptor(&config.tls)?;
+    // Static-cert mode loads from disk; ACME mode obtains/renews automatically.
+    // Config validation guarantees exactly one of the two is set.
+    let resolver = match (config.tls.as_ref(), config.acme.as_ref()) {
+        (Some(tls), None) => {
+            let material = CertMaterial::from_files(&tls.cert, &tls.key)?;
+            Arc::new(CertResolver::new(&material)?)
+        }
+        (None, Some(acme)) => cert::start_acme(acme.clone()).await?,
+        _ => unreachable!("config validation guarantees exactly one cert mode"),
+    };
+    let acceptor = tls::acceptor(resolver);
     let router = Arc::new(Router::new(config.routing_table()));
 
     // The TLS proxy is mandatory; the redirect and health listeners are optional

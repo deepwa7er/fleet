@@ -12,6 +12,16 @@ use anyhow::{Context, bail};
 use http::uri::Authority;
 use serde::Deserialize;
 
+/// Let's Encrypt's production directory — the default ACME endpoint.
+fn default_directory() -> String {
+    "https://acme-v02.api.letsencrypt.org/directory".to_string()
+}
+
+/// Renew once the certificate has fewer than this many days of validity left.
+fn default_renew_before_days() -> i64 {
+    30
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -30,7 +40,15 @@ pub struct Config {
     #[serde(default)]
     pub health_addr: Option<SocketAddr>,
 
-    pub tls: TlsConfig,
+    /// Static-certificate mode: serve a certificate and key from disk. Mutually
+    /// exclusive with `[acme]`; exactly one of the two must be set.
+    #[serde(default)]
+    pub tls: Option<TlsConfig>,
+
+    /// Automatic-certificate mode: obtain and renew a certificate via ACME
+    /// DNS-01 (Cloudflare). Mutually exclusive with `[tls]`.
+    #[serde(default)]
+    pub acme: Option<AcmeConfig>,
 
     #[serde(default)]
     pub routes: Vec<Route>,
@@ -43,6 +61,31 @@ pub struct TlsConfig {
     pub cert: PathBuf,
     /// PEM file: the matching private key.
     pub key: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcmeConfig {
+    /// Certificate subject names, e.g. `["*.internal.deepwa7er.com"]`.
+    pub domains: Vec<String>,
+    /// ACME account contact, as a full URI, e.g. `mailto:you@example.com`.
+    pub contact: String,
+    /// ACME directory URL. Defaults to Let's Encrypt production; point at the
+    /// staging directory while testing to avoid rate limits.
+    #[serde(default = "default_directory")]
+    pub directory: String,
+    /// The Cloudflare DNS zone that hosts the challenge records, e.g.
+    /// `deepwa7er.com`. Stated explicitly rather than guessed from the domain
+    /// (which would need a public-suffix list to do correctly).
+    pub cloudflare_zone: String,
+    /// File containing the Cloudflare API token (DNS:Edit + Zone:Read). Kept out
+    /// of config and git; install it on the host at mode 600.
+    pub cloudflare_token_file: PathBuf,
+    /// Directory where the ACME account key and issued cert/key are cached, so a
+    /// restart reuses the existing certificate instead of re-issuing.
+    pub cache_dir: PathBuf,
+    #[serde(default = "default_renew_before_days")]
+    pub renew_before_days: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +112,16 @@ impl Config {
     }
 
     fn validate(&self) -> anyhow::Result<()> {
+        match (&self.tls, &self.acme) {
+            (Some(_), Some(_)) => bail!("set either [tls] or [acme], not both"),
+            (None, None) => bail!("set exactly one of [tls] (static cert) or [acme] (auto cert)"),
+            (Some(_), None) => {}
+            (None, Some(acme)) => {
+                if acme.domains.is_empty() {
+                    bail!("[acme] needs at least one domain");
+                }
+            }
+        }
         if self.routes.is_empty() {
             bail!("no [[routes]] defined — breakwater would forward nothing");
         }
@@ -158,6 +211,57 @@ mod tests {
             upstream = "127.0.0.1:8081"
         "#;
         assert!(Config::from_toml(toml).is_err());
+    }
+
+    #[test]
+    fn rejects_both_tls_and_acme() {
+        let toml = r#"
+            https_addr = "100.98.184.58:443"
+            [tls]
+            cert = "/x/cert.pem"
+            key = "/x/key.pem"
+            [acme]
+            domains = ["*.internal.deepwa7er.com"]
+            contact = "mailto:a@b.com"
+            cloudflare_zone = "deepwa7er.com"
+            cloudflare_token_file = "/etc/breakwater/cloudflare-token"
+            cache_dir = "/etc/breakwater/acme"
+            [[routes]]
+            host = "a.example.com"
+            upstream = "127.0.0.1:8080"
+        "#;
+        assert!(Config::from_toml(toml).is_err());
+    }
+
+    #[test]
+    fn rejects_neither_tls_nor_acme() {
+        let toml = r#"
+            https_addr = "100.98.184.58:443"
+            [[routes]]
+            host = "a.example.com"
+            upstream = "127.0.0.1:8080"
+        "#;
+        assert!(Config::from_toml(toml).is_err());
+    }
+
+    #[test]
+    fn acme_directory_defaults_to_production() {
+        let toml = r#"
+            https_addr = "100.98.184.58:443"
+            [acme]
+            domains = ["*.internal.deepwa7er.com"]
+            contact = "mailto:a@b.com"
+            cloudflare_zone = "deepwa7er.com"
+            cloudflare_token_file = "/etc/breakwater/cloudflare-token"
+            cache_dir = "/etc/breakwater/acme"
+            [[routes]]
+            host = "a.example.com"
+            upstream = "127.0.0.1:8080"
+        "#;
+        let config = Config::from_toml(toml).unwrap();
+        let acme = config.acme.unwrap();
+        assert!(acme.directory.contains("acme-v02.api.letsencrypt.org"));
+        assert_eq!(acme.renew_before_days, 30);
     }
 
     #[test]
