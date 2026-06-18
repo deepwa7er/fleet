@@ -11,25 +11,28 @@
   --fs-base: 13px;
   --lh-base: 1.45;
 
-  /* Dark "terminal" base — near-black bg, warm light-grey ink. */
-  --bg:          #0b0c0d;
-  --surface:     #121315;
-  --surface-2:   #161819;   /* overlay sheet */
-  --ink:         #e6e4dd;
-  --ink-muted:   #9a978d;
-  --ink-faint:   #6a675f;
-  --rule:        #2a2b2d;   /* hairline borders */
-  --rule-strong: #3a3c3e;
+  /* Dark blue-tinted base — cool near-black bg, cool blue-grey ink. */
+  --bg:          #0a0d12;
+  --surface:     #0f131b;
+  --surface-2:   #141a26;   /* overlay sheet */
+  --ink:         #e4e7ee;
+  --ink-muted:   #9aa3b5;
+  --ink-faint:   #61687a;
+  --rule:        #232a38;   /* blue-grey hairline borders */
+  --rule-strong: #323c52;
 
-  /* One signal accent — caution amber. Means "act / attention", not decor. */
-  --accent:      #f08c00;
+  /* Primary theme accent — deep azure. Identity + interaction: brand mark, focus,
+   * links, hover, sheet borders, machine nodes. (Amber survives below as the
+   * "idea / attention" datum in the status ramp — a signal, not chrome.) */
+  --accent:      #1c7ed6;
+  --accent-muted: #6f9bc4;  /* desaturated steel-blue — section labels, soft rules */
   --danger:      #c92a2a;
 
   /* Instrument status ramp — flat signal colors; the color IS the datum.
    * (Justified exception to the single-accent rule: status is real, multi-state
    * information, like an instrument panel. Kept flat, no glow.) */
   --st-active:   #37b24d;   /* go / live           */
-  --st-shipped:  #4dabf7;   /* shipped / info      */
+  --st-shipped:  #22b8cf;   /* shipped / info — cyan, kept distinct from the blue accent */
   --st-idle:     #6a675f;   /* stable / inactive   */
   --st-idea:     #f08c00;   /* idea / attention    */
   --st-learning: #9775fa;   /* learning            */
@@ -85,7 +88,7 @@ body {
   justify-content: space-between;
   padding-bottom: var(--s4);
   margin-bottom: var(--s5);
-  border-bottom: 1px solid var(--rule-strong);
+  border-bottom: 1px solid var(--accent-muted);
 }
 .brand { display: flex; align-items: center; gap: var(--s3); }
 .brand-mark {
@@ -207,7 +210,7 @@ body {
 }
 .card h2 {
   font-size: 11px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 1.5px; color: var(--ink-muted);
+  letter-spacing: 1.5px; color: var(--accent-muted);
   padding-bottom: var(--s2); margin-bottom: var(--s3);
   border-bottom: var(--border);
 }
@@ -261,7 +264,7 @@ body {
 }
 .ver { font-variant-numeric: tabular-nums; }
 #status.ok  { color: var(--ink-muted); }
-#status.err { color: var(--accent); }
+#status.err { color: var(--danger); }
 
 /* ── Utility ─────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
@@ -322,7 +325,7 @@ body {
 .subhead {
   margin: var(--s4) 0 var(--s2); padding-bottom: var(--s2);
   font-size: 11px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 1.5px; color: var(--ink-muted);
+  letter-spacing: 1.5px; color: var(--accent-muted);
   border-bottom: var(--border);
 }
 .dot.svc-active   { background: var(--st-active); }
@@ -364,7 +367,7 @@ body {
 /* Detail sections (Next steps / Recent work / Note). */
 .sheet-section {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px;
-  color: var(--ink-muted); margin: var(--s5) 0 var(--s3);
+  color: var(--accent-muted); margin: var(--s5) 0 var(--s3);
   padding-bottom: var(--s2); border-bottom: var(--border);
 }
 .sheet-section:first-child { margin-top: 0; }
