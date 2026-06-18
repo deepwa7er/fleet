@@ -40,10 +40,15 @@ cache_dir = "/var/lib/breakwater/acme"
 # Use the Let's Encrypt staging directory while testing to avoid rate limits:
 #   directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
 
+# `upstream` is wherever the service actually listens. The deepwa7er fleet
+# services currently bind the tailnet IP directly (e.g. lighthouse on
+# 100.98.184.58:8080), so route to that. If a service is moved to loopback
+# (127.0.0.1:<port>) so breakwater becomes its only tailnet-facing entry point,
+# update its upstream accordingly.
 [[routes]]
 host = "lighthouse.internal.deepwa7er.com"
-upstream = "127.0.0.1:8080"
+upstream = "100.98.184.58:8080"
 
 [[routes]]
 host = "buoy.internal.deepwa7er.com"
-upstream = "127.0.0.1:8092"
+upstream = "100.98.184.58:8092"
