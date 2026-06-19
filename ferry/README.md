@@ -66,6 +66,19 @@ Defined in the `[commands]` table of the config:
   into `https://dash/services/nginx?action=restart`, and `b svc nginx` into
   `https://dash/services/nginx?action=`.
 
+### Jump to a localhost port
+
+A built-in shorthand turns `:<port>` into a jump to that port on your own
+machine: `:3000` redirects to `http://localhost:3000`. An optional path, query,
+or fragment is carried through verbatim — `:3000/admin` →
+`http://localhost:3000/admin`. The port must be in range (1–65535); anything
+that isn't a port (`:abc`, `:99999`) falls through to a normal search.
+
+For a bare `:3000` to reach ferry, ferry must be your browser's *default*
+search engine (so non-URL input is sent to it). If you only registered the `b`
+keyword, type `b :3000` instead. An explicit command literally named `:3000`
+shadows the built-in.
+
 Command URLs must be absolute (`scheme://…`); a relative value would be
 resolved against ferry's own origin instead of sending the browser onward, so
 it is rejected both at config load and when added through the UI.

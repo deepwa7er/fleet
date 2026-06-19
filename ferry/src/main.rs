@@ -678,7 +678,7 @@ fn render_commands_page(config: &Config, notice: Option<&Notice>, form: &FormVal
 <section class="panel">
 <h2 class="panel-head">Commands</h2>
 {table}</section>
-<p class="fallback">Fallback <code>{fallback}</code></p>
+<p class="fallback">Built-in <code>:3000</code> &rarr; <code>http://localhost:3000</code> &middot; Fallback <code>{fallback}</code></p>
 </body>
 </html>
 "#,

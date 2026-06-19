@@ -15,9 +15,12 @@ pub enum Resolution {
 /// The first whitespace-separated word names a command; the rest is its
 /// argument. Rules, in order:
 /// - empty input, or the bare word `list` (unless shadowed by config): the list page
-/// - parameterized command (template contains `{query}` or `{1}`..`{9}`):
-///   substitute the (encoded) argument(s)
-/// - command with no placeholders and no argument: redirect to it directly
+/// - explicit command match takes precedence over the built-ins below:
+///   - parameterized command (template contains `{query}` or `{1}`..`{9}`):
+///     substitute the (encoded) argument(s)
+///   - command with no placeholders and no argument: redirect to it directly
+/// - the `:port` shorthand (unless shadowed by an explicit command of that name):
+///   `:3000` or `:3000/path` jumps to `http://localhost:3000[/path]`
 /// - anything else (unknown command, or argument given to a command that
 ///   takes none): treat the whole input as a fallback search
 pub fn resolve(config: &Config, input: &str) -> Resolution {
@@ -41,11 +44,33 @@ pub fn resolve(config: &Config, input: &str) -> Resolution {
         return Resolution::Redirect(fill(&config.fallback, input));
     }
 
+    if let Some(url) = localhost_redirect(name) {
+        return Resolution::Redirect(url);
+    }
+
     if input == "list" {
         return Resolution::ListPage;
     }
 
     Resolution::Redirect(fill(&config.fallback, input))
+}
+
+/// Built-in `:port` shorthand: `:3000` → `http://localhost:3000`. An optional
+/// path/query/fragment suffix is carried through verbatim (`:3000/admin` →
+/// `http://localhost:3000/admin`). Returns `None` — so the caller falls through
+/// to a normal search — unless the token is `:` followed by a valid port (a
+/// 1..=65535 run of digits) and any suffix begins with `/`, `?`, or `#`.
+fn localhost_redirect(token: &str) -> Option<String> {
+    let rest = token.strip_prefix(':')?;
+    let digits_end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    let (digits, suffix) = rest.split_at(digits_end);
+    // A valid port (rejects empty, 0, and anything past u16::MAX like `:99999`).
+    let port: u16 = digits.parse().ok().filter(|&p| p != 0)?;
+    // Reject a token that merely starts with digits, e.g. `:3000abc` or `::1`.
+    if !suffix.is_empty() && !suffix.starts_with(['/', '?', '#']) {
+        return None;
+    }
+    Some(format!("http://localhost:{port}{suffix}"))
 }
 
 /// Highest positional placeholder supported: `{1}`..`{9}`.
@@ -157,6 +182,44 @@ mod tests {
             // only {1} and {2} are used; the third arg is ignored
             redirect("https://dash.example/services/a%2Fb?action=c"),
         );
+    }
+
+    #[test]
+    fn colon_port_jumps_to_localhost() {
+        assert_eq!(resolve(&config(), ":3000"), redirect("http://localhost:3000"));
+    }
+
+    #[test]
+    fn colon_port_carries_path_query_and_fragment() {
+        assert_eq!(
+            resolve(&config(), ":3000/admin"),
+            redirect("http://localhost:3000/admin"),
+        );
+        assert_eq!(
+            resolve(&config(), ":8080/search?q=hi#top"),
+            redirect("http://localhost:8080/search?q=hi#top"),
+        );
+    }
+
+    #[test]
+    fn colon_port_rejects_non_port_input() {
+        // Not a port → ordinary fallback search, colon and all.
+        for input in [":", ":abc", ":99999", ":0", "::1", ":3000abc"] {
+            assert_eq!(
+                resolve(&config(), input),
+                redirect(&fill("https://search.example/?q={query}", input)),
+                "{input:?} should fall through to search",
+            );
+        }
+    }
+
+    #[test]
+    fn colon_port_can_be_shadowed_by_an_explicit_command() {
+        let mut config = config();
+        config
+            .commands
+            .insert(":3000".to_string(), "https://override.example/".to_string());
+        assert_eq!(resolve(&config, ":3000"), redirect("https://override.example/"));
     }
 
     #[test]
