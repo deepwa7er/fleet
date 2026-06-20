@@ -1,5 +1,5 @@
 # tugboat deploy manifest — github.com/deepwa7er/tugboat
-#   deploy:  tugboat --manifest deploy.toml      (from this directory)
+#   deploy:  tugboat deploy      (from this directory)
 #
 # Routine deploy (ship a new binary). One-time provisioning — the `harbor`
 # service user + read-only deploy key, and installing the systemd unit — is
