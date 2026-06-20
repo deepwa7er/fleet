@@ -27,8 +27,9 @@ branch = "main"
 # How often to pull + re-parse (seconds).
 refresh_secs = 60
 
-# Live VPS service health: harbor fetches lighthouse's /api/services.
-lighthouse_url = "http://100.98.184.58:8080"
+# Live VPS service health: harbor fetches lighthouse's /api/services. lighthouse
+# binds loopback on the same host, so reach it there.
+lighthouse_url = "http://127.0.0.1:8080"
 
 # Optional: a GitHub token so PRIVATE repos (lighthouse, sonar) also show commit
 # activity. Public repos work without it. Use a fine-grained, read-only token.
@@ -50,4 +51,4 @@ extension_dir = "dist"
 # new-tab page.
 [[external_links]]
 name = "driftword"
-url = "http://deepwa7er.tailcfab97.ts.net:8091"
+url = "https://driftword.internal.deepwa7er.com"
