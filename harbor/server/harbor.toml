@@ -9,9 +9,9 @@
 # your local secondbrain checkout, drop `git_remote`, and bind to 127.0.0.1.
 # Run with:  harbor-server harbor.local.toml
 
-# Tailscale IP, so harbor is reachable only from the tailnet — no public
-# exposure, same model as lighthouse.
-bind = "100.98.184.58"
+# Binds loopback; breakwater is the tailnet front door and serves harbor at
+# https://harbor.internal.deepwa7er.com (no public exposure).
+bind = "127.0.0.1"
 port = 8090
 
 # harbor's own checkout of secondbrain (created on first run by cloning
