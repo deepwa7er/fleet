@@ -41,3 +41,29 @@ export async function controlService(
   }
   return response.json() as Promise<ServiceStatus>;
 }
+
+/** The units this dashboard can deploy (via the tugboat daemon). Empty when
+ * deploy integration is unconfigured or the daemon is unreachable. */
+export function fetchDeployable(): Promise<string[]> {
+  return getJson<string[]>(`${BASE}/deployable`);
+}
+
+/** Start a deploy of a service; resolves to the daemon's job id for streaming. */
+export async function startDeploy(unit: string): Promise<{ job_id: string }> {
+  const response = await fetch(
+    `${BASE}/services/${encodeURIComponent(unit)}/deploy`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `failed to deploy ${unit}: ${response.status}${detail ? ` ${detail}` : ""}`,
+    );
+  }
+  return response.json() as Promise<{ job_id: string }>;
+}
+
+/** URL for the Server-Sent Events live transcript of a deploy job. */
+export function deployStreamUrl(unit: string, job: string): string {
+  return `${BASE}/services/${encodeURIComponent(unit)}/deploy/${encodeURIComponent(job)}/stream`;
+}

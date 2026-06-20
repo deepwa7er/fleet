@@ -29,6 +29,8 @@ struct Cli {
 /// Shared, read-only application state.
 pub struct AppState {
     pub config: Config,
+    /// HTTP client for relaying deploy requests to the tugboat daemon.
+    pub http: reqwest::Client,
 }
 
 #[tokio::main]
@@ -51,7 +53,10 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(alerts::run(config.clone()));
     }
 
-    let state = Arc::new(AppState { config });
+    let state = Arc::new(AppState {
+        config,
+        http: reqwest::Client::new(),
+    });
 
     let app = Router::new()
         .route("/api/services", get(api::list_services))
@@ -60,6 +65,12 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/api/services/{unit}/control/{action}",
             post(api::control_service),
+        )
+        .route("/api/deployable", get(api::deployable_units))
+        .route("/api/services/{unit}/deploy", post(api::deploy_service))
+        .route(
+            "/api/services/{unit}/deploy/{job}/stream",
+            get(api::deploy_stream),
         )
         .fallback_service(serve_dir)
         .with_state(state);

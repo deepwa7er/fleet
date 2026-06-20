@@ -6,13 +6,16 @@
 //! against the monitored set, and an unknown unit returns `404` before any
 //! subprocess runs.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
+use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tokio_stream::{Stream, StreamExt};
 
@@ -145,4 +148,130 @@ async fn resolve(config: &Config, unit: &str) -> Result<Monitored, StatusCode> {
         .into_iter()
         .find(|m| m.unit == unit)
         .ok_or(StatusCode::NOT_FOUND)
+}
+
+/// One entry of the tugboat daemon's `/services` response.
+#[derive(Debug, Deserialize)]
+struct TugboatService {
+    name: String,
+    manifest_present: bool,
+}
+
+/// `GET /api/deployable` — the units the dashboard can deploy: monitored units
+/// whose tugboat service exists and has a manifest. Returns an empty list (no
+/// Deploy buttons) when deploy integration is unconfigured or the daemon is
+/// unreachable, so the dashboard degrades gracefully.
+pub async fn deployable_units(State(state): State<Arc<AppState>>) -> Json<Vec<String>> {
+    let Some(cfg) = &state.config.deploy else {
+        return Json(Vec::new());
+    };
+    let url = format!("{}/services", cfg.tugboat_url.trim_end_matches('/'));
+    let services: Vec<TugboatService> = match state
+        .http
+        .get(&url)
+        .bearer_auth(&cfg.token)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+    {
+        Ok(resp) => match resp.json().await {
+            Ok(services) => services,
+            Err(err) => {
+                eprintln!("parsing tugboat /services failed: {err}");
+                return Json(Vec::new());
+            }
+        },
+        Err(err) => {
+            eprintln!("tugboat /services unreachable: {err}");
+            return Json(Vec::new());
+        }
+    };
+
+    let deployable: HashSet<String> = services
+        .into_iter()
+        .filter(|s| s.manifest_present)
+        .map(|s| s.name)
+        .collect();
+
+    let units = monitored(&state.config)
+        .await
+        .into_iter()
+        .map(|m| m.unit)
+        .filter(|unit| deployable.contains(&state.config.deploy_name(unit)))
+        .collect();
+    Json(units)
+}
+
+/// `POST /api/services/{unit}/deploy` — relay a deploy request to the tugboat
+/// daemon. The daemon's response (a `{job_id}` on success, or an error status)
+/// is passed through unchanged; the token never leaves this server.
+pub async fn deploy_service(
+    State(state): State<Arc<AppState>>,
+    Path(unit): Path<String>,
+) -> Response {
+    let svc = match resolve(&state.config, &unit).await {
+        Ok(svc) => svc,
+        Err(code) => return (code, "unknown service").into_response(),
+    };
+    let Some(cfg) = &state.config.deploy else {
+        return (StatusCode::NOT_IMPLEMENTED, "deploy integration not configured").into_response();
+    };
+
+    let name = state.config.deploy_name(&svc.unit);
+    let url = format!("{}/deploy/{}", cfg.tugboat_url.trim_end_matches('/'), name);
+    let resp = match state.http.post(&url).bearer_auth(&cfg.token).send().await {
+        Ok(resp) => resp,
+        Err(err) => {
+            eprintln!("deploy relay to {url} failed: {err}");
+            return (StatusCode::BAD_GATEWAY, format!("tugboat daemon unreachable: {err}"))
+                .into_response();
+        }
+    };
+
+    let status = resp.status();
+    match resp.bytes().await {
+        Ok(body) => (status, [(header::CONTENT_TYPE, "application/json")], body).into_response(),
+        Err(err) => {
+            (StatusCode::BAD_GATEWAY, format!("reading tugboat response: {err}")).into_response()
+        }
+    }
+}
+
+/// `GET /api/services/{unit}/deploy/{job}/stream` — proxy the daemon's live
+/// deploy transcript (Server-Sent Events) straight through to the browser.
+pub async fn deploy_stream(
+    State(state): State<Arc<AppState>>,
+    Path((unit, job)): Path<(String, String)>,
+) -> Response {
+    if let Err(code) = resolve(&state.config, &unit).await {
+        return (code, "unknown service").into_response();
+    }
+    let Some(cfg) = &state.config.deploy else {
+        return (StatusCode::NOT_IMPLEMENTED, "deploy integration not configured").into_response();
+    };
+
+    let url = format!("{}/jobs/{}/stream", cfg.tugboat_url.trim_end_matches('/'), job);
+    let resp = match state.http.get(&url).bearer_auth(&cfg.token).send().await {
+        Ok(resp) => resp,
+        Err(err) => {
+            return (StatusCode::BAD_GATEWAY, format!("tugboat daemon unreachable: {err}"))
+                .into_response();
+        }
+    };
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.bytes().await.unwrap_or_default();
+        return (status, body).into_response();
+    }
+
+    let body = Body::from_stream(resp.bytes_stream());
+    (
+        [
+            (header::CONTENT_TYPE, "text/event-stream"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        body,
+    )
+        .into_response()
 }

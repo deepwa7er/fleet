@@ -28,6 +28,21 @@ pub struct Config {
     /// no watcher runs.
     #[serde(default)]
     pub alerts: Option<AlertConfig>,
+    /// Optional deploy integration. When present, the dashboard relays deploy
+    /// requests to a tugboat `serve` daemon (typically on the dev machine,
+    /// reached over the tailnet). Absent means no Deploy buttons appear.
+    #[serde(default)]
+    pub deploy: Option<DeployConfig>,
+}
+
+/// Deploy integration: where to reach the tugboat `serve` daemon.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeployConfig {
+    /// Base URL of the tugboat daemon, e.g. `http://100.x.y.z:7878`.
+    pub tugboat_url: String,
+    /// Bearer token the daemon requires (its `TUGBOAT_SERVE_TOKEN`). Secret —
+    /// keep this config root-readable only.
+    pub token: String,
 }
 
 /// Alerting settings.
@@ -52,6 +67,9 @@ pub struct ServiceConfig {
     pub unit: String,
     /// Display label override. If absent, the unit name is prettified.
     pub name: Option<String>,
+    /// tugboat service name override for deploys. If absent, the unit's stem is
+    /// used (`ferry.service` → `ferry`), which matches tugboat's fleet labels.
+    pub deploy_name: Option<String>,
 }
 
 fn default_target() -> String {
@@ -93,6 +111,21 @@ impl Config {
             .and_then(|s| s.name.clone())
             .unwrap_or_else(|| prettify_unit(unit))
     }
+
+    /// The tugboat service name a unit deploys as: the config override if set,
+    /// else the unit's stem (`ferry.service` → `ferry`).
+    pub fn deploy_name(&self, unit: &str) -> String {
+        self.services
+            .iter()
+            .find(|s| s.unit == unit)
+            .and_then(|s| s.deploy_name.clone())
+            .unwrap_or_else(|| unit_stem(unit).to_owned())
+    }
+}
+
+/// The unit name without its `.service` (or other) suffix.
+fn unit_stem(unit: &str) -> &str {
+    unit.rsplit_once('.').map(|(stem, _ext)| stem).unwrap_or(unit)
 }
 
 /// Turn a unit name into a human label: drop the `.service` suffix and

@@ -34,3 +34,21 @@ target = "lighthouse.target"
 #   [alerts]
 #   notify_url = "https://ntfy.sh/your-secret-topic"
 #   interval_secs = 30   # how often to poll (optional; default 30)
+
+# Optional deploy integration. When present, the dashboard shows a Deploy button
+# for each monitored service that maps to a deployable member of a `tugboat
+# serve` daemon — typically running on your dev machine and reached over the
+# tailnet. Clicking it relays the deploy to that daemon (which builds the current
+# working tree and ships it) and streams the live transcript back. Omit this
+# section to hide all Deploy buttons. See tugboat's README ("Serving deploys").
+#
+#   [deploy]
+#   tugboat_url = "http://100.x.y.z:7878"   # the daemon's tailnet address
+#   token = "…"                             # its TUGBOAT_SERVE_TOKEN (secret)
+#
+# A unit deploys as its stem by default (ferry.service → "ferry", matching
+# tugboat's fleet labels). Override per service with `deploy_name`:
+#
+#   [[services]]
+#   unit = "sonar-discovery.service"
+#   deploy_name = "sonar"

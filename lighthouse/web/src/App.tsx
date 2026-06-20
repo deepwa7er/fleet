@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { ServiceStatus } from "./types.ts";
-import { controlService, fetchServices, type ServiceAction } from "./api.ts";
+import {
+  controlService,
+  fetchDeployable,
+  fetchServices,
+  type ServiceAction,
+} from "./api.ts";
 import { ServiceCard } from "./components/ServiceCard.tsx";
 import { ServiceDetail } from "./components/ServiceDetail.tsx";
 
@@ -42,6 +47,7 @@ function slugFor(unit: string): string {
 
 export function App() {
   const [services, setServices] = useState<ServiceStatus[]>([]);
+  const [deployable, setDeployable] = useState<string[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,6 +76,12 @@ export function App() {
     const id = setInterval(() => void refresh(), POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [refresh]);
+
+  // The deployable set rarely changes (it's the fleet config), so fetch it once.
+  // A failure just means no Deploy buttons — not a dashboard-level error.
+  useEffect(() => {
+    fetchDeployable().then(setDeployable, () => setDeployable([]));
+  }, []);
 
   // Once services load, select the one named in the URL (if any), else the
   // first. Runs only while nothing is selected yet.
@@ -150,6 +162,7 @@ export function App() {
             <ServiceDetail
               key={selectedService.unit}
               service={selectedService}
+              canDeploy={deployable.includes(selectedService.unit)}
               onChanged={() => void refresh()}
             />
           ) : (

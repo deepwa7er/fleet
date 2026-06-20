@@ -1,12 +1,15 @@
 import { useState } from "react";
 
 import type { ServiceStatus } from "../types.ts";
-import { controlService, type ServiceAction } from "../api.ts";
+import { controlService, startDeploy, type ServiceAction } from "../api.ts";
 import { cn, statusColor } from "../lib/utils.ts";
+import { DeployConsole } from "./DeployConsole.tsx";
 import { LogViewer } from "./LogViewer.tsx";
 
 interface Props {
   service: ServiceStatus;
+  /** Whether this service can be deployed via the tugboat daemon. */
+  canDeploy: boolean;
   /** Called after a successful action so the dashboard can refresh status. */
   onChanged: () => void;
 }
@@ -17,9 +20,13 @@ const ACTION_STYLES: Record<ServiceAction, string> = {
   restart: "text-accent hover:border-accent",
 };
 
-export function ServiceDetail({ service, onChanged }: Props) {
+export function ServiceDetail({ service, canDeploy, onChanged }: Props) {
   const [pending, setPending] = useState<ServiceAction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The active deploy job id, or null when not deploying. While set, the deploy
+  // transcript replaces the log view.
+  const [deployJob, setDeployJob] = useState<string | null>(null);
+  const [deploying, setDeploying] = useState(false);
   const color = statusColor(service.active_state);
   // A crash-looping service is rarely caught in "active" — it cycles through
   // activating / auto-restart / failed. `systemctl stop` is exactly what breaks
@@ -49,6 +56,26 @@ export function ServiceDetail({ service, onChanged }: Props) {
     }
   }
 
+  async function deploy() {
+    if (
+      !window.confirm(
+        `Deploy ${service.name}? This rebuilds and ships the current working tree from the build host.`,
+      )
+    ) {
+      return;
+    }
+    setDeploying(true);
+    setError(null);
+    try {
+      const { job_id } = await startDeploy(service.unit);
+      setDeployJob(job_id);
+    } catch (err: unknown) {
+      setError(String(err));
+    } finally {
+      setDeploying(false);
+    }
+  }
+
   const busy = pending !== null;
   const buttons: { action: ServiceAction; disabled: boolean }[] = [
     { action: "start", disabled: busy || !stopped },
@@ -69,6 +96,19 @@ export function ServiceDetail({ service, onChanged }: Props) {
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {canDeploy && (
+            <button
+              type="button"
+              onClick={() => void deploy()}
+              disabled={deploying || deployJob !== null}
+              className={cn(
+                "border border-rule-strong bg-surface px-3 py-1.5 text-xs uppercase tracking-wide text-accent hover:border-accent",
+                (deploying || deployJob !== null) && "cursor-not-allowed opacity-40",
+              )}
+            >
+              {deploying ? "deploy…" : "deploy"}
+            </button>
+          )}
           {buttons.map(({ action, disabled }) => (
             <button
               key={action}
@@ -92,7 +132,16 @@ export function ServiceDetail({ service, onChanged }: Props) {
         </div>
       )}
       <div className="min-h-0 flex-1">
-        <LogViewer unit={service.unit} />
+        {deployJob ? (
+          <DeployConsole
+            unit={service.unit}
+            jobId={deployJob}
+            onClose={() => setDeployJob(null)}
+            onDone={onChanged}
+          />
+        ) : (
+          <LogViewer unit={service.unit} />
+        )}
       </div>
     </div>
   );
