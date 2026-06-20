@@ -1,14 +1,38 @@
 //! The deploy engine: build → ship → atomic install → restart → health-check
 //! → rollback-on-failure → (optional) enroll in lighthouse.target → verify.
+//!
+//! All human-facing progress goes through a [`LogSink`] rather than straight to
+//! stdout, so the same pipeline drives both the `tugboat deploy` CLI (which
+//! prints to the terminal) and `tugboat serve` (which streams the transcript to
+//! a browser). Subprocess stdout/stderr is captured and forwarded line-by-line
+//! into the sink as it arrives, so the log stays live even when no terminal is
+//! attached.
 
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
 use crate::manifest::{ArtifactKind, Health, Manifest, Verify};
+
+/// A destination for the deploy transcript: progress lines emitted by the engine
+/// plus every line of captured subprocess output. Implementations must be
+/// `Sync` because stdout and stderr are drained from separate threads.
+pub trait LogSink: Send + Sync {
+    fn line(&self, line: &str);
+}
+
+/// Writes the transcript straight to this process's stdout — the CLI's sink.
+pub struct StdoutSink;
+impl LogSink for StdoutSink {
+    fn line(&self, line: &str) {
+        // `println!` locks stdout, so concurrent stdout/stderr reader threads
+        // can't interleave within a single line.
+        println!("{line}");
+    }
+}
 
 /// A temp directory that is removed when this guard drops.
 struct WorkDir(PathBuf);
@@ -23,6 +47,7 @@ pub fn run(
     project_dir: &Path,
     skip_build: bool,
     dry_run: bool,
+    log: &dyn LogSink,
 ) -> Result<()> {
     let workdir = std::env::temp_dir()
         .join(format!("tugboat-{}-{}", manifest.name, std::process::id()));
@@ -38,7 +63,7 @@ pub fn run(
         .collect();
 
     if dry_run {
-        print_plan(manifest, &build_cmd, &artifacts);
+        print_plan(manifest, &build_cmd, &artifacts, log);
         return Ok(());
     }
 
@@ -50,10 +75,10 @@ pub fn run(
 
     // 1. Build.
     if skip_build {
-        note("skipping build (--skip-build)");
+        note(log, "skipping build (--skip-build)");
     } else {
-        step("BUILD", &build_cmd);
-        run_local(&build_cmd, project_dir).context("build failed")?;
+        step(log, "BUILD", &build_cmd);
+        run_local(&build_cmd, project_dir, log).context("build failed")?;
     }
 
     // 2. Confirm every artifact exists locally, of the right kind, before
@@ -76,12 +101,12 @@ pub fn run(
         let staged = format!("{host}:{}.tug-new", artifact.dest);
         match artifact.kind {
             ArtifactKind::File => {
-                step("SHIP", &format!("{} → {}:{}", src.display(), host, artifact.dest));
-                scp(src, &staged)?;
+                step(log, "SHIP", &format!("{} → {}:{}", src.display(), host, artifact.dest));
+                scp(src, &staged, log)?;
             }
             ArtifactKind::Dir => {
-                step("SHIP DIR", &format!("{}/ → {}:{}", src.display(), host, artifact.dest));
-                rsync_dir(src, &staged)?;
+                step(log, "SHIP DIR", &format!("{}/ → {}:{}", src.display(), host, artifact.dest));
+                rsync_dir(src, &staged, log)?;
             }
         }
     }
@@ -89,25 +114,26 @@ pub fn run(
     // 4. Atomic install, restart, health-check, rollback-on-failure, enroll —
     //    all in one remote transaction.
     step(
+        log,
         "INSTALL",
         &format!("{host}: swap binary, restart {}, health-check", manifest.name),
     );
-    ssh_script(host, &remote_script(manifest))
+    ssh_script(host, &remote_script(manifest), log)
         .context("remote install failed (the host rolled back to the previous binary)")?;
 
     // 5. End-to-end verify from this machine (informational).
     if let Some(verify_cfg) = &manifest.verify {
-        step("VERIFY", &verify_cfg.url);
-        match verify(verify_cfg) {
-            Ok(()) => println!("    reachable at {}", verify_cfg.url),
-            Err(err) => eprintln!(
+        step(log, "VERIFY", &verify_cfg.url);
+        match verify(verify_cfg, log) {
+            Ok(()) => log.line(&format!("    reachable at {}", verify_cfg.url)),
+            Err(err) => log.line(&format!(
                 "    warning: {} not reachable from here ({err}); the service is healthy on the host",
                 verify_cfg.url
-            ),
+            )),
         }
     }
 
-    println!("\n✓ {} deployed to {host}", manifest.name);
+    log.line(&format!("\n✓ {} deployed to {host}", manifest.name));
     Ok(())
 }
 
@@ -115,26 +141,70 @@ fn subst(input: &str, workdir: &str) -> String {
     input.replace("{workdir}", workdir)
 }
 
-fn run_local(cmd: &str, dir: &Path) -> Result<()> {
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(dir)
-        .status()
-        .with_context(|| format!("spawning: {cmd}"))?;
+/// Run a child process, capturing its stdout and stderr and forwarding every
+/// line into `log` as it arrives. If `stdin_data` is given it is written to the
+/// child's stdin (concurrently, so a child that writes output while reading its
+/// input cannot deadlock). Returns the child's exit status.
+fn run_streamed(
+    mut cmd: Command,
+    stdin_data: Option<&[u8]>,
+    log: &dyn LogSink,
+) -> Result<ExitStatus> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(if stdin_data.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
+
+    let mut child = cmd.spawn().context("spawning command")?;
+    let stdout = child.stdout.take().context("child stdout unavailable")?;
+    let stderr = child.stderr.take().context("child stderr unavailable")?;
+    let stdin = child.stdin.take();
+
+    // Drain stdout and stderr (and feed stdin) on separate threads so none of
+    // the three pipes can fill and stall the others. `scope` lets the threads
+    // borrow `log` without an Arc.
+    std::thread::scope(|scope| {
+        if let (Some(mut stdin), Some(data)) = (stdin, stdin_data) {
+            scope.spawn(move || {
+                // A broken pipe (child exited early) is not worth surfacing —
+                // the exit status below is the real signal.
+                let _ = stdin.write_all(data);
+                // Dropping `stdin` here closes the pipe so the child sees EOF.
+            });
+        }
+        scope.spawn(|| pipe_lines(stdout, log));
+        scope.spawn(|| pipe_lines(stderr, log));
+    });
+
+    child.wait().context("waiting on child process")
+}
+
+/// Forward each line read from `reader` into `log`. Stops on EOF or read error.
+fn pipe_lines<R: Read>(reader: R, log: &dyn LogSink) {
+    for line in BufReader::new(reader).lines() {
+        match line {
+            Ok(line) => log.line(&line),
+            Err(_) => break,
+        }
+    }
+}
+
+fn run_local(cmd: &str, dir: &Path, log: &dyn LogSink) -> Result<()> {
+    let mut command = Command::new("sh");
+    command.arg("-c").arg(cmd).current_dir(dir);
+    let status = run_streamed(command, None, log).with_context(|| format!("spawning: {cmd}"))?;
     if !status.success() {
         bail!("command exited with {status}: {cmd}");
     }
     Ok(())
 }
 
-fn scp(local: &Path, remote: &str) -> Result<()> {
-    let status = Command::new("scp")
-        .arg("-q")
-        .arg(local)
-        .arg(remote)
-        .status()
-        .context("spawning scp")?;
+fn scp(local: &Path, remote: &str, log: &dyn LogSink) -> Result<()> {
+    let mut command = Command::new("scp");
+    command.arg("-q").arg(local).arg(remote);
+    let status = run_streamed(command, None, log).context("spawning scp")?;
     if !status.success() {
         bail!("scp failed: {} → {remote}", local.display());
     }
@@ -147,45 +217,35 @@ fn scp(local: &Path, remote: &str) -> Result<()> {
 /// `--no-owner --no-group`: keep permissions/times but do NOT carry the local
 /// machine's uid/gid to the server — the files land owned by the remote SSH
 /// user, not whatever uid happens to match locally.
-fn rsync_dir(local: &Path, remote: &str) -> Result<()> {
-    let status = Command::new("rsync")
+fn rsync_dir(local: &Path, remote: &str, log: &dyn LogSink) -> Result<()> {
+    let mut command = Command::new("rsync");
+    command
         .args(["-az", "--no-owner", "--no-group", "--delete"])
         .arg(format!("{}/", local.display()))
-        .arg(format!("{remote}/"))
-        .status()
-        .context("spawning rsync")?;
+        .arg(format!("{remote}/"));
+    let status = run_streamed(command, None, log).context("spawning rsync")?;
     if !status.success() {
         bail!("rsync failed: {}/ → {remote}/", local.display());
     }
     Ok(())
 }
 
-fn ssh_script(host: &str, script: &str) -> Result<()> {
-    let mut child = Command::new("ssh")
-        .arg(host)
-        .arg("bash -s")
-        .stdin(Stdio::piped())
-        .spawn()
-        .context("spawning ssh")?;
-    child
-        .stdin
-        .take()
-        .context("ssh stdin unavailable")?
-        .write_all(script.as_bytes())
-        .context("writing remote script")?;
-    let status = child.wait().context("waiting on ssh")?;
+fn ssh_script(host: &str, script: &str, log: &dyn LogSink) -> Result<()> {
+    let mut command = Command::new("ssh");
+    command.arg(host).arg("bash -s");
+    let status =
+        run_streamed(command, Some(script.as_bytes()), log).context("spawning ssh")?;
     if !status.success() {
         bail!("remote script exited with {status}");
     }
     Ok(())
 }
 
-fn verify(cfg: &Verify) -> Result<()> {
+fn verify(cfg: &Verify, log: &dyn LogSink) -> Result<()> {
     for attempt in 1..=cfg.retries {
-        let status = Command::new("curl")
-            .args(["-fs", "-o", "/dev/null", "--max-time", "12", &cfg.url])
-            .status()
-            .context("spawning curl")?;
+        let mut command = Command::new("curl");
+        command.args(["-fs", "-o", "/dev/null", "--max-time", "12", &cfg.url]);
+        let status = run_streamed(command, None, log).context("spawning curl")?;
         if status.success() {
             return Ok(());
         }
@@ -313,44 +373,50 @@ fn print_plan(
     manifest: &Manifest,
     build_cmd: &str,
     artifacts: &[(PathBuf, &crate::manifest::Artifact)],
+    log: &dyn LogSink,
 ) {
-    println!("DRY RUN — plan for {} → {}\n", manifest.name, manifest.host());
-    println!("  build:");
-    println!("    {build_cmd}");
-    println!("  ship:");
+    log.line(&format!("DRY RUN — plan for {} → {}\n", manifest.name, manifest.host()));
+    log.line("  build:");
+    log.line(&format!("    {build_cmd}"));
+    log.line("  ship:");
     for (src, artifact) in artifacts {
         match artifact.kind {
-            ArtifactKind::File => {
-                println!("    {} → {} (file, mode {})", src.display(), artifact.dest, artifact.mode)
-            }
-            ArtifactKind::Dir => {
-                println!("    {}/ → {} (dir, rsync --delete)", src.display(), artifact.dest)
-            }
+            ArtifactKind::File => log.line(&format!(
+                "    {} → {} (file, mode {})",
+                src.display(),
+                artifact.dest,
+                artifact.mode
+            )),
+            ArtifactKind::Dir => log.line(&format!(
+                "    {}/ → {} (dir, rsync --delete)",
+                src.display(),
+                artifact.dest
+            )),
         }
     }
     let health = match &manifest.health {
         Some(Health { url: Some(url), .. }) => format!("curl {url} (on host loopback)"),
         _ => format!("systemctl is-active {}", manifest.name),
     };
-    println!("  restart: systemctl restart {}", manifest.name);
-    println!("  health:  {health}");
-    println!(
+    log.line(&format!("  restart: systemctl restart {}", manifest.name));
+    log.line(&format!("  health:  {health}"));
+    log.line(&format!(
         "  enroll:  {}",
         if manifest.lighthouse.enroll {
             "systemctl add-wants lighthouse.target"
         } else {
             "(none)"
         }
-    );
+    ));
     if let Some(v) = &manifest.verify {
-        println!("  verify:  {} (from here)", v.url);
+        log.line(&format!("  verify:  {} (from here)", v.url));
     }
 }
 
-fn step(tag: &str, msg: &str) {
-    println!("==> {tag}: {msg}");
+fn step(log: &dyn LogSink, tag: &str, msg: &str) {
+    log.line(&format!("==> {tag}: {msg}"));
 }
 
-fn note(msg: &str) {
-    println!("==> {msg}");
+fn note(log: &dyn LogSink, msg: &str) {
+    log.line(&format!("==> {msg}"));
 }

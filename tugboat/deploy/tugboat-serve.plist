@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent for `tugboat serve` on the dev machine.
+
+  This is a TEMPLATE. Copy it to ~/Library/LaunchAgents/, replace the __…__
+  placeholders, chmod 600 (it holds the bearer token), then load it. See the
+  "Serving deploys" section of the README for the full walkthrough.
+
+  It launches through a login fish shell (`fish -l -c 'exec …'`) on purpose: the
+  daemon then inherits the exact PATH and toolchain environment in which
+  interactive `tugboat deploy` already works (cargo, the musl cross-linker, bun,
+  ssh/scp/rsync, git), instead of launchd's bare default PATH. The token and the
+  fleet manifest path — which are not part of the shell profile — are supplied
+  via EnvironmentVariables below.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.deepwa7er.tugboat-serve</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/fish</string>
+    <string>-l</string>
+    <string>-c</string>
+    <string>exec __HOME__/.cargo/bin/tugboat serve --bind __TAILSCALE_IP__ --port 7878</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Required: the bearer token clients must present. Generate with
+         `openssl rand -hex 32`; set the identical value in lighthouse's
+         [deploy].token on the VPS. -->
+    <key>TUGBOAT_SERVE_TOKEN</key>
+    <string>__TOKEN__</string>
+    <!-- Which fleet the daemon serves (so it doesn't depend on a working dir). -->
+    <key>TUGBOAT_FLEET</key>
+    <string>__HOME__/code/tugboat/fleet.toml</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/tugboat-serve.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/tugboat-serve.log</string>
+</dict>
+</plist>

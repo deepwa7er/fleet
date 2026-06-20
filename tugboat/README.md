@@ -59,6 +59,70 @@ A member's `path` is relative to `root` and must resolve the same on every
 machine, so fleet members are checked out at a consistent location (`~/code/<name>`)
 everywhere — not tucked under per-machine grouping folders.
 
+## Serving deploys (trigger from anywhere on the tailnet)
+
+`tugboat serve` runs the deploy pipeline behind an HTTP API so a deploy can be
+triggered from another device — e.g. the lighthouse dashboard on the VPS, opened
+from any machine on the tailnet. The build still happens **here**, on the dev
+machine, against the member's **current working tree**: a request runs the exact
+same engine as `tugboat deploy`, and the transcript is streamed back live.
+
+```sh
+TUGBOAT_SERVE_TOKEN=$(openssl rand -hex 32) \
+  tugboat serve --bind <this-machine's-tailscale-ip> --port 7878
+```
+
+- `GET /services` — the deployable fleet members.
+- `POST /deploy/{name}` — start a deploy; returns `{ "job_id": … }`. Returns
+  `409` if that service is already deploying.
+- `GET /jobs/{id}/stream` — replay the transcript so far, then stream the rest
+  live over Server-Sent Events, closing when the deploy finishes.
+
+Every request must carry `Authorization: Bearer $TUGBOAT_SERVE_TOKEN`. The token
+is **required** — the daemon refuses to start without one, because the endpoint
+runs builds and is more than a read-only surface. The default `--bind` is
+loopback; pass the tailnet IP to expose it to the fleet.
+
+### Running it as a launchd agent
+
+So it's always up while you work, install it as a login agent from the template
+in `deploy/tugboat-serve.plist`:
+
+```sh
+cargo install --path .                       # build tugboat (with `serve`) into ~/.cargo/bin
+rustup target add x86_64-unknown-linux-musl  # once, for the fleet's cross-compiled builds
+
+token=$(openssl rand -hex 32)
+ip=$(tailscale ip -4)
+sed -e "s|__HOME__|$HOME|g" -e "s|__TAILSCALE_IP__|$ip|g" -e "s|__TOKEN__|$token|g" \
+  deploy/tugboat-serve.plist > ~/Library/LaunchAgents/com.deepwa7er.tugboat-serve.plist
+chmod 600 ~/Library/LaunchAgents/com.deepwa7er.tugboat-serve.plist   # holds the token
+
+launchctl load ~/Library/LaunchAgents/com.deepwa7er.tugboat-serve.plist
+echo "$token"   # set this as lighthouse's [deploy].token on the VPS
+```
+
+The agent launches through a login `fish` shell so it inherits the same PATH and
+toolchain (cargo, the musl cross-linker, bun, ssh/scp/rsync, git) that an
+interactive deploy uses — rather than launchd's minimal default environment.
+
+To finish the loop, point lighthouse at the daemon (on the VPS, in
+`/etc/lighthouse/config.toml`):
+
+```toml
+[deploy]
+tugboat_url = "http://<this-machine's-tailscale-ip>:7878"
+token = "<the token printed above>"
+```
+
+Then redeploy lighthouse. A **Deploy** button appears for every monitored
+service that maps to a deployable fleet member.
+
+> **Requires the dev machine to be on.** The build runs here, so the box must be
+> awake with the agent running when you click Deploy. If it's asleep or the
+> agent is down, the dashboard reports the daemon unreachable and changes
+> nothing — there is no half-deploy.
+
 ## The manifest
 
 `deploy.toml` (committed) describes the deploy. An optional, untracked

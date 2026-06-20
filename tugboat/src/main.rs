@@ -11,7 +11,9 @@
 mod deploy;
 mod fleet;
 mod manifest;
+mod serve;
 
+use std::net::IpAddr;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -34,6 +36,8 @@ enum Command {
     Deploy(DeployArgs),
     /// Operate on the whole fleet (driven by `fleet.toml`).
     Fleet(FleetArgs),
+    /// Run the HTTP deploy daemon (drives the fleet's deploys from another host).
+    Serve(ServeArgs),
 }
 
 #[derive(Parser)]
@@ -50,6 +54,20 @@ struct DeployArgs {
     /// Print the plan and exit without changing anything.
     #[arg(long)]
     dry_run: bool,
+}
+
+#[derive(Parser)]
+struct ServeArgs {
+    /// Address to bind. Use this machine's tailnet IP so the dashboard on the
+    /// VPS can reach it; the default keeps it loopback-only until you opt in.
+    #[arg(long, default_value = "127.0.0.1")]
+    bind: IpAddr,
+    /// Port to listen on.
+    #[arg(long, default_value_t = 7878)]
+    port: u16,
+    /// Path to the fleet manifest (defaults like `tugboat fleet`).
+    #[arg(long)]
+    manifest: Option<PathBuf>,
 }
 
 #[derive(Parser)]
@@ -97,6 +115,11 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Deploy(args) => run_deploy(args),
         Command::Fleet(args) => run_fleet(args),
+        Command::Serve(args) => serve::run(serve::ServeArgs {
+            bind: args.bind,
+            port: args.port,
+            manifest: args.manifest,
+        }),
     }
 }
 
@@ -111,7 +134,7 @@ fn run_deploy(args: DeployArgs) -> Result<()> {
         .to_path_buf();
 
     let manifest = manifest::load(&manifest_path, args.host.as_deref())?;
-    deploy::run(&manifest, &project_dir, args.skip_build, args.dry_run)
+    deploy::run(&manifest, &project_dir, args.skip_build, args.dry_run, &deploy::StdoutSink)
 }
 
 fn run_fleet(args: FleetArgs) -> Result<()> {

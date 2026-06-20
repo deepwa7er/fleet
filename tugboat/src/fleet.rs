@@ -62,8 +62,18 @@ impl Member {
 
 impl Fleet {
     /// Absolute path to a member's checkout.
-    fn dir(&self, member: &Member) -> PathBuf {
+    pub fn dir(&self, member: &Member) -> PathBuf {
         expand_tilde(&self.root).join(&member.path)
+    }
+
+    /// Absolute path to a member's deploy manifest within its checkout.
+    pub fn manifest_path(&self, member: &Member) -> PathBuf {
+        self.dir(member).join(&member.manifest)
+    }
+
+    /// Find a member by its label (the repo directory's final component).
+    pub fn find(&self, label: &str) -> Option<&Member> {
+        self.members.iter().find(|m| m.label() == label)
     }
 }
 
@@ -289,7 +299,7 @@ pub fn deploy(
         let result = (|| -> Result<()> {
             let project_dir = manifest_path.parent().context("manifest has no parent")?;
             let m = manifest::load(&manifest_path, None)?;
-            deploy::run(&m, project_dir, skip_build, dry_run)
+            deploy::run(&m, project_dir, skip_build, dry_run, &deploy::StdoutSink)
         })();
 
         match result {
