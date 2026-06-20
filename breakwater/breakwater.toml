@@ -40,17 +40,17 @@ cache_dir = "/var/lib/breakwater/acme"
 # Use the Let's Encrypt staging directory while testing to avoid rate limits:
 #   directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
 
-# `upstream` is wherever the service actually listens. Most fleet services bind
-# loopback (127.0.0.1:<port>) so breakwater is their only tailnet-facing entry
-# point; a few still bind the tailnet IP directly (e.g. harbor on
-# 100.98.184.58:8090) and are routed there until migrated.
+# `upstream` is wherever the service actually listens — every fleet service binds
+# loopback (127.0.0.1:<port>), so breakwater is their only tailnet-facing entry
+# point. (tidepool is the exception: not routed here at all — it's its own
+# Tailscale node and serves HTTPS itself.)
 [[routes]]
 host = "lighthouse.internal.deepwa7er.com"
 upstream = "127.0.0.1:8080"
 
 [[routes]]
 host = "harbor.internal.deepwa7er.com"
-upstream = "100.98.184.58:8090"
+upstream = "127.0.0.1:8090"
 
 [[routes]]
 host = "driftword.internal.deepwa7er.com"
