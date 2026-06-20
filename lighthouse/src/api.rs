@@ -16,7 +16,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio_stream::{Stream, StreamExt};
 
 use crate::AppState;
@@ -150,56 +150,153 @@ async fn resolve(config: &Config, unit: &str) -> Result<Monitored, StatusCode> {
         .ok_or(StatusCode::NOT_FOUND)
 }
 
-/// One entry of the tugboat daemon's `/services` response.
+/// One member's local repo state, from the tugboat daemon's `/status`.
 #[derive(Debug, Deserialize)]
-struct TugboatService {
+struct DaemonStatus {
     name: String,
-    manifest_present: bool,
+    branch: Option<String>,
+    head_sha: Option<String>,
+    head_short: Option<String>,
+    dirty: bool,
+    undeployed_commits: Option<u32>,
+    deployed_is_ancestor: Option<bool>,
 }
 
-/// `GET /api/deployable` — the units the dashboard can deploy: monitored units
-/// whose tugboat service exists and has a manifest. Returns an empty list (no
-/// Deploy buttons) when deploy integration is unconfigured or the daemon is
-/// unreachable, so the dashboard degrades gracefully.
-pub async fn deployable_units(State(state): State<Arc<AppState>>) -> Json<Vec<String>> {
+/// A deploy stamp written by tugboat: which sha is running for a service.
+#[derive(Debug, Deserialize)]
+struct Stamp {
+    sha: String,
+    short: String,
+    dirty: bool,
+    deployed_at: u64,
+}
+
+/// Freshness of one deployable service: how the running version compares to the
+/// dev box's local working tree.
+#[derive(Debug, Serialize)]
+pub struct DeployStatus {
+    unit: String,
+    /// `current` | `dirty` | `stale` | `diverged` | `unknown`.
+    verdict: &'static str,
+    deployed: Option<DeployedInfo>,
+    local: Option<LocalInfo>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeployedInfo {
+    short: String,
+    dirty: bool,
+    deployed_at: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LocalInfo {
+    branch: Option<String>,
+    head_short: Option<String>,
+    dirty: bool,
+    undeployed_commits: Option<u32>,
+}
+
+/// Read the deploy stamp for a service, or `None` if absent/unreadable.
+fn read_stamp(version_dir: &std::path::Path, deploy_name: &str) -> Option<Stamp> {
+    let path = version_dir.join(format!("{deploy_name}.json"));
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Decide the freshness verdict from the deployed stamp and live local state.
+fn verdict(stamp: Option<&Stamp>, local: &DaemonStatus) -> &'static str {
+    let Some(stamp) = stamp else {
+        // Deployable, but never stamped (deployed before this feature, or only
+        // ever by some other path) — don't guess.
+        return "unknown";
+    };
+    let Some(head) = &local.head_sha else {
+        return "unknown";
+    };
+    if *head == stamp.sha {
+        if local.dirty { "dirty" } else { "current" }
+    } else if local.deployed_is_ancestor == Some(true) {
+        "stale"
+    } else {
+        "diverged"
+    }
+}
+
+/// `GET /api/deploy-status` — freshness of every deployable service: which sha
+/// is running vs the dev box's local working tree. The set of entries is also
+/// the set of services that show a Deploy button. Empty (no buttons, no badges)
+/// when deploy is unconfigured or the daemon is unreachable.
+pub async fn deploy_status(State(state): State<Arc<AppState>>) -> Json<Vec<DeployStatus>> {
     let Some(cfg) = &state.config.deploy else {
         return Json(Vec::new());
     };
-    let url = format!("{}/services", cfg.tugboat_url.trim_end_matches('/'));
-    let services: Vec<TugboatService> = match state
+
+    // Monitored units paired with the tugboat name they deploy as, and the
+    // running sha from each one's stamp (if any).
+    let units: Vec<(String, String, Option<Stamp>)> = monitored(&state.config)
+        .await
+        .into_iter()
+        .map(|m| {
+            let deploy_name = state.config.deploy_name(&m.unit);
+            let stamp = read_stamp(&cfg.version_dir, &deploy_name);
+            (m.unit, deploy_name, stamp)
+        })
+        .collect();
+
+    // Tell the daemon the deployed shas we know, so it can compute each one's
+    // relationship (ahead vs diverged, commit count) against its working tree.
+    let deployed_param = units
+        .iter()
+        .filter_map(|(_, name, stamp)| stamp.as_ref().map(|s| format!("{name}:{}", s.sha)))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let url = format!("{}/status", cfg.tugboat_url.trim_end_matches('/'));
+    let statuses: Vec<DaemonStatus> = match state
         .http
         .get(&url)
+        .query(&[("deployed", deployed_param.as_str())])
         .bearer_auth(&cfg.token)
         .send()
         .await
         .and_then(|r| r.error_for_status())
     {
-        Ok(resp) => match resp.json().await {
-            Ok(services) => services,
-            Err(err) => {
-                eprintln!("parsing tugboat /services failed: {err}");
-                return Json(Vec::new());
-            }
-        },
+        Ok(resp) => resp.json().await.unwrap_or_else(|err| {
+            eprintln!("parsing tugboat /status failed: {err}");
+            Vec::new()
+        }),
         Err(err) => {
-            eprintln!("tugboat /services unreachable: {err}");
-            return Json(Vec::new());
+            eprintln!("tugboat /status unreachable: {err}");
+            Vec::new()
         }
     };
+    let by_name: HashSet<&str> = statuses.iter().map(|s| s.name.as_str()).collect();
 
-    let deployable: HashSet<String> = services
-        .into_iter()
-        .filter(|s| s.manifest_present)
-        .map(|s| s.name)
-        .collect();
-
-    let units = monitored(&state.config)
-        .await
-        .into_iter()
-        .map(|m| m.unit)
-        .filter(|unit| deployable.contains(&state.config.deploy_name(unit)))
-        .collect();
-    Json(units)
+    let mut out = Vec::new();
+    for (unit, deploy_name, stamp) in &units {
+        // Deployable iff the daemon lists it as a member.
+        if !by_name.contains(deploy_name.as_str()) {
+            continue;
+        }
+        let local = statuses.iter().find(|s| &s.name == deploy_name).unwrap();
+        out.push(DeployStatus {
+            unit: unit.clone(),
+            verdict: verdict(stamp.as_ref(), local),
+            deployed: stamp.as_ref().map(|s| DeployedInfo {
+                short: s.short.clone(),
+                dirty: s.dirty,
+                deployed_at: s.deployed_at,
+            }),
+            local: Some(LocalInfo {
+                branch: local.branch.clone(),
+                head_short: local.head_short.clone(),
+                dirty: local.dirty,
+                undeployed_commits: local.undeployed_commits,
+            }),
+        });
+    }
+    Json(out)
 }
 
 /// `POST /api/services/{unit}/deploy` — relay a deploy request to the tugboat

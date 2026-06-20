@@ -43,6 +43,14 @@ pub struct DeployConfig {
     /// Bearer token the daemon requires (its `TUGBOAT_SERVE_TOKEN`). Secret —
     /// keep this config root-readable only.
     pub token: String,
+    /// Directory where tugboat writes per-service deploy stamps
+    /// (`<deploy_name>.json`). These tell the dashboard which sha is running.
+    #[serde(default = "default_version_dir")]
+    pub version_dir: PathBuf,
+}
+
+fn default_version_dir() -> PathBuf {
+    PathBuf::from("/var/lib/tugboat")
 }
 
 /// Alerting settings.

@@ -1,17 +1,25 @@
 import { useState } from "react";
 
-import type { ServiceStatus } from "../types.ts";
+import type { DeployStatus, ServiceStatus } from "../types.ts";
 import { controlService, startDeploy, type ServiceAction } from "../api.ts";
-import { cn, statusColor } from "../lib/utils.ts";
+import {
+  cn,
+  deployVerdictLabel,
+  deployVerdictStyle,
+  formatRelative,
+  statusColor,
+} from "../lib/utils.ts";
 import { DeployConsole } from "./DeployConsole.tsx";
 import { LogViewer } from "./LogViewer.tsx";
 
 interface Props {
   service: ServiceStatus;
-  /** Whether this service can be deployed via the tugboat daemon. */
-  canDeploy: boolean;
+  /** Deploy freshness, or null when this service isn't deployable. */
+  deploy: DeployStatus | null;
   /** Called after a successful action so the dashboard can refresh status. */
   onChanged: () => void;
+  /** Called after a deploy finishes so deploy freshness can refresh. */
+  onDeployed: () => void;
 }
 
 const ACTION_STYLES: Record<ServiceAction, string> = {
@@ -20,7 +28,9 @@ const ACTION_STYLES: Record<ServiceAction, string> = {
   restart: "text-accent hover:border-accent",
 };
 
-export function ServiceDetail({ service, canDeploy, onChanged }: Props) {
+export function ServiceDetail({ service, deploy, onChanged, onDeployed }: Props) {
+  const canDeploy = deploy !== null;
+  const deployStyle = deploy ? deployVerdictStyle(deploy.verdict) : null;
   const [pending, setPending] = useState<ServiceAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The active deploy job id, or null when not deploying. While set, the deploy
@@ -56,7 +66,7 @@ export function ServiceDetail({ service, canDeploy, onChanged }: Props) {
     }
   }
 
-  async function deploy() {
+  async function runDeploy() {
     if (
       !window.confirm(
         `Deploy ${service.name}? This rebuilds and ships the current working tree from the build host.`,
@@ -86,23 +96,46 @@ export function ServiceDetail({ service, canDeploy, onChanged }: Props) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-4 border-b border-rule-strong px-6 py-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className={cn("h-2 w-2 shrink-0", color.dot)} />
-          <h2 className="truncate text-lg font-bold text-ink">
-            {service.name}
-          </h2>
-          <span className={cn("shrink-0 text-xs uppercase tracking-wide", color.text)}>
-            {service.active_state} · {service.sub_state}
-          </span>
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className={cn("h-2 w-2 shrink-0", color.dot)} />
+            <h2 className="truncate text-lg font-bold text-ink">
+              {service.name}
+            </h2>
+            <span className={cn("shrink-0 text-xs uppercase tracking-wide", color.text)}>
+              {service.active_state} · {service.sub_state}
+            </span>
+          </div>
+          {deploy && deployStyle && (
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide">
+              <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", deployStyle.dot)} />
+              <span className={deployStyle.text}>
+                {deployVerdictLabel(
+                  deploy.verdict,
+                  deploy.local?.undeployed_commits ?? null,
+                )}
+              </span>
+              {deploy.deployed && (
+                <span className="text-ink-faint">
+                  · deployed {deploy.deployed.short} ·{" "}
+                  {formatRelative(deploy.deployed.deployed_at)}
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {canDeploy && (
             <button
               type="button"
-              onClick={() => void deploy()}
+              onClick={() => void runDeploy()}
               disabled={deploying || deployJob !== null}
               className={cn(
-                "border border-rule-strong bg-surface px-3 py-1.5 text-xs uppercase tracking-wide text-accent hover:border-accent",
+                "border bg-surface px-3 py-1.5 text-xs uppercase tracking-wide",
+                // Emphasize when there's undeployed work; quiet when up to date.
+                deployStyle?.attention
+                  ? "border-accent text-accent"
+                  : "border-rule-strong text-ink-muted hover:border-rule-strong",
                 (deploying || deployJob !== null) && "cursor-not-allowed opacity-40",
               )}
             >
@@ -137,7 +170,10 @@ export function ServiceDetail({ service, canDeploy, onChanged }: Props) {
             unit={service.unit}
             jobId={deployJob}
             onClose={() => setDeployJob(null)}
-            onDone={onChanged}
+            onDone={() => {
+              onChanged();
+              onDeployed();
+            }}
           />
         ) : (
           <LogViewer unit={service.unit} />

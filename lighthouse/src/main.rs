@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/services/{unit}/control/{action}",
             post(api::control_service),
         )
-        .route("/api/deployable", get(api::deployable_units))
+        .route("/api/deploy-status", get(api::deploy_status))
         .route("/api/services/{unit}/deploy", post(api::deploy_service))
         .route(
             "/api/services/{unit}/deploy/{job}/stream",

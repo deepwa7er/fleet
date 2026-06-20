@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { ServiceStatus } from "./types.ts";
+import type { DeployStatus, ServiceStatus } from "./types.ts";
 import {
   controlService,
-  fetchDeployable,
+  fetchDeployStatus,
   fetchServices,
   type ServiceAction,
 } from "./api.ts";
@@ -11,6 +11,9 @@ import { ServiceCard } from "./components/ServiceCard.tsx";
 import { ServiceDetail } from "./components/ServiceDetail.tsx";
 
 const POLL_INTERVAL_MS = 5_000;
+// Deploy freshness changes only on a deploy or a local git change, so it polls
+// far less often than status — and is also refreshed right after a deploy.
+const DEPLOY_STATUS_INTERVAL_MS = 30_000;
 
 const ACTIONS: ServiceAction[] = ["start", "stop", "restart"];
 
@@ -47,7 +50,7 @@ function slugFor(unit: string): string {
 
 export function App() {
   const [services, setServices] = useState<ServiceStatus[]>([]);
-  const [deployable, setDeployable] = useState<string[]>([]);
+  const [deployStatus, setDeployStatus] = useState<DeployStatus[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -77,11 +80,27 @@ export function App() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  // The deployable set rarely changes (it's the fleet config), so fetch it once.
-  // A failure just means no Deploy buttons — not a dashboard-level error.
-  useEffect(() => {
-    fetchDeployable().then(setDeployable, () => setDeployable([]));
+  // Deploy freshness: poll slowly, and expose a manual refresh for right after a
+  // deploy. A failure just means no buttons/badges — not a dashboard error.
+  const refreshDeployStatus = useCallback(async () => {
+    try {
+      setDeployStatus(await fetchDeployStatus());
+    } catch {
+      setDeployStatus([]);
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshDeployStatus();
+    const id = setInterval(() => void refreshDeployStatus(), DEPLOY_STATUS_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [refreshDeployStatus]);
+
+  const deployByUnit = useMemo(() => {
+    const map = new Map<string, DeployStatus>();
+    for (const entry of deployStatus) map.set(entry.unit, entry);
+    return map;
+  }, [deployStatus]);
 
   // Once services load, select the one named in the URL (if any), else the
   // first. Runs only while nothing is selected yet.
@@ -146,6 +165,7 @@ export function App() {
               <ServiceCard
                 key={service.unit}
                 service={service}
+                deploy={deployByUnit.get(service.unit) ?? null}
                 selected={service.unit === selected}
                 onSelect={() => select(service.unit)}
               />
@@ -162,8 +182,9 @@ export function App() {
             <ServiceDetail
               key={selectedService.unit}
               service={selectedService}
-              canDeploy={deployable.includes(selectedService.unit)}
+              deploy={deployByUnit.get(selectedService.unit) ?? null}
               onChanged={() => void refresh()}
+              onDeployed={() => void refreshDeployStatus()}
             />
           ) : (
             <div className="flex h-full items-center justify-center text-sm uppercase tracking-wide text-ink-faint">

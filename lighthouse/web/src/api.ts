@@ -1,4 +1,4 @@
-import type { LogEntry, ServiceStatus } from "./types.ts";
+import type { DeployStatus, LogEntry, ServiceStatus } from "./types.ts";
 
 const BASE = "/api";
 
@@ -42,10 +42,11 @@ export async function controlService(
   return response.json() as Promise<ServiceStatus>;
 }
 
-/** The units this dashboard can deploy (via the tugboat daemon). Empty when
- * deploy integration is unconfigured or the daemon is unreachable. */
-export function fetchDeployable(): Promise<string[]> {
-  return getJson<string[]>(`${BASE}/deployable`);
+/** Deploy freshness for every deployable service (which sha is running vs the
+ * dev box's local tree). Empty when deploy is unconfigured or the daemon is
+ * unreachable; the entries are also exactly the services that can be deployed. */
+export function fetchDeployStatus(): Promise<DeployStatus[]> {
+  return getJson<DeployStatus[]>(`${BASE}/deploy-status`);
 }
 
 /** Start a deploy of a service; resolves to the daemon's job id for streaming. */
