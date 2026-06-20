@@ -55,10 +55,9 @@ A `fleet.toml` member records only `path` (relative to `root`, a leading `~/`
 expands to `$HOME`) and its `repo` remote — deploy details stay in each repo's
 own `deploy.toml`, so there is one source of truth per service.
 
-> **Caveat — consistent layout.** A member's `path` is relative to `root` and
-> must resolve the same on every machine. `sonar` currently lives at
-> `~/code/apple/sonar` on the laptop but `~/code/sonar` on fedora; until that's
-> standardized, `fleet clone`/`status` will treat it as missing on the laptop.
+A member's `path` is relative to `root` and must resolve the same on every
+machine, so fleet members are checked out at a consistent location (`~/code/<name>`)
+everywhere — not tucked under per-machine grouping folders.
 
 ## The manifest
 

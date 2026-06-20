@@ -225,19 +225,26 @@ pub fn status(fleet: &Fleet) -> Result<()> {
         let branch = git_out(&dir, &["rev-parse", "--abbrev-ref", "HEAD"])?
             .unwrap_or_else(|| "?".into());
         let dirty = if git_clean(&dir)? { "clean" } else { "dirty" };
-        let track = match git_out(&dir, &["rev-list", "--left-right", "--count", "@{u}...HEAD"])? {
-            Some(counts) => {
-                let mut it = counts.split_whitespace();
-                let behind: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                let ahead: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                match (ahead, behind) {
-                    (0, 0) => "up-to-date".into(),
-                    (a, 0) => format!("ahead {a}"),
-                    (0, b) => format!("behind {b}"),
-                    (a, b) => format!("ahead {a}, behind {b}"),
+        // Compare against the same target `pull` uses (upstream, else origin/<branch>).
+        let track = match upstream(&dir)? {
+            Some(target) => {
+                let range = format!("{target}...HEAD");
+                match git_out(&dir, &["rev-list", "--left-right", "--count", &range])? {
+                    Some(counts) => {
+                        let mut it = counts.split_whitespace();
+                        let behind: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                        let ahead: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                        match (ahead, behind) {
+                            (0, 0) => "up-to-date".into(),
+                            (a, 0) => format!("ahead {a}"),
+                            (0, b) => format!("behind {b}"),
+                            (a, b) => format!("ahead {a}, behind {b}"),
+                        }
+                    }
+                    None => "?".into(),
                 }
             }
-            None => "no upstream".into(),
+            None => "no remote branch".into(),
         };
         println!("  {label:<14} {branch:<10} {dirty:<6} {track}");
     }
