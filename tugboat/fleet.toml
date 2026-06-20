@@ -1,0 +1,64 @@
+# fleet.toml — the deepwa7er fleet.
+#
+# The ocean-themed suite that lives on the `deepwa7er` VPS + tailnet. tugboat
+# reads this to operate on the whole set at once:
+#
+#   tugboat fleet list      # show members
+#   tugboat fleet clone     # clone any not yet checked out (new machine setup)
+#   tugboat fleet pull      # fast-forward-only pull every clean checkout
+#   tugboat fleet status    # git summary per member
+#   tugboat fleet deploy    # deploy each `deploy = true` member, in listed order
+#
+# `path` is relative to `root` (a leading ~/ expands to $HOME). Each deployable
+# member's build/ship/health config stays in its own repo's deploy.toml — this
+# file only records where the repo is and how to clone it. Members are listed in
+# deploy order; each deploy is independent and atomic (own rollback).
+#
+# This is the operational view of the suite; the richer graph (edges, non-fleet
+# projects) lives in secondbrain/topology.yaml, which harbor renders.
+
+root = "~/code"
+
+# ── deployed via tugboat (have a deploy.toml) ───────────────────────────────
+
+[[members]]
+# Observability layer — deploy first so new/updated services are monitored.
+path = "lighthouse"
+repo = "git@github.com:deepwa7er/lighthouse.git"
+
+[[members]]
+# Tailnet reverse-proxy front door, host-routes to the internal services.
+path = "breakwater"
+repo = "git@github.com:deepwa7er/breakwater.git"
+
+[[members]]
+# Address-bar redirect front door (`b mail` → mail, etc.).
+path = "ferry"
+repo = "git@github.com:deepwa7er/ferry.git"
+
+[[members]]
+path = "tidepool"
+repo = "git@github.com:deepwa7er/tidepool.git"
+
+[[members]]
+path = "harbor"
+repo = "git@github.com:deepwa7er/harbor.git"
+
+[[members]]
+path = "buoy"
+repo = "git@github.com:deepwa7er/buoy.git"
+
+[[members]]
+path = "driftword"
+repo = "git@github.com:deepwa7er/driftword.git"
+
+# ── part of the fleet, deployed some other way (clone/pull/status only) ──────
+
+[[members]]
+# Heaviest VPS tenant: a multi-unit backend (sonar-discovery + navidrome +
+# slskd), deployed outside tugboat. NOTE: this repo lives at ~/code/apple/sonar
+# on the laptop but ~/code/sonar on fedora — standardize the location before
+# relying on `fleet clone`/`status` for it (see the README caveat).
+path = "sonar"
+repo = "git@github.com:deepwa7er/sonar.git"
+deploy = false

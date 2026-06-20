@@ -21,12 +21,44 @@ cargo install --path .
 From a service repo that has a `deploy.toml`:
 
 ```sh
-tugboat                 # build, ship, install, restart, health-check, enroll
-tugboat --dry-run       # print the plan, change nothing
-tugboat --skip-build    # reuse the last build
-tugboat --host other    # override the SSH host
-tugboat --manifest path/to/deploy.toml
+tugboat deploy                 # build, ship, install, restart, health-check, enroll
+tugboat deploy --dry-run       # print the plan, change nothing
+tugboat deploy --skip-build    # reuse the last build
+tugboat deploy --host other    # override the SSH host
+tugboat deploy --manifest path/to/deploy.toml
 ```
+
+## The fleet
+
+`tugboat fleet …` operates on the whole suite at once, driven by a `fleet.toml`
+that lists the member repos (shipped in this repo). The manifest is found via
+`--manifest`, else `TUGBOAT_FLEET`, else the nearest `fleet.toml` searching
+upward from the current directory.
+
+```sh
+tugboat fleet list      # show members and whether each is tugboat-deployed
+tugboat fleet clone     # clone any members not yet checked out (new machine)
+tugboat fleet pull      # fast-forward-only pull every clean member checkout
+tugboat fleet status    # git summary (branch / clean / ahead-behind) per member
+tugboat fleet deploy    # deploy each `deploy = true` member, in listed order
+tugboat fleet deploy --only lighthouse,buoy   # a subset
+tugboat fleet deploy --dry-run                # print every member's plan
+tugboat fleet deploy --continue-on-error      # don't stop at the first failure
+```
+
+`fleet deploy` reuses the single-service engine per member, so each member gets
+its own atomic install + health-check + rollback. It stops at the first failure
+unless `--continue-on-error`. Members without a `deploy.toml` set `deploy =
+false`; they still participate in `clone`/`pull`/`status`.
+
+A `fleet.toml` member records only `path` (relative to `root`, a leading `~/`
+expands to `$HOME`) and its `repo` remote — deploy details stay in each repo's
+own `deploy.toml`, so there is one source of truth per service.
+
+> **Caveat — consistent layout.** A member's `path` is relative to `root` and
+> must resolve the same on every machine. `sonar` currently lives at
+> `~/code/apple/sonar` on the laptop but `~/code/sonar` on fedora; until that's
+> standardized, `fleet clone`/`status` will treat it as missing on the laptop.
 
 ## The manifest
 
