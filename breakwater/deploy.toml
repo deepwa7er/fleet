@@ -1,5 +1,5 @@
 # tugboat deploy manifest — github.com/deepwa7er/tugboat
-#   deploy:  tugboat            (from this directory)
+#   deploy:  tugboat deploy      (from this directory)
 #
 # Routine deploy: cross-compile the static musl binary locally and ship it.
 # Infrastructure (service user, systemd unit, /etc/breakwater config, the
