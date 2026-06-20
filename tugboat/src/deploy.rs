@@ -298,28 +298,35 @@ fn build_stamp(project_dir: &Path) -> Option<Stamp> {
     })
 }
 
-/// The bash that records the deploy stamp on the host (run on the success path).
-/// Empty when there's nothing to record.
-fn stamp_script(name: &str, stamp: Option<&Stamp>) -> String {
+/// Current ledger schema version (see README "The deploy ledger").
+const LEDGER_VERSION: u32 = 1;
+
+/// The bash that appends one entry to the host deploy ledger with the given
+/// outcome. Empty when there's nothing to record (no git checkout). The append
+/// is a single short line to an `O_APPEND` file, so concurrent or interrupted
+/// writes can't tear an entry.
+fn ledger_append(name: &str, stamp: Option<&Stamp>, result: &str) -> String {
     let Some(stamp) = stamp else {
         return String::new();
     };
     let payload = json!({
+        "v": LEDGER_VERSION,
         "sha": stamp.sha,
         "short": stamp.short,
         "dirty": stamp.dirty,
         "branch": stamp.branch,
-        "deployed_at": stamp.deployed_at,
+        "result": result,
+        "at": stamp.deployed_at,
     })
     .to_string();
-    let path = format!("/var/lib/tugboat/{name}.json");
+    let path = format!("/var/lib/tugboat/{name}.jsonl");
+    // `|| true` so a ledger write hiccup never fails an otherwise-successful
+    // deploy (its backups are already gone) nor skips the rollback's `exit 1`.
     format!(
-        "$sudo mkdir -p /var/lib/tugboat\n\
-         printf '%s' {payload} | $sudo tee {tmp} >/dev/null\n\
-         $sudo chmod 0644 {tmp}\n\
-         $sudo mv {tmp} {path}",
+        "{{ $sudo mkdir -p /var/lib/tugboat \
+         && printf '%s\\n' {payload} | $sudo tee -a {path} >/dev/null \
+         && $sudo chmod 0644 {path}; }} || true",
         payload = shq(&payload),
-        tmp = shq(&format!("{path}.tmp")),
         path = shq(&path),
     )
 }
@@ -371,7 +378,8 @@ fn remote_script(manifest: &Manifest, stamp: Option<&Stamp>) -> String {
         .replace("@RETRIES@", &retries.to_string())
         .replace("@INTERVAL@", &interval_s)
         .replace("@HEALTHCHECK@", &healthcheck)
-        .replace("@STAMP@", &stamp_script(name, stamp))
+        .replace("@LEDGER_OK@", &ledger_append(name, stamp, "deployed"))
+        .replace("@LEDGER_FAIL@", &ledger_append(name, stamp, "rolled_back"))
         .replace("@ENROLL@", &enroll)
         .replace("@NAME@", name)
 }
@@ -420,12 +428,13 @@ if [ -z "$healthy" ]; then
   done
   $sudo systemctl restart @NAME_Q@ || true
   $sudo systemctl --no-pager --lines=20 status @NAME_Q@ >&2 || true
+  @LEDGER_FAIL@
   exit 1
 fi
 
 for i in "${!DESTS[@]}"; do $sudo rm -rf "${DESTS[$i]}.tug-bak"; done
 echo "    @NAME@ is active and healthy"
-@STAMP@
+@LEDGER_OK@
 @ENROLL@
 "#;
 

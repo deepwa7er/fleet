@@ -123,6 +123,35 @@ service that maps to a deployable fleet member.
 > agent is down, the dashboard reports the daemon unreachable and changes
 > nothing — there is no half-deploy.
 
+### The deploy ledger
+
+Every deploy appends one line to a per-service ledger **on the host**,
+`/var/lib/tugboat/{name}.jsonl` — written inside the deploy transaction, so it's
+accurate whether the deploy came from the CLI or the daemon, and it doesn't
+depend on any second service being up. lighthouse reads these files (it runs on
+the same host) to show which sha each service is running and its deploy history.
+
+This file is the **contract** between tugboat (the only writer) and any reader.
+Each line is one JSON object; append-only; newest last:
+
+```json
+{"v":1,"sha":"<full sha>","short":"<8 chars>","dirty":false,"branch":"main","result":"deployed","at":1718900000}
+```
+
+- `v` — schema version (currently `1`); bump it on any breaking change so
+  readers can adapt.
+- `result` — `deployed` if the new build came up healthy, or `rolled_back` if it
+  failed its health check and tugboat restored the previous version. The
+  **currently-running** version is therefore the last entry with `result =
+  "deployed"` — a trailing `rolled_back` means the prior good version is live.
+- `dirty` — whether the working tree had uncommitted changes at deploy time (so
+  `sha` doesn't fully describe what shipped).
+- `at` — Unix epoch seconds.
+
+The write is a single short line to an `O_APPEND` file and is best-effort
+(`… || true`): a ledger hiccup never fails an otherwise-healthy deploy. Entries
+are tiny (~150 bytes); the file is not yet rotated.
+
 ## The manifest
 
 `deploy.toml` (committed) describes the deploy. An optional, untracked
