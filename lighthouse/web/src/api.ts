@@ -1,4 +1,9 @@
-import type { DeployStatus, LogEntry, ServiceStatus } from "./types.ts";
+import type {
+  DeployHistoryEntry,
+  DeployStatus,
+  LogEntry,
+  ServiceStatus,
+} from "./types.ts";
 
 const BASE = "/api";
 
@@ -67,4 +72,14 @@ export async function startDeploy(unit: string): Promise<{ job_id: string }> {
 /** URL for the Server-Sent Events live transcript of a deploy job. */
 export function deployStreamUrl(unit: string, job: string): string {
   return `${BASE}/services/${encodeURIComponent(unit)}/deploy/${encodeURIComponent(job)}/stream`;
+}
+
+/** Recent deploys of a service, newest first. */
+export function fetchDeployHistory(
+  unit: string,
+  limit = 20,
+): Promise<DeployHistoryEntry[]> {
+  return getJson<DeployHistoryEntry[]>(
+    `${BASE}/services/${encodeURIComponent(unit)}/deploy-history?limit=${limit}`,
+  );
 }

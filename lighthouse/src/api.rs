@@ -162,13 +162,40 @@ struct DaemonStatus {
     deployed_is_ancestor: Option<bool>,
 }
 
-/// A deploy stamp written by tugboat: which sha is running for a service.
-#[derive(Debug, Deserialize)]
-struct Stamp {
+/// One entry in tugboat's per-service deploy ledger (`<name>.jsonl`).
+#[derive(Debug, Deserialize, Clone)]
+struct LedgerEntry {
+    /// Schema version; ignored for now but lets the format evolve.
+    #[serde(default)]
+    #[allow(dead_code)]
+    v: u32,
     sha: String,
     short: String,
+    #[serde(default)]
     dirty: bool,
-    deployed_at: u64,
+    branch: Option<String>,
+    /// `deployed` (it came up healthy) or `rolled_back` (it didn't).
+    result: String,
+    /// Unix epoch seconds.
+    at: u64,
+}
+
+/// Read a service's deploy ledger, oldest entry first. Missing/unreadable → empty.
+fn read_ledger(version_dir: &std::path::Path, deploy_name: &str) -> Vec<LedgerEntry> {
+    let path = version_dir.join(format!("{deploy_name}.jsonl"));
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+/// The currently-running version: the most recent entry that actually deployed.
+/// A trailing `rolled_back` entry means the prior `deployed` one is still live.
+fn current_deployed(entries: &[LedgerEntry]) -> Option<&LedgerEntry> {
+    entries.iter().rev().find(|e| e.result == "deployed")
 }
 
 /// Freshness of one deployable service: how the running version compares to the
@@ -197,24 +224,17 @@ pub struct LocalInfo {
     undeployed_commits: Option<u32>,
 }
 
-/// Read the deploy stamp for a service, or `None` if absent/unreadable.
-fn read_stamp(version_dir: &std::path::Path, deploy_name: &str) -> Option<Stamp> {
-    let path = version_dir.join(format!("{deploy_name}.json"));
-    let text = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&text).ok()
-}
-
-/// Decide the freshness verdict from the deployed stamp and live local state.
-fn verdict(stamp: Option<&Stamp>, local: &DaemonStatus) -> &'static str {
-    let Some(stamp) = stamp else {
-        // Deployable, but never stamped (deployed before this feature, or only
+/// Decide the freshness verdict from the deployed entry and live local state.
+fn verdict(deployed: Option<&LedgerEntry>, local: &DaemonStatus) -> &'static str {
+    let Some(deployed) = deployed else {
+        // Deployable, but never recorded (deployed before this feature, or only
         // ever by some other path) — don't guess.
         return "unknown";
     };
     let Some(head) = &local.head_sha else {
         return "unknown";
     };
-    if *head == stamp.sha {
+    if *head == deployed.sha {
         if local.dirty { "dirty" } else { "current" }
     } else if local.deployed_is_ancestor == Some(true) {
         "stale"
@@ -233,14 +253,14 @@ pub async fn deploy_status(State(state): State<Arc<AppState>>) -> Json<Vec<Deplo
     };
 
     // Monitored units paired with the tugboat name they deploy as, and the
-    // running sha from each one's stamp (if any).
-    let units: Vec<(String, String, Option<Stamp>)> = monitored(&state.config)
+    // currently-running entry from each one's deploy ledger (if any).
+    let units: Vec<(String, String, Option<LedgerEntry>)> = monitored(&state.config)
         .await
         .into_iter()
         .map(|m| {
             let deploy_name = state.config.deploy_name(&m.unit);
-            let stamp = read_stamp(&cfg.version_dir, &deploy_name);
-            (m.unit, deploy_name, stamp)
+            let deployed = current_deployed(&read_ledger(&cfg.version_dir, &deploy_name)).cloned();
+            (m.unit, deploy_name, deployed)
         })
         .collect();
 
@@ -248,7 +268,7 @@ pub async fn deploy_status(State(state): State<Arc<AppState>>) -> Json<Vec<Deplo
     // relationship (ahead vs diverged, commit count) against its working tree.
     let deployed_param = units
         .iter()
-        .filter_map(|(_, name, stamp)| stamp.as_ref().map(|s| format!("{name}:{}", s.sha)))
+        .filter_map(|(_, name, dep)| dep.as_ref().map(|d| format!("{name}:{}", d.sha)))
         .collect::<Vec<_>>()
         .join(",");
 
@@ -274,7 +294,7 @@ pub async fn deploy_status(State(state): State<Arc<AppState>>) -> Json<Vec<Deplo
     let by_name: HashSet<&str> = statuses.iter().map(|s| s.name.as_str()).collect();
 
     let mut out = Vec::new();
-    for (unit, deploy_name, stamp) in &units {
+    for (unit, deploy_name, deployed) in &units {
         // Deployable iff the daemon lists it as a member.
         if !by_name.contains(deploy_name.as_str()) {
             continue;
@@ -282,11 +302,11 @@ pub async fn deploy_status(State(state): State<Arc<AppState>>) -> Json<Vec<Deplo
         let local = statuses.iter().find(|s| &s.name == deploy_name).unwrap();
         out.push(DeployStatus {
             unit: unit.clone(),
-            verdict: verdict(stamp.as_ref(), local),
-            deployed: stamp.as_ref().map(|s| DeployedInfo {
-                short: s.short.clone(),
-                dirty: s.dirty,
-                deployed_at: s.deployed_at,
+            verdict: verdict(deployed.as_ref(), local),
+            deployed: deployed.as_ref().map(|d| DeployedInfo {
+                short: d.short.clone(),
+                dirty: d.dirty,
+                deployed_at: d.at,
             }),
             local: Some(LocalInfo {
                 branch: local.branch.clone(),
@@ -297,6 +317,59 @@ pub async fn deploy_status(State(state): State<Arc<AppState>>) -> Json<Vec<Deplo
         });
     }
     Json(out)
+}
+
+/// One deploy in a service's history, for the dashboard.
+#[derive(Debug, Serialize)]
+pub struct DeployHistoryEntry {
+    sha: String,
+    short: String,
+    branch: Option<String>,
+    dirty: bool,
+    /// `deployed` or `rolled_back`.
+    result: String,
+    /// Unix epoch seconds.
+    at: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HistoryQuery {
+    limit: Option<usize>,
+}
+
+const DEFAULT_HISTORY_LIMIT: usize = 20;
+const MAX_HISTORY_LIMIT: usize = 200;
+
+/// `GET /api/services/{unit}/deploy-history?limit=N` — recent deploys of a
+/// service, newest first. Empty when deploy is unconfigured or none recorded.
+pub async fn deploy_history(
+    State(state): State<Arc<AppState>>,
+    Path(unit): Path<String>,
+    Query(query): Query<HistoryQuery>,
+) -> Result<Json<Vec<DeployHistoryEntry>>, StatusCode> {
+    let svc = resolve(&state.config, &unit).await?;
+    let Some(cfg) = &state.config.deploy else {
+        return Ok(Json(Vec::new()));
+    };
+
+    let deploy_name = state.config.deploy_name(&svc.unit);
+    let mut entries = read_ledger(&cfg.version_dir, &deploy_name);
+    entries.reverse(); // newest first
+    let limit = query.limit.unwrap_or(DEFAULT_HISTORY_LIMIT).min(MAX_HISTORY_LIMIT);
+    entries.truncate(limit);
+
+    let history = entries
+        .into_iter()
+        .map(|e| DeployHistoryEntry {
+            sha: e.sha,
+            short: e.short,
+            branch: e.branch,
+            dirty: e.dirty,
+            result: e.result,
+            at: e.at,
+        })
+        .collect();
+    Ok(Json(history))
 }
 
 /// `POST /api/services/{unit}/deploy` — relay a deploy request to the tugboat

@@ -10,6 +10,7 @@ import {
   statusColor,
 } from "../lib/utils.ts";
 import { DeployConsole } from "./DeployConsole.tsx";
+import { DeployHistory } from "./DeployHistory.tsx";
 import { LogViewer } from "./LogViewer.tsx";
 
 interface Props {
@@ -37,6 +38,8 @@ export function ServiceDetail({ service, deploy, onChanged, onDeployed }: Props)
   // transcript replaces the log view.
   const [deployJob, setDeployJob] = useState<string | null>(null);
   const [deploying, setDeploying] = useState(false);
+  // Body shows logs by default; the Deploys toggle swaps in the deploy history.
+  const [showHistory, setShowHistory] = useState(false);
   const color = statusColor(service.active_state);
   // A crash-looping service is rarely caught in "active" — it cycles through
   // activating / auto-restart / failed. `systemctl stop` is exactly what breaks
@@ -128,6 +131,20 @@ export function ServiceDetail({ service, deploy, onChanged, onDeployed }: Props)
           {canDeploy && (
             <button
               type="button"
+              onClick={() => setShowHistory((on) => !on)}
+              className={cn(
+                "border bg-surface px-3 py-1.5 text-xs uppercase tracking-wide",
+                showHistory
+                  ? "border-accent text-accent"
+                  : "border-rule-strong text-ink-muted hover:border-rule-strong",
+              )}
+            >
+              {showHistory ? "logs" : "deploys"}
+            </button>
+          )}
+          {canDeploy && (
+            <button
+              type="button"
               onClick={() => void runDeploy()}
               disabled={deploying || deployJob !== null}
               className={cn(
@@ -175,6 +192,8 @@ export function ServiceDetail({ service, deploy, onChanged, onDeployed }: Props)
               onDeployed();
             }}
           />
+        ) : showHistory ? (
+          <DeployHistory unit={service.unit} />
         ) : (
           <LogViewer unit={service.unit} />
         )}

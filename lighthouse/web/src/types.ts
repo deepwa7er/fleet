@@ -39,3 +39,13 @@ export interface DeployStatus {
     undeployed_commits: number | null;
   } | null;
 }
+
+export interface DeployHistoryEntry {
+  sha: string;
+  short: string;
+  branch: string | null;
+  dirty: boolean;
+  result: "deployed" | "rolled_back";
+  /** Unix epoch seconds. */
+  at: number;
+}
