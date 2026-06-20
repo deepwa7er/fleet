@@ -1,7 +1,6 @@
 # driftword service config.
 #
-# `bind` is auto-filled to the Tailscale IP by deploy/provision.sh on first
-# install (while still this 100.64.0.1 placeholder), so the service is reachable
-# only from the tailnet — the same model harbor and lighthouse use.
-bind = "100.64.0.1"
+# `bind` is loopback; the breakwater reverse proxy is the tailnet front door and
+# serves driftword at https://driftword.internal.deepwa7er.com.
+bind = "127.0.0.1"
 port = 8091

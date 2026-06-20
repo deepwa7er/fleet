@@ -2,8 +2,7 @@
 #
 # Provision driftword's infrastructure on the VPS:
 #   - the `driftword` service user (least privilege)
-#   - the config (installed only if absent; bind address auto-filled to the
-#     Tailscale IP while still the baseline placeholder)
+#   - the config (installed only if absent; binds loopback, fronted by breakwater)
 #   - the systemd unit
 #
 # Run this once for first-time setup. Routine binary deploys go through tugboat
@@ -36,12 +35,7 @@ fi
 mkdir -p /etc/driftword
 [ -f /etc/driftword/config.toml ] || install -m644 "$P/driftword.toml" /etc/driftword/config.toml
 
-# Auto-fill the bind address only while it is still the baseline placeholder.
-TSIP="$(tailscale ip -4 2>/dev/null | head -1 || true)"
-if [ -n "$TSIP" ] && grep -q '^bind = "100.64.0.1"' /etc/driftword/config.toml; then
-  sed -i "s|^bind = .*|bind = \"$TSIP\"|" /etc/driftword/config.toml
-  echo ">> Bound driftword to Tailscale IP $TSIP"
-fi
+# bind is loopback (see config.toml); breakwater is the tailnet front door.
 chown -R driftword:driftword /etc/driftword
 
 # --- systemd unit -----------------------------------------------------------
