@@ -2,8 +2,7 @@
 #
 # Provision lighthouse's infrastructure on the VPS:
 #   - the `lighthouse` service user (least privilege)
-#   - the config (installed only if absent; bind address auto-filled to the
-#     Tailscale IP while still the baseline placeholder)
+#   - the config (installed only if absent; binds loopback, fronted by breakwater)
 #   - the discovery target (lighthouse.target)
 #   - the polkit grant that lets the service start/stop/restart EXACTLY the units
 #     enrolled in lighthouse.target (regenerated from current membership)
@@ -44,12 +43,7 @@ mkdir -p /opt/lighthouse/web
 mkdir -p /etc/lighthouse
 [ -f /etc/lighthouse/config.toml ] || install -m644 "$P/lighthouse.toml" /etc/lighthouse/config.toml
 
-# Auto-fill the bind address only while it is still the baseline placeholder.
-TSIP="$(tailscale ip -4 2>/dev/null | head -1 || true)"
-if [ -n "$TSIP" ] && grep -q '^bind = "100.64.0.1"' /etc/lighthouse/config.toml; then
-  sed -i "s|^bind = .*|bind = \"$TSIP\"|" /etc/lighthouse/config.toml
-  echo ">> Bound dashboard to Tailscale IP $TSIP"
-fi
+# bind is loopback (see config.toml); breakwater is the tailnet front door.
 chown -R lighthouse:lighthouse /etc/lighthouse
 
 # --- Discovery target -------------------------------------------------------
