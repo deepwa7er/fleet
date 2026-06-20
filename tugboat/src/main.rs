@@ -10,6 +10,7 @@
 
 mod deploy;
 mod fleet;
+mod git;
 mod manifest;
 mod serve;
 

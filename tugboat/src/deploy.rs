@@ -11,11 +11,24 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
+use serde_json::json;
 
+use crate::git;
 use crate::manifest::{ArtifactKind, Health, Manifest, Verify};
+
+/// What was deployed, recorded on the host so the dashboard can tell whether a
+/// service is running the latest local code. Written only on a successful
+/// deploy; a rolled-back deploy leaves the previous stamp untouched.
+struct Stamp {
+    sha: String,
+    short: String,
+    dirty: bool,
+    branch: Option<String>,
+    deployed_at: u64,
+}
 
 /// A destination for the deploy transcript: progress lines emitted by the engine
 /// plus every line of captured subprocess output. Implementations must be
@@ -111,14 +124,15 @@ pub fn run(
         }
     }
 
-    // 4. Atomic install, restart, health-check, rollback-on-failure, enroll —
-    //    all in one remote transaction.
+    // 4. Atomic install, restart, health-check, rollback-on-failure, enroll,
+    //    and record what was deployed — all in one remote transaction.
+    let stamp = build_stamp(project_dir);
     step(
         log,
         "INSTALL",
         &format!("{host}: swap binary, restart {}, health-check", manifest.name),
     );
-    ssh_script(host, &remote_script(manifest), log)
+    ssh_script(host, &remote_script(manifest, stamp.as_ref()), log)
         .context("remote install failed (the host rolled back to the previous binary)")?;
 
     // 5. End-to-end verify from this machine (informational).
@@ -266,9 +280,53 @@ fn join_quoted<'a>(items: impl Iterator<Item = &'a str>) -> String {
     items.map(shq).collect::<Vec<_>>().join(" ")
 }
 
+/// The local repo state at deploy time, or `None` when the project isn't a git
+/// checkout (nothing meaningful to record).
+fn build_stamp(project_dir: &Path) -> Option<Stamp> {
+    let state = git::state(project_dir);
+    let sha = state.head_sha?;
+    let deployed_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    Some(Stamp {
+        short: git::short(&sha).to_owned(),
+        sha,
+        dirty: state.dirty,
+        branch: state.branch,
+        deployed_at,
+    })
+}
+
+/// The bash that records the deploy stamp on the host (run on the success path).
+/// Empty when there's nothing to record.
+fn stamp_script(name: &str, stamp: Option<&Stamp>) -> String {
+    let Some(stamp) = stamp else {
+        return String::new();
+    };
+    let payload = json!({
+        "sha": stamp.sha,
+        "short": stamp.short,
+        "dirty": stamp.dirty,
+        "branch": stamp.branch,
+        "deployed_at": stamp.deployed_at,
+    })
+    .to_string();
+    let path = format!("/var/lib/tugboat/{name}.json");
+    format!(
+        "$sudo mkdir -p /var/lib/tugboat\n\
+         printf '%s' {payload} | $sudo tee {tmp} >/dev/null\n\
+         $sudo chmod 0644 {tmp}\n\
+         $sudo mv {tmp} {path}",
+        payload = shq(&payload),
+        tmp = shq(&format!("{path}.tmp")),
+        path = shq(&path),
+    )
+}
+
 /// Build the remote transaction script. Uses a token-replacement template so
 /// the bash (which is brace-heavy) stays readable.
-fn remote_script(manifest: &Manifest) -> String {
+fn remote_script(manifest: &Manifest, stamp: Option<&Stamp>) -> String {
     let name = &manifest.name;
     let dests = join_quoted(manifest.artifacts.iter().map(|a| a.dest.as_str()));
     let modes = join_quoted(manifest.artifacts.iter().map(|a| a.mode.as_str()));
@@ -313,6 +371,7 @@ fn remote_script(manifest: &Manifest) -> String {
         .replace("@RETRIES@", &retries.to_string())
         .replace("@INTERVAL@", &interval_s)
         .replace("@HEALTHCHECK@", &healthcheck)
+        .replace("@STAMP@", &stamp_script(name, stamp))
         .replace("@ENROLL@", &enroll)
         .replace("@NAME@", name)
 }
@@ -366,6 +425,7 @@ fi
 
 for i in "${!DESTS[@]}"; do $sudo rm -rf "${DESTS[$i]}.tug-bak"; done
 echo "    @NAME@ is active and healthy"
+@STAMP@
 @ENROLL@
 "#;
 

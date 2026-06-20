@@ -20,19 +20,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use axum::extract::{Path, Request, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{header, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 
 use crate::deploy::{self, LogSink};
 use crate::fleet::{self, Fleet};
+use crate::git;
 use crate::manifest;
 
 /// CLI arguments for `tugboat serve`.
@@ -154,6 +155,7 @@ pub fn run(args: ServeArgs) -> Result<()> {
     runtime.block_on(async move {
         let app = Router::new()
             .route("/services", get(list_services))
+            .route("/status", get(list_status))
             .route("/deploy/{name}", post(deploy_service))
             .route("/jobs/{id}/stream", get(job_stream))
             .layer(middleware::from_fn_with_state(state.clone(), auth))
@@ -214,6 +216,99 @@ async fn list_services(State(state): State<Arc<ServeState>>) -> Json<Vec<Service
         })
         .collect();
     Json(services)
+}
+
+/// Local repo state for one deployable member, plus (when the caller supplied
+/// the currently-deployed sha) how the working tree relates to it.
+#[derive(Serialize)]
+struct StatusInfo {
+    name: String,
+    branch: Option<String>,
+    head_sha: Option<String>,
+    head_short: Option<String>,
+    dirty: bool,
+    dirty_files: u32,
+    upstream_ahead: u32,
+    upstream_behind: u32,
+    /// Commits on local HEAD not yet in the deployed sha (only when the deployed
+    /// sha was supplied and is an ancestor of HEAD).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    undeployed_commits: Option<u32>,
+    /// Whether the deployed sha is an ancestor of HEAD — i.e. local is strictly
+    /// ahead (`true`) vs diverged (`false`). Absent when no deployed sha given.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deployed_is_ancestor: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct StatusQuery {
+    /// Optional `name:sha,name:sha,…` of currently-deployed shas, so the daemon
+    /// can compute each member's relationship to what's running.
+    deployed: Option<String>,
+}
+
+/// Parse the `deployed` query into a name → sha map.
+fn parse_deployed(raw: &Option<String>) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let Some(raw) = raw else { return map };
+    for pair in raw.split(',') {
+        if let Some((name, sha)) = pair.split_once(':') {
+            let (name, sha) = (name.trim(), sha.trim());
+            if !name.is_empty() && !sha.is_empty() {
+                map.insert(name.to_owned(), sha.to_owned());
+            }
+        }
+    }
+    map
+}
+
+/// `GET /status[?deployed=name:sha,…]` — per-member local git state, plus the
+/// relationship to the deployed sha when one is provided.
+async fn list_status(
+    State(state): State<Arc<ServeState>>,
+    Query(query): Query<StatusQuery>,
+) -> Json<Vec<StatusInfo>> {
+    let deployed = parse_deployed(&query.deployed);
+    let infos = state
+        .fleet
+        .members
+        .iter()
+        .filter(|m| m.deploy)
+        .map(|m| {
+            let name = m.label().to_owned();
+            let dir = state.fleet.dir(m);
+            let st = git::state(&dir);
+            let head_short = st.head_sha.as_deref().map(|s| git::short(s).to_owned());
+
+            let (undeployed_commits, deployed_is_ancestor) =
+                match (deployed.get(&name), st.head_sha.as_deref()) {
+                    (Some(dep), Some(head)) => {
+                        let ancestor = git::is_ancestor(&dir, dep, head);
+                        let commits = if ancestor {
+                            git::count_commits(&dir, dep, head)
+                        } else {
+                            None
+                        };
+                        (commits, Some(ancestor))
+                    }
+                    _ => (None, None),
+                };
+
+            StatusInfo {
+                name,
+                branch: st.branch,
+                head_sha: st.head_sha,
+                head_short,
+                dirty: st.dirty,
+                dirty_files: st.dirty_files,
+                upstream_ahead: st.upstream_ahead,
+                upstream_behind: st.upstream_behind,
+                undeployed_commits,
+                deployed_is_ancestor,
+            }
+        })
+        .collect();
+    Json(infos)
 }
 
 /// `POST /deploy/{name}` — start a deploy job for one member and return its id.

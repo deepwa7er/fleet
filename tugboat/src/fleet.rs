@@ -13,7 +13,7 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
-use crate::{deploy, manifest};
+use crate::{deploy, git, manifest};
 
 /// The fleet manifest, `fleet.toml`.
 #[derive(Debug, Deserialize)]
@@ -202,17 +202,17 @@ pub fn pull(fleet: &Fleet) -> Result<()> {
             println!("  missing:  {label} (run `fleet clone`)");
             continue;
         }
-        if !git_clean(&dir)? {
+        if !git::is_clean(&dir)? {
             println!("  dirty:    {label} (skipped)");
             continue;
         }
-        if !git(&dir, &["fetch", "-q", "origin"])? {
+        if !git::run(&dir, &["fetch", "-q", "origin"])? {
             println!("  fetch ✗:  {label}");
             continue;
         }
         // Fast-forward to the upstream of the current branch, if one exists.
-        match upstream(&dir)? {
-            Some(target) if git(&dir, &["merge", "--ff-only", "-q", &target])? => {
+        match git::upstream(&dir)? {
+            Some(target) if git::run(&dir, &["merge", "--ff-only", "-q", &target])? => {
                 println!("  pulled:   {label}")
             }
             Some(_) => println!("  not-ff:   {label} (local commits or divergence; skipped)"),
@@ -226,35 +226,23 @@ pub fn pull(fleet: &Fleet) -> Result<()> {
 /// `fleet status` — a one-line git summary per member.
 pub fn status(fleet: &Fleet) -> Result<()> {
     for m in &fleet.members {
-        let dir = fleet.dir(m);
         let label = m.label();
-        if !dir.join(".git").is_dir() {
+        let st = git::state(&fleet.dir(m));
+        if !st.is_repo {
             println!("  {label:<14} missing");
             continue;
         }
-        let branch = git_out(&dir, &["rev-parse", "--abbrev-ref", "HEAD"])?
-            .unwrap_or_else(|| "?".into());
-        let dirty = if git_clean(&dir)? { "clean" } else { "dirty" };
+        let branch = st.branch.as_deref().unwrap_or("?");
+        let dirty = if st.dirty { "dirty" } else { "clean" };
         // Compare against the same target `pull` uses (upstream, else origin/<branch>).
-        let track = match upstream(&dir)? {
-            Some(target) => {
-                let range = format!("{target}...HEAD");
-                match git_out(&dir, &["rev-list", "--left-right", "--count", &range])? {
-                    Some(counts) => {
-                        let mut it = counts.split_whitespace();
-                        let behind: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                        let ahead: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                        match (ahead, behind) {
-                            (0, 0) => "up-to-date".into(),
-                            (a, 0) => format!("ahead {a}"),
-                            (0, b) => format!("behind {b}"),
-                            (a, b) => format!("ahead {a}, behind {b}"),
-                        }
-                    }
-                    None => "?".into(),
-                }
-            }
-            None => "no remote branch".into(),
+        let track = match st.upstream {
+            None => "no remote branch".to_string(),
+            Some(_) => match (st.upstream_ahead, st.upstream_behind) {
+                (0, 0) => "up-to-date".into(),
+                (a, 0) => format!("ahead {a}"),
+                (0, b) => format!("behind {b}"),
+                (a, b) => format!("ahead {a}, behind {b}"),
+            },
         };
         println!("  {label:<14} {branch:<10} {dirty:<6} {track}");
     }
@@ -331,58 +319,5 @@ fn fmt_list(items: &[String]) -> String {
         "(none)".into()
     } else {
         items.join(", ")
-    }
-}
-
-// ── git helpers ─────────────────────────────────────────────────────────────
-
-/// Run a git command in `dir`, returning whether it succeeded (stdio inherited).
-fn git(dir: &Path, args: &[&str]) -> Result<bool> {
-    Ok(Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .status()
-        .with_context(|| format!("spawning git {}", args.join(" ")))?
-        .success())
-}
-
-/// Run a git command in `dir`, returning trimmed stdout, or `None` if it failed.
-fn git_out(dir: &Path, args: &[&str]) -> Result<Option<String>> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .with_context(|| format!("spawning git {}", args.join(" ")))?;
-    if !out.status.success() {
-        return Ok(None);
-    }
-    Ok(Some(String::from_utf8_lossy(&out.stdout).trim().to_string()))
-}
-
-fn git_clean(dir: &Path) -> Result<bool> {
-    Ok(git_out(dir, &["status", "--porcelain"])?
-        .map(|s| s.is_empty())
-        .unwrap_or(false))
-}
-
-/// The upstream tracking ref of the current branch, falling back to
-/// `origin/<branch>` when no upstream is configured but it exists.
-fn upstream(dir: &Path) -> Result<Option<String>> {
-    if let Some(u) = git_out(dir, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])? {
-        if !u.is_empty() {
-            return Ok(Some(u));
-        }
-    }
-    let branch = match git_out(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"])? {
-        Some(b) if !b.is_empty() => b,
-        _ => return Ok(None),
-    };
-    let candidate = format!("origin/{branch}");
-    if git_out(dir, &["rev-parse", "--verify", "--quiet", &candidate])?.is_some() {
-        Ok(Some(candidate))
-    } else {
-        Ok(None)
     }
 }
