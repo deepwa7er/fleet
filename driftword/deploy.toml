@@ -1,5 +1,5 @@
 # tugboat deploy manifest — github.com/deepwa7er/tugboat
-#   deploy:  tugboat --manifest deploy.toml      (from this directory)
+#   deploy:  tugboat deploy      (from this directory)
 #
 # One-time infra setup (service user, config, systemd unit) lives in
 # deploy/provision.sh — run that once before the first deploy.
