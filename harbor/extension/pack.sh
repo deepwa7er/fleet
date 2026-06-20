@@ -14,7 +14,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."   # -> harbor repo root
 
 KEY="${HARBOR_EXT_KEY:-$HOME/.config/harbor/extension.pem}"
-HOST="${HARBOR_EXT_HOST:-http://deepwa7er.tailcfab97.ts.net:8090}"
+HOST="${HARBOR_EXT_HOST:-https://harbor.internal.deepwa7er.com}"
 PACKER="${HARBOR_EXT_PACKER:-/Applications/Brave Browser.app/Contents/MacOS/Brave Browser}"
 
 [ -f "$KEY" ] || { echo "signing key not found: $KEY (generate once: openssl genrsa -out \"$KEY\" 2048)" >&2; exit 1; }
