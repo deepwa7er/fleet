@@ -1,5 +1,5 @@
 # tugboat deploy manifest — github.com/deepwa7er/tugboat
-#   deploy:  tugboat --manifest deploy.toml      (from this directory)
+#   deploy:  tugboat deploy      (from this directory)
 name = "tidepool"
 host = "deepwa7er"
 
