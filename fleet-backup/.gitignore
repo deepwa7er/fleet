@@ -1,0 +1,3 @@
+restic.env
+*.env
+!restic.env.example

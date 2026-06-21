@@ -1,0 +1,15 @@
+[Unit]
+Description=Fleet state backup to offsite object storage (restic)
+# Needs the network for the object-store upload.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Holds the restic repo URL, password, and R2/S3 credentials (mode 600, root).
+EnvironmentFile=/etc/fleet-backup/restic.env
+ExecStart=/usr/local/bin/fleet-backup
+# Reads service state across /var/lib and writes a small staging dir; runs as
+# root so it can read each service user's files and snapshot lagoon's DB.
+Nice=10
+IOSchedulingClass=idle
