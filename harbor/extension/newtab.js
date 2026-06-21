@@ -7,16 +7,6 @@ function tick() {
   const now = new Date();
   document.getElementById("clock").textContent =
     now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
-  const date = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
-  const hour = now.getHours();
-  const part =
-    hour < 5  ? "still dark out" :
-    hour < 12 ? "good morning" :
-    hour < 17 ? "good afternoon" :
-    hour < 21 ? "good evening" :
-                "burning the midnight oil";
-  document.getElementById("greeting").textContent = `${part} · ${date}`;
 }
 
 // ── time helpers ───────────────────────────────────────────────────────────
@@ -73,20 +63,12 @@ function entryRow(entry) {
   main.append(meta);
   li.append(main);
 
-  if (entry.summary) {
-    const sum = document.createElement("div");
-    sum.className = "row-sum";
-    sum.textContent = entry.summary;
-    li.append(sum);
-  }
-
-  // Latest commit (truthful recency), when available.
+  // Recency indicator — just the timestamp, not the commit message.
   const latest = entry.recent && entry.recent[0];
   if (latest) {
     const act = document.createElement("div");
     act.className = "row-act";
-    act.textContent = `↻ ${relTime(latest.date)} · ${latest.sha} ${latest.message}`;
-    act.title = latest.message;
+    act.textContent = `↻ ${relTime(latest.date)}`;
     li.append(act);
   }
 
@@ -112,50 +94,29 @@ function fill(listId, entries) {
   for (const entry of entries) ul.append(entryRow(entry));
 }
 
-// ── aggregated "Next up" across all projects/areas ───────────────────────────
+// ── focus bar — top next step across all projects/areas ──────────────────────
 const STATUS_RANK = { active: 0, ongoing: 1, shipped: 2, stable: 3, learning: 4, idea: 5, archived: 6 };
 
-function buildNextUp(state) {
-  const ul = document.getElementById("nextup");
-  const sec = document.getElementById("nextup-section");
-  ul.replaceChildren();
+function buildFocus(state) {
+  const bar = document.getElementById("focus-bar");
+  const textEl = document.getElementById("focus-text");
+  const projEl = document.getElementById("focus-proj");
 
   const entries = [...(state.projects || []), ...(state.areas || [])];
-  const rows = [];
-  for (const e of entries) {
-    for (const text of e.next_items || []) rows.push({ entry: e, text });
-  }
-  rows.sort((a, b) =>
-    (STATUS_RANK[a.entry.status] ?? 9) - (STATUS_RANK[b.entry.status] ?? 9) ||
-    a.entry.name.localeCompare(b.entry.name));
+  const top = entries
+    .filter((e) => e.next_items && e.next_items.length > 0)
+    .sort((a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9))[0];
 
-  if (rows.length === 0) { sec.classList.add("hidden"); return; }
-  sec.classList.remove("hidden");
+  if (!top) { bar.classList.add("hidden"); return; }
 
-  for (const { entry, text } of rows) {
-    const li = document.createElement("li");
-    li.tabIndex = 0;
+  textEl.textContent = top.next_items[0];
+  projEl.textContent = top.name;
+  bar.classList.remove("hidden");
 
-    const dot = document.createElement("span");
-    dot.className = `dot status-${entry.status}`;
-    dot.title = entry.status;
-
-    const txt = document.createElement("span");
-    txt.className = "todo-text";
-    txt.textContent = text;
-
-    const proj = document.createElement("span");
-    proj.className = "todo-proj";
-    proj.textContent = entry.name;
-
-    li.append(dot, txt, proj);
-    const open = () => openNote(entry);
-    li.addEventListener("click", open);
-    li.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
-    });
-    ul.append(li);
-  }
+  bar.onclick = () => openNote(top);
+  bar.onkeydown = (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openNote(top); }
+  };
 }
 
 // ── services rendering ───────────────────────────────────────────────────────
@@ -198,34 +159,18 @@ function fillServices(services) {
   }
 }
 
-// ── external app links (launchable tailnet services) ─────────────────────────
-function fillExternalLinks(links) {
-  const ul = document.getElementById("external-links");
-  const sec = document.getElementById("apps-section");
-  ul.replaceChildren();
-  if (!links || links.length === 0) {
-    sec.classList.add("hidden");
-    return;
-  }
-  sec.classList.remove("hidden");
+// ── apps strip — compact horizontal links ─────────────────────────────────────
+function renderApps(links) {
+  const strip = document.getElementById("apps-strip");
+  strip.replaceChildren();
+  if (!links || links.length === 0) { strip.classList.add("hidden"); return; }
+  strip.classList.remove("hidden");
   for (const link of links) {
-    const li = document.createElement("li");
-    const main = document.createElement("div");
-    main.className = "row-main";
-
     const a = document.createElement("a");
-    a.className = "name applink";
     a.href = link.url;
     a.rel = "noreferrer";
     a.textContent = link.name;
-
-    const meta = document.createElement("span");
-    meta.className = "meta";
-    try { meta.textContent = new URL(link.url).host; } catch { meta.textContent = link.url; }
-
-    main.append(a, meta);
-    li.append(main);
-    ul.append(li);
+    strip.append(a);
   }
 }
 
@@ -637,7 +582,6 @@ function setStatus(text, kind) {
 }
 
 function showError(message) {
-  document.getElementById("nextup-section").classList.add("hidden");
   for (const id of ["fleet", "areas", "services"]) {
     const ul = document.getElementById(id);
     ul.removeAttribute("aria-busy");
@@ -663,11 +607,11 @@ async function load() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const state = await res.json();
     lastState = state;
-    buildNextUp(state);
+    buildFocus(state);
     fill("fleet", state.projects);
     fill("areas", state.areas);
     fillServices(state.services);
-    fillExternalLinks(state.external_links);
+    renderApps(state.external_links);
     graph.update(state);
     const commit = state.source && state.source.commit ? ` @${state.source.commit}` : "";
     setStatus(`live · secondbrain${commit} · refreshed ${ago(state.generated_at)}`, "ok");

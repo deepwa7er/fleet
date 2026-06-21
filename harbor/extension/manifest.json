@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "harbor",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Personal mission-control new tab — a live view into the secondbrain portfolio and the deepwa7er VPS.",
   "update_url": "https://harbor.internal.deepwa7er.com/extension/updates.xml",
   "chrome_url_overrides": {
