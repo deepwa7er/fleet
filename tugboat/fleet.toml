@@ -55,6 +55,14 @@ repo = "git@github.com:deepwa7er/driftword.git"
 # ── part of the fleet, deployed some other way (clone/pull/status only) ──────
 
 [[members]]
+# The fleet documentation site's React frontend. Not a tugboat-deploy member:
+# it has no service/unit of its own and ships as static files via
+# `tugboat fleet docs` (see [docs] below), served by breakwater. clone/pull only.
+path = "pilot"
+repo = "git@github.com:deepwa7er/pilot.git"
+deploy = false
+
+[[members]]
 # Heaviest VPS tenant: a multi-unit backend (sonar-discovery + navidrome +
 # slskd), deployed outside tugboat. NOTE: this repo lives at ~/code/apple/sonar
 # on the laptop but ~/code/sonar on fedora — standardize the location before
@@ -79,3 +87,15 @@ deploy = false
 path = "git-autocommit"
 repo = "git@github.com:deepwa7er/git-autocommit.git"
 deploy = false
+
+# ── the fleet documentation site ─────────────────────────────────────────────
+# `tugboat fleet docs` builds the `pilot` frontend, overlays the harvested model
+# (fleet.json) and each repo's rustdoc, and ships the assembled static site to
+# `dest` on `host`, where breakwater serves it (a serve_dir route) at `url`.
+[docs]
+repo = "pilot"
+build = "cd web && bun install && bun run build"
+dist = "web/dist"
+host = "deepwa7er"
+dest = "/opt/pilot/web"
+url = "https://docs.internal.deepwa7er.com"

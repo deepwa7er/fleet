@@ -276,7 +276,7 @@ fn run_local(cmd: &str, dir: &Path, log: &dyn LogSink) -> Result<()> {
 /// — the files land owned by the remote SSH user, not whatever uid matches
 /// locally. Each ship targets a fresh `.tug-new` path, so there is no basis file
 /// for rsync to delta against; this is whole-file transfer, just compressed.
-fn rsync(local: &Path, remote: &str, kind: ArtifactKind, log: &dyn LogSink) -> Result<()> {
+pub(crate) fn rsync(local: &Path, remote: &str, kind: ArtifactKind, log: &dyn LogSink) -> Result<()> {
     let mut command = Command::new("rsync");
     command.args(["-az", "--no-owner", "--no-group"]);
 
@@ -296,7 +296,7 @@ fn rsync(local: &Path, remote: &str, kind: ArtifactKind, log: &dyn LogSink) -> R
     Ok(())
 }
 
-fn ssh_script(host: &str, script: &str, log: &dyn LogSink) -> Result<()> {
+pub(crate) fn ssh_script(host: &str, script: &str, log: &dyn LogSink) -> Result<()> {
     let mut command = Command::new("ssh");
     command.arg(host).arg("bash -s");
     let status =
@@ -382,7 +382,7 @@ fn verify(cfg: &Verify, log: &dyn LogSink) -> Result<()> {
 }
 
 /// Quote a value for safe interpolation as a single shell word.
-fn shq(s: &str) -> String {
+pub(crate) fn shq(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 

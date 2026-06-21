@@ -13,6 +13,12 @@ use serde::Deserialize;
 pub struct Manifest {
     /// Service / systemd unit base name (the unit is `{name}.service`).
     pub name: String,
+    /// One-line service description for the docs (`tugboat fleet docs`). When set
+    /// it is authoritative — it overrides any crate-level Cargo description, which
+    /// is the right call for a workspace (no single crate speaks for the service)
+    /// or a non-Rust service (no Cargo description at all). Unused by deploys.
+    #[serde(default)]
+    pub description: Option<String>,
     /// SSH host (an alias from `~/.ssh/config`). May instead come from the
     /// overlay, `--host`, or `TUGBOAT_HOST`.
     #[serde(default)]
@@ -125,13 +131,27 @@ impl Manifest {
     }
 }
 
+/// Read and deserialize a `deploy.toml` without overlay, host resolution, or
+/// validation — the shared first step of [`load`] and [`parse`].
+fn read_raw(path: &Path) -> Result<Manifest> {
+    let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+}
+
+/// Parse a `deploy.toml` for inspection (e.g. doc generation): structural
+/// validation only. Unlike [`load`], it applies no `deploy.local.toml` overlay
+/// and does not require a deploy host — a host is a *deploy*-time concern, not a
+/// property of the service being described.
+pub fn parse(path: &Path) -> Result<Manifest> {
+    let manifest = read_raw(path)?;
+    validate_structure(&manifest)?;
+    Ok(manifest)
+}
+
 /// Load `deploy.toml`, apply the optional `deploy.local.toml` overlay and the
-/// `--host` override, then validate.
+/// `--host` override, then validate (structure and a resolved host).
 pub fn load(path: &Path, host_override: Option<&str>) -> Result<Manifest> {
-    let text = fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
-    let mut manifest: Manifest =
-        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    let mut manifest = read_raw(path)?;
 
     let local_path = path.with_file_name("deploy.local.toml");
     if local_path.exists() {
@@ -162,16 +182,16 @@ pub fn load(path: &Path, host_override: Option<&str>) -> Result<Manifest> {
         }
     }
 
-    validate(&manifest)?;
+    validate_structure(&manifest)?;
+    validate_host(&manifest)?;
     Ok(manifest)
 }
 
-fn validate(manifest: &Manifest) -> Result<()> {
+/// Validate everything intrinsic to the service description — independent of any
+/// particular deploy. Shared by [`parse`] and [`load`].
+fn validate_structure(manifest: &Manifest) -> Result<()> {
     if manifest.name.trim().is_empty() {
         bail!("manifest: `name` is required");
-    }
-    if manifest.host.as_deref().unwrap_or("").is_empty() {
-        bail!("manifest: a host is required (set `host`, `--host`, or TUGBOAT_HOST)");
     }
     if manifest.build.cmd.trim().is_empty() {
         bail!("manifest: `build.cmd` is required");
@@ -183,6 +203,15 @@ fn validate(manifest: &Manifest) -> Result<()> {
         if !artifact.dest.starts_with('/') {
             bail!("manifest: artifact dest must be an absolute path: {}", artifact.dest);
         }
+    }
+    Ok(())
+}
+
+/// Validate that a deploy host has been resolved — required by [`load`] (a
+/// deploy), but not by [`parse`] (inspection).
+fn validate_host(manifest: &Manifest) -> Result<()> {
+    if manifest.host.as_deref().unwrap_or("").is_empty() {
+        bail!("manifest: a host is required (set `host`, `--host`, or TUGBOAT_HOST)");
     }
     Ok(())
 }

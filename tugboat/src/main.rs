@@ -9,6 +9,7 @@
 //! status), driven by a `fleet.toml` that lists the member repos.
 
 mod deploy;
+mod docs;
 mod fleet;
 mod git;
 mod manifest;
@@ -136,6 +137,29 @@ enum FleetAction {
     Status,
     /// Deploy each deployable member in listed order.
     Deploy(FleetDeployArgs),
+    /// Generate the fleet documentation site (fleet.json + per-repo rustdoc).
+    Docs(FleetDocsArgs),
+}
+
+#[derive(Parser)]
+struct FleetDocsArgs {
+    /// Assemble the site into this directory and don't ship. Omit to ship to the
+    /// host in the fleet's `[docs]` config.
+    #[arg(long)]
+    out: Option<PathBuf>,
+    /// Skip building the frontend and reuse its existing `dist`.
+    #[arg(long)]
+    skip_build: bool,
+    /// Skip the slow `cargo doc` pass and emit only fleet.json.
+    #[arg(long)]
+    skip_rustdoc: bool,
+    /// Restrict the rustdoc pass to a comma-separated set of member names
+    /// (fleet.json still covers the whole fleet).
+    #[arg(long)]
+    only: Option<String>,
+    /// Print the plan and exit without building or shipping.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Parser)]
@@ -218,5 +242,20 @@ fn run_fleet(args: FleetArgs) -> Result<()> {
             d.dry_run,
             d.continue_on_error,
         ),
+        FleetAction::Docs(d) => {
+            let only = d.only.map(|s| {
+                s.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
+            });
+            docs::generate(
+                &fleet,
+                &docs::Options {
+                    out: d.out,
+                    skip_build: d.skip_build,
+                    skip_rustdoc: d.skip_rustdoc,
+                    only,
+                    dry_run: d.dry_run,
+                },
+            )
+        }
     }
 }

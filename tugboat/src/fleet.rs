@@ -24,9 +24,36 @@ pub struct Fleet {
     root: String,
     #[serde(default)]
     pub members: Vec<Member>,
+    /// Optional configuration for `tugboat fleet docs` — where the docs frontend
+    /// lives, how to build it, and where the assembled site is served.
+    #[serde(default)]
+    pub docs: Option<DocsConfig>,
 }
 fn default_root() -> String {
     "~/code".into()
+}
+
+/// The `[docs]` table: how `tugboat fleet docs` builds and ships the fleet
+/// documentation site. The site is process-less static files (built from the
+/// `repo` frontend plus the harvested model and per-repo rustdoc) served by
+/// breakwater, so this records only the frontend build and the ship target.
+#[derive(Debug, Deserialize)]
+pub struct DocsConfig {
+    /// Member path (relative to the fleet `root`) of the frontend repo, e.g.
+    /// `pilot`.
+    pub repo: String,
+    /// Command run in the repo dir to produce the static frontend, e.g.
+    /// `cd web && bun install && bun run build`.
+    pub build: String,
+    /// Built frontend directory, relative to the repo dir, e.g. `web/dist`.
+    pub dist: String,
+    /// SSH host (alias) the assembled site ships to.
+    pub host: String,
+    /// Absolute path on the host that breakwater serves the site from.
+    pub dest: String,
+    /// Public URL, polled after a ship to confirm the site is live. Optional.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,6 +163,25 @@ pub fn load(path: &Path) -> Result<Fleet> {
         }
         if !seen.insert(&m.path) {
             bail!("fleet: duplicate member path `{}`", m.path);
+        }
+    }
+    if let Some(docs) = &fleet.docs {
+        for (field, value) in [
+            ("repo", &docs.repo),
+            ("build", &docs.build),
+            ("dist", &docs.dist),
+            ("host", &docs.host),
+            ("dest", &docs.dest),
+        ] {
+            if value.trim().is_empty() {
+                bail!("fleet: [docs] `{field}` must not be empty");
+            }
+        }
+        if !docs.dest.starts_with('/') {
+            bail!("fleet: [docs] `dest` must be an absolute path (got `{}`)", docs.dest);
+        }
+        if fleet.members.iter().all(|m| m.label() != docs.repo) {
+            bail!("fleet: [docs] `repo` = `{}` is not a fleet member", docs.repo);
         }
     }
     Ok(fleet)
