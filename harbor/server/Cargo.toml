@@ -3,6 +3,7 @@ name = "harbor-server"
 version = "0.1.0"
 edition = "2024"
 publish = false
+description = "Chrome new-tab backend — fleet activity pulse + lagoon capture for the deepwa7er fleet."
 
 [[bin]]
 name = "harbor-server"
