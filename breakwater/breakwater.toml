@@ -57,7 +57,7 @@ host = "driftword.internal.deepwa7er.com"
 upstream = "127.0.0.1:8091"
 
 [[routes]]
-host = "buoy.internal.deepwa7er.com"
+host = "lagoon.internal.deepwa7er.com"
 upstream = "127.0.0.1:8092"
 
 [[routes]]
