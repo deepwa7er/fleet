@@ -63,6 +63,28 @@ pub fn short(sha: &str) -> &str {
     &sha[..sha.len().min(8)]
 }
 
+/// Convert a git remote URL into its GitHub web base
+/// (`https://github.com/owner/repo`), or `None` for non-GitHub remotes. Handles
+/// the scp-style (`git@github.com:owner/repo.git`), https, and ssh forms — so a
+/// reader can build commit/compare links without hardcoding the host or owner.
+pub fn github_web_url(remote: &str) -> Option<String> {
+    let remote = remote.trim();
+    let path = remote
+        .strip_prefix("git@github.com:")
+        .or_else(|| remote.strip_prefix("https://github.com/"))
+        .or_else(|| remote.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| remote.strip_prefix("git://github.com/"))?;
+    let path = path.strip_suffix(".git").unwrap_or(path).trim_matches('/');
+    // Require exactly an `owner/repo` shape; reject empty or deeper paths.
+    let mut parts = path.split('/');
+    let owner = parts.next().filter(|s| !s.is_empty())?;
+    let repo = parts.next().filter(|s| !s.is_empty())?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(format!("https://github.com/{owner}/{repo}"))
+}
+
 /// Whether `ancestor` is an ancestor of `descendant` (so the descendant is the
 /// later commit). Used to tell "local is ahead of what's deployed" (stale) from
 /// "local has diverged from it".
@@ -134,5 +156,31 @@ pub fn upstream(dir: &Path) -> Result<Option<String>> {
         Ok(Some(candidate))
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::github_web_url;
+
+    #[test]
+    fn normalizes_github_remote_forms() {
+        let want = Some("https://github.com/deepwa7er/lagoon".to_string());
+        // The fleet uses scp-style; also accept https/ssh and a missing .git.
+        assert_eq!(github_web_url("git@github.com:deepwa7er/lagoon.git"), want);
+        assert_eq!(github_web_url("git@github.com:deepwa7er/lagoon"), want);
+        assert_eq!(github_web_url("https://github.com/deepwa7er/lagoon.git"), want);
+        assert_eq!(github_web_url("https://github.com/deepwa7er/lagoon"), want);
+        assert_eq!(github_web_url("ssh://git@github.com/deepwa7er/lagoon.git"), want);
+        assert_eq!(github_web_url("  git@github.com:deepwa7er/lagoon.git  "), want);
+    }
+
+    #[test]
+    fn rejects_non_github_or_malformed() {
+        assert_eq!(github_web_url("git@gitlab.com:x/y.git"), None);
+        assert_eq!(github_web_url("https://example.com/a/b"), None);
+        assert_eq!(github_web_url("git@github.com:deepwa7er"), None); // no repo
+        assert_eq!(github_web_url("git@github.com:a/b/c.git"), None); // too deep
+        assert_eq!(github_web_url(""), None);
     }
 }

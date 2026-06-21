@@ -262,6 +262,10 @@ async fn list_services(State(state): State<Arc<ServeState>>) -> Json<Vec<Service
 #[derive(Serialize)]
 struct StatusInfo {
     name: String,
+    /// GitHub web base (`https://github.com/owner/repo`) from the member's
+    /// remote, so a reader can build commit/compare links. `None` off GitHub.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repo_url: Option<String>,
     branch: Option<String>,
     head_sha: Option<String>,
     head_short: Option<String>,
@@ -335,6 +339,7 @@ async fn list_status(
 
             StatusInfo {
                 name,
+                repo_url: git::github_web_url(&m.repo),
                 branch: st.branch,
                 head_sha: st.head_sha,
                 head_short,
