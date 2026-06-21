@@ -70,3 +70,12 @@ deploy = false
 path = "fleet-backup"
 repo = "git@github.com:deepwa7er/fleet-backup.git"
 deploy = false
+
+[[members]]
+# Reusable systemd watcher that commits+pushes a service's live config to git on
+# change (first user: ferry's /var/lib/ferry ⇄ ferry-config). Provisioned infra,
+# clone/pull only. (ferry-config itself isn't a fleet member — it's VPS state,
+# restored by cloning to /var/lib/ferry, not checked out on dev boxes.)
+path = "git-autocommit"
+repo = "git@github.com:deepwa7er/git-autocommit.git"
+deploy = false
