@@ -23,3 +23,12 @@ words = "https://driftword.internal.deepwa7er.com"
 gh = "https://github.com/search?q={query}"
 yt = "https://www.youtube.com/results?search_query={query}"
 w = "https://en.wikipedia.org/wiki/Special:Search?search={query}"
+
+# Note capture: `b lg buy oat milk` POSTs the text to lagoon's capture API and
+# shows a confirmation; `b lg` with no text just opens lagoon. `api` is lagoon's
+# loopback endpoint on the VPS (ferry runs there too, so no TLS hop); `open` is
+# its tailnet web UI. An explicit [commands] entry of the same name would win.
+[capture]
+keyword = "lg"
+api = "http://127.0.0.1:8092/api/thoughts"
+open = "https://lagoon.internal.deepwa7er.com"

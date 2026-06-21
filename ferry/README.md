@@ -66,6 +66,24 @@ Defined in the `[commands]` table of the config:
   into `https://dash/services/nginx?action=restart`, and `b svc nginx` into
   `https://dash/services/nginx?action=`.
 
+### Capture a note
+
+An optional `[capture]` section turns one keyword into a note-capture action
+instead of a redirect:
+
+```toml
+[capture]
+keyword = "lg"
+api = "http://127.0.0.1:8092/api/thoughts"   # POST {"text": ...} here
+open = "https://notes.example/"               # linked from the confirmation
+```
+
+`b lg buy oat milk` POSTs `{"text": "buy oat milk"}` to `api` and shows a
+confirmation page (the text is shown there too, so a failed capture can be
+copied out rather than lost). `b lg` with no text just opens `open`. An explicit
+`[commands]` entry of the same name takes precedence, so the keyword can be
+shadowed. `api` and `open` must be absolute URLs.
+
 ### Jump to a localhost port
 
 A built-in shorthand turns `:<port>` into a jump to that port on your own

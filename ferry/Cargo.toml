@@ -7,6 +7,10 @@ edition = "2024"
 anyhow = "1"
 axum = "0.8"
 percent-encoding = "2"
+# Plain-HTTP client for the note-capture POST to the notes app on loopback. No
+# TLS feature: the target is 127.0.0.1, and dropping TLS keeps the static-musl
+# build free of a crypto backend.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -23,6 +23,26 @@ pub struct Config {
     /// BTreeMap so the /commands page lists them alphabetically.
     #[serde(default)]
     pub commands: BTreeMap<String, String>,
+
+    /// Optional note-capture command: `<keyword> <text>` POSTs the text to a
+    /// notes app instead of redirecting. Omit the section to disable it.
+    #[serde(default)]
+    pub capture: Option<CaptureConfig>,
+}
+
+/// Turns one keyword into a capture action: `b lg buy milk` POSTs `{"text":
+/// "buy milk"}` to `api` and confirms; `b lg` with no text just opens `open`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CaptureConfig {
+    /// Address-bar keyword that triggers capture, e.g. `lg`.
+    pub keyword: String,
+    /// Endpoint to POST `{"text": ...}` to — the notes app's capture API
+    /// (loopback on the VPS, so no TLS hop).
+    pub api: String,
+    /// The notes app's web UI: linked from the confirmation page, and where a
+    /// bare keyword (no text) redirects to.
+    pub open: String,
 }
 
 fn default_port() -> u16 {
@@ -52,6 +72,12 @@ impl Config {
         for (name, url) in &self.commands {
             validate_command_name(name).map_err(anyhow::Error::msg)?;
             validate_command_url(url).map_err(anyhow::Error::msg)?;
+        }
+        if let Some(capture) = &self.capture {
+            validate_command_name(&capture.keyword).map_err(anyhow::Error::msg)?;
+            // `api` and `open` are absolute URLs, same rule as a command target.
+            validate_command_url(&capture.api).map_err(anyhow::Error::msg)?;
+            validate_command_url(&capture.open).map_err(anyhow::Error::msg)?;
         }
         Ok(())
     }

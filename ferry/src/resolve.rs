@@ -6,6 +6,10 @@ use crate::config::{Config, QUERY_PLACEHOLDER};
 pub enum Resolution {
     /// Redirect the browser to this URL.
     Redirect(String),
+    /// Capture a note: POST `text` to the notes app's `api`, then show a
+    /// confirmation page that links `open`. (The keyword with no text resolves
+    /// to `Redirect(open)` instead — there's nothing to capture.)
+    Capture { api: String, text: String, open: String },
     /// Show the page listing all configured commands.
     ListPage,
 }
@@ -42,6 +46,19 @@ pub fn resolve(config: &Config, input: &str) -> Resolution {
             return Resolution::Redirect(template.clone());
         }
         return Resolution::Redirect(fill(&config.fallback, input));
+    }
+
+    // The note-capture keyword (after explicit commands, so it can be shadowed):
+    // with text it captures, bare it just opens the notes app.
+    if let Some(capture) = config.capture.as_ref().filter(|c| c.keyword == name) {
+        if args.is_empty() {
+            return Resolution::Redirect(capture.open.clone());
+        }
+        return Resolution::Capture {
+            api: capture.api.clone(),
+            text: args.to_string(),
+            open: capture.open.clone(),
+        };
     }
 
     if let Some(url) = localhost_redirect(name) {
@@ -117,6 +134,21 @@ mod tests {
 
     fn redirect(url: &str) -> Resolution {
         Resolution::Redirect(url.to_string())
+    }
+
+    fn config_with_capture() -> Config {
+        toml::from_str(
+            r#"
+            fallback = "https://search.example/?q={query}"
+            [commands]
+            mail = "https://mail.example/"
+            [capture]
+            keyword = "lg"
+            api = "http://127.0.0.1:8092/api/thoughts"
+            open = "https://notes.example/"
+            "#,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -228,5 +260,42 @@ mod tests {
         assert_eq!(resolve(&config, "list"), redirect("https://lists.example/"));
         config.commands.remove("list");
         assert_eq!(resolve(&config, "list"), Resolution::ListPage);
+    }
+
+    #[test]
+    fn capture_keyword_with_text_captures() {
+        assert_eq!(
+            resolve(&config_with_capture(), "lg buy oat milk"),
+            Resolution::Capture {
+                api: "http://127.0.0.1:8092/api/thoughts".to_string(),
+                text: "buy oat milk".to_string(),
+                open: "https://notes.example/".to_string(),
+            },
+        );
+    }
+
+    #[test]
+    fn bare_capture_keyword_opens_notes_app() {
+        // Nothing to capture → just open the notes app.
+        assert_eq!(resolve(&config_with_capture(), "lg"), redirect("https://notes.example/"));
+    }
+
+    #[test]
+    fn capture_text_is_raw_not_url_encoded() {
+        // The text becomes a JSON body, so it must NOT be percent-encoded here.
+        match resolve(&config_with_capture(), "lg a & b?") {
+            Resolution::Capture { text, .. } => assert_eq!(text, "a & b?"),
+            other => panic!("expected capture, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn explicit_command_shadows_capture_keyword() {
+        let mut config = config_with_capture();
+        config
+            .commands
+            .insert("lg".to_string(), "https://override.example/?q={query}".to_string());
+        // The explicit command wins; capture never triggers.
+        assert_eq!(resolve(&config, "lg note"), redirect("https://override.example/?q=note"));
     }
 }

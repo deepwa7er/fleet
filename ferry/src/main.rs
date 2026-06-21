@@ -5,6 +5,7 @@ mod suggest;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::Context;
 use axum::Router;
@@ -29,6 +30,9 @@ struct AppState {
     /// Serializes config-file mutations so concurrent writes can't interleave
     /// into a lost update. Reads stay lock-free (the file is re-read per request).
     write_lock: Mutex<()>,
+    /// Shared client for the note-capture POST. Cheap to clone (it's an `Arc`
+    /// internally) and pools connections to the loopback notes app.
+    http: reqwest::Client,
 }
 
 /// Failure from a config-mutating operation, split so the HTTP layer can map a
@@ -174,6 +178,10 @@ async fn main() -> anyhow::Result<()> {
         .with_state(Arc::new(AppState {
             config_path,
             write_lock: Mutex::new(()),
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()
+                .context("failed to build the HTTP client")?,
         }))
         .layer(middleware::from_fn(log_request));
 
@@ -278,7 +286,35 @@ async fn handle_query(
     };
     match resolve::resolve(&config, &params.q) {
         Resolution::Redirect(url) => Redirect::temporary(&url).into_response(),
+        Resolution::Capture { api, text, open } => {
+            capture_note(&state.http, &api, &text, &open).await
+        }
         Resolution::ListPage => Redirect::temporary("/commands").into_response(),
+    }
+}
+
+/// POST the note text to the notes app's capture API, then return a confirmation
+/// page (or, on failure, an error page that preserves the text so it isn't lost).
+async fn capture_note(http: &reqwest::Client, api: &str, text: &str, open: &str) -> Response {
+    let result = http
+        .post(api)
+        .json(&serde_json::json!({ "text": text }))
+        .send()
+        .await;
+    match result {
+        Ok(resp) if resp.status().is_success() => {
+            Html(render_capture_page(None, text, open)).into_response()
+        }
+        Ok(resp) => {
+            let why = format!("the notes app returned {}", resp.status());
+            (StatusCode::BAD_GATEWAY, Html(render_capture_page(Some(&why), text, open)))
+                .into_response()
+        }
+        Err(err) => {
+            let why = format!("couldn't reach the notes app: {err}");
+            (StatusCode::BAD_GATEWAY, Html(render_capture_page(Some(&why), text, open)))
+                .into_response()
+        }
     }
 }
 
@@ -580,6 +616,16 @@ fn render_commands_page(config: &Config, notice: Option<&Notice>, form: &FormVal
         url = escape_html(&form.url),
     );
 
+    // Surface the note-capture keyword (configured in the TOML, not via this UI)
+    // so it's discoverable alongside the redirect commands.
+    let capture_hint = match &config.capture {
+        Some(c) => format!(
+            " &middot; Capture <code>b {} &lt;text&gt;</code>",
+            escape_html(&c.keyword),
+        ),
+        None => String::new(),
+    };
+
     // Styled after DG-001 (U.S. Graphics school): light "paper + ink", mono,
     // hairline rules, flat fills, sharp corners, single amber signal accent.
     format!(
@@ -678,12 +724,73 @@ fn render_commands_page(config: &Config, notice: Option<&Notice>, form: &FormVal
 <section class="panel">
 <h2 class="panel-head">Commands</h2>
 {table}</section>
-<p class="fallback">Built-in <code>:3000</code> &rarr; <code>http://localhost:3000</code> &middot; Fallback <code>{fallback}</code></p>
+<p class="fallback">Built-in <code>:3000</code> &rarr; <code>http://localhost:3000</code> &middot; Fallback <code>{fallback}</code>{capture_hint}</p>
 </body>
 </html>
 "#,
         count = config.commands.len(),
         fallback = escape_html(&config.fallback),
+    )
+}
+
+/// A confirmation page for a note capture. `error` is `None` on success, or the
+/// reason on failure — the note text is shown either way, so a failed capture
+/// can still be copied out rather than lost. Styled to match the DG-001 commands
+/// page (paper + ink, mono, hairline rules, single amber accent).
+fn render_capture_page(error: Option<&str>, text: &str, open: &str) -> String {
+    let open = escape_html(open);
+    let text = escape_html(text);
+    let (accent_var, heading, detail) = match error {
+        None => ("--accent", "Captured", String::new()),
+        Some(why) => (
+            "--danger",
+            "Capture failed",
+            format!("<p class=\"why\">{}</p>\n", escape_html(why)),
+        ),
+    };
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ferry &mdash; {heading}</title>
+<style>
+  :root {{
+    --font-mono: "Berkeley Mono", "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --bg: #f4f3ee; --surface: #fafaf8; --ink: #1a1a1a; --ink-muted: #5a584f;
+    --rule: #d2d0c8; --rule-strong: #b4b1a7; --accent: #e8590c; --danger: #c92a2a;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    font: 14px/1.5 var(--font-mono); background: var(--bg); color: var(--ink);
+    max-width: 40rem; margin: 0 auto; padding: 24px 16px 32px; -webkit-font-smoothing: antialiased;
+  }}
+  h1 {{
+    font-size: 18px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+    margin: 0 0 16px; padding-bottom: 12px; border-bottom: 2px solid var({accent_var});
+  }}
+  .why {{ color: var(--danger); margin: 0 0 12px; }}
+  blockquote {{
+    margin: 0 0 20px; padding: 12px; background: var(--surface);
+    border: 1px solid var(--rule); border-left: 3px solid var({accent_var});
+    white-space: pre-wrap; word-break: break-word;
+  }}
+  a {{
+    display: inline-block; padding: 8px 12px; border: 1px solid var(--rule-strong);
+    background: var(--surface); color: var(--ink); text-decoration: none;
+    text-transform: uppercase; letter-spacing: 0.5px; font-size: 13px;
+  }}
+  a:hover {{ border-color: var(--ink); }}
+</style>
+</head>
+<body>
+<h1>{heading}</h1>
+{detail}<blockquote>{text}</blockquote>
+<a href="{open}">View notes &rarr;</a>
+</body>
+</html>
+"#
     )
 }
 
