@@ -1,3 +1,18 @@
+/** Reference data merged from the docs site's fleet.json (see backend
+ * src/fleet.rs). Present only for units the fleet describes. */
+export interface FleetRef {
+  /** One-line service description (the docs' authoritative summary). */
+  summary: string;
+  /** Public URL, when routed — the card's "open" link. */
+  url?: string;
+  /** Loopback port the service listens on. */
+  port?: number;
+  /** Git remote. */
+  repo?: string;
+  /** Deep link to the service's entry on the docs site. */
+  docs_url?: string;
+}
+
 export interface ServiceStatus {
   unit: string;
   name: string;
@@ -10,6 +25,8 @@ export interface ServiceStatus {
   since: string | null;
   memory_bytes: number | null;
   pid: number | null;
+  /** Reference data from the fleet docs, when this unit is described there. */
+  fleet?: FleetRef;
 }
 
 export interface LogEntry {

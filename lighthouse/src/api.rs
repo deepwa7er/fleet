@@ -42,10 +42,16 @@ pub async fn list_services(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ServiceStatus>>, StatusCode> {
     let services = monitored(&state.config).await;
+    // Reference data (description, URL, docs link) to merge onto live status,
+    // joined by unit. Best-effort: an absent fleet.json just leaves it unenriched.
+    let fleet = crate::fleet::load(&state.config.fleet_path);
     let mut statuses = Vec::with_capacity(services.len());
     for svc in services {
         match systemd::status(&svc.unit, &svc.name).await {
-            Ok(status) => statuses.push(status),
+            Ok(mut status) => {
+                status.fleet = fleet.get(&status.unit).cloned();
+                statuses.push(status);
+            }
             Err(err) => {
                 eprintln!("failed to query {}: {err:#}", svc.unit);
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);

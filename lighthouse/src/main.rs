@@ -1,6 +1,7 @@
 mod alerts;
 mod api;
 mod config;
+mod fleet;
 mod systemd;
 
 use std::net::SocketAddr;

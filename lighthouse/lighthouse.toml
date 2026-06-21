@@ -10,6 +10,12 @@ port = 8080
 # script installs the React build here.
 static_dir = "/opt/lighthouse/web"
 
+# The fleet docs' generated fleet.json, read to enrich each service on the home
+# view with its description, public URL, and docs link (joined by unit name).
+# Best-effort: if the file is absent the dashboard shows live status only.
+# Defaults to the pilot docs site's path on this host; override if it differs.
+# fleet_path = "/opt/pilot/web/fleet.json"
+
 # Services to monitor are discovered automatically: any service that is a member
 # of this systemd target shows up on the dashboard. Enroll one with
 #   systemctl add-wants lighthouse.target <unit>

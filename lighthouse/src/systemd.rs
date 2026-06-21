@@ -38,6 +38,11 @@ pub struct ServiceStatus {
     pub since: Option<String>,
     pub memory_bytes: Option<u64>,
     pub pid: Option<u32>,
+    /// Reference data merged from the docs site's `fleet.json` (description,
+    /// public URL, docs link). `None` until [`crate::api`] fills it in, and for
+    /// units the fleet doesn't describe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fleet: Option<crate::fleet::FleetRef>,
 }
 
 /// A lifecycle action that may be performed on a service. The set is
@@ -143,6 +148,7 @@ pub async fn status(unit: &str, name: &str) -> anyhow::Result<ServiceStatus> {
         since,
         memory_bytes,
         pid,
+        fleet: None,
     })
 }
 

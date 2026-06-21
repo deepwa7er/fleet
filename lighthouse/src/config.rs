@@ -33,6 +33,16 @@ pub struct Config {
     /// reached over the tailnet). Absent means no Deploy buttons appear.
     #[serde(default)]
     pub deploy: Option<DeployConfig>,
+    /// The docs site's generated `fleet.json`, read to enrich each service with
+    /// its description, public URL, and docs link (the fleet "home" view). Joined
+    /// by unit name. Best-effort: if the file is absent the dashboard shows live
+    /// status only, exactly as before.
+    #[serde(default = "default_fleet_path")]
+    pub fleet_path: PathBuf,
+}
+
+fn default_fleet_path() -> PathBuf {
+    PathBuf::from("/opt/pilot/web/fleet.json")
 }
 
 /// Deploy integration: where to reach the tugboat `serve` daemon.

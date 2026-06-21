@@ -7,7 +7,7 @@ import {
   fetchServices,
   type ServiceAction,
 } from "./api.ts";
-import { ServiceCard } from "./components/ServiceCard.tsx";
+import { FleetHome } from "./components/FleetHome.tsx";
 import { ServiceDetail } from "./components/ServiceDetail.tsx";
 
 const POLL_INTERVAL_MS = 5_000;
@@ -73,6 +73,14 @@ export function App() {
     }
   }, []);
 
+  // Return to the fleet home (the card grid).
+  const goHome = useCallback(() => {
+    setSelected(null);
+    if (window.location.pathname !== "/") {
+      history.pushState(null, "", "/");
+    }
+  }, []);
+
   // Poll service status on an interval.
   useEffect(() => {
     void refresh();
@@ -102,18 +110,20 @@ export function App() {
     return map;
   }, [deployStatus]);
 
-  // Once services load, select the one named in the URL (if any), else the
-  // first. Runs only while nothing is selected yet.
+  // Once services load, resolve the unit named in the URL (if any). On `/` this
+  // stays null — the home grid. Runs only while nothing is selected yet, so it
+  // doesn't fight navigation.
   useEffect(() => {
     if (selected === null && services.length > 0) {
-      setSelected(matchUnit(services, unitFromPath()) ?? services[0].unit);
+      const fromUrl = matchUnit(services, unitFromPath());
+      if (fromUrl) setSelected(fromUrl);
     }
   }, [services, selected]);
 
-  // Follow browser back/forward between service routes.
+  // Follow browser back/forward between the home and service routes.
   useEffect(() => {
     function onPopState() {
-      setSelected(matchUnit(services, unitFromPath()) ?? services[0]?.unit ?? null);
+      setSelected(matchUnit(services, unitFromPath()));
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -140,45 +150,35 @@ export function App() {
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-baseline gap-3 border-b border-rule-strong px-6 py-4">
-        <h1 className="text-lg font-bold uppercase tracking-[0.2em] text-ink">
+        <button
+          type="button"
+          onClick={goHome}
+          className="text-lg font-bold uppercase tracking-[0.2em] text-ink hover:text-accent"
+        >
           Lighthouse
-        </h1>
+        </button>
         <span className="text-xs uppercase tracking-wider text-ink-muted">
-          Service dashboard · deepwa7er
+          Fleet · deepwa7er
         </span>
         <span className="ml-auto text-[10px] uppercase tracking-wider text-ink-faint">
           DOC. LH-001 · REV 0.1.0
         </span>
       </header>
-      <div className="flex min-h-0 flex-1">
-        <aside className="flex w-80 shrink-0 flex-col overflow-auto border-r border-rule">
-          <div className="border-b border-rule px-4 py-2 text-[10px] font-bold uppercase tracking-[0.15em] text-ink-muted">
-            Services · {services.length}
-          </div>
-          <div className="space-y-2 p-4">
-            {error && (
-              <div className="border-l-2 border-failed bg-failed/10 px-3 py-2 text-xs text-failed">
-                {error}
-              </div>
-            )}
-            {services.map((service) => (
-              <ServiceCard
-                key={service.unit}
-                service={service}
-                deploy={deployByUnit.get(service.unit) ?? null}
-                selected={service.unit === selected}
-                onSelect={() => select(service.unit)}
-              />
-            ))}
-            {services.length === 0 && !error && (
-              <div className="text-xs uppercase tracking-wide text-ink-faint">
-                Loading…
-              </div>
-            )}
-          </div>
-        </aside>
-        <main className="min-w-0 flex-1">
-          {selectedService ? (
+
+      {selectedService ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <nav className="flex items-center gap-1 border-b border-rule px-6 py-2 text-xs">
+            <button
+              type="button"
+              onClick={goHome}
+              className="text-ink-muted hover:text-accent"
+            >
+              ← Fleet
+            </button>
+            <span className="text-ink-faint">/</span>
+            <span className="text-ink">{selectedService.name}</span>
+          </nav>
+          <main className="min-h-0 flex-1">
             <ServiceDetail
               key={selectedService.unit}
               service={selectedService}
@@ -186,13 +186,18 @@ export function App() {
               onChanged={() => void refresh()}
               onDeployed={() => void refreshDeployStatus()}
             />
-          ) : (
-            <div className="flex h-full items-center justify-center text-sm uppercase tracking-wide text-ink-faint">
-              Select a service
-            </div>
-          )}
+          </main>
+        </div>
+      ) : (
+        <main className="min-h-0 flex-1 overflow-auto">
+          <FleetHome
+            services={services}
+            deployByUnit={deployByUnit}
+            error={error}
+            onSelect={select}
+          />
         </main>
-      </div>
+      )}
     </div>
   );
 }
