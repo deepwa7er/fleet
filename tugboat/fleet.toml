@@ -62,3 +62,11 @@ repo = "git@github.com:deepwa7er/driftword.git"
 path = "sonar"
 repo = "git@github.com:deepwa7er/sonar.git"
 deploy = false
+
+[[members]]
+# Offsite restic backup of the fleet's /var/lib state → Cloudflare R2. Shell +
+# systemd units, set up via its own provision.sh (not a tugboat-built binary),
+# so clone/pull only.
+path = "fleet-backup"
+repo = "git@github.com:deepwa7er/fleet-backup.git"
+deploy = false
