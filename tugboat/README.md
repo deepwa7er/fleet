@@ -168,22 +168,38 @@ This file is the **contract** between tugboat (the only writer) and any reader.
 Each line is one JSON object; append-only; newest last:
 
 ```json
-{"v":1,"sha":"<full sha>","short":"<8 chars>","dirty":false,"branch":"main","result":"deployed","at":1718900000}
+{"v":2,"id":"1718900000-1a2b3c4d","sha":"<full sha>","short":"<8 chars>","dirty":false,"branch":"main","result":"deployed","at":1718900000}
 ```
 
-- `v` — schema version (currently `1`); bump it on any breaking change so
+- `v` — schema version (currently `2`); bump it on any breaking change so
   readers can adapt.
+- `id` — `{at}-{short}` (or `{at}-nogit` outside a checkout). Names this deploy's
+  **transcript file** (see below) so a reader can pair history with its log.
 - `result` — `deployed` if the new build came up healthy, or `rolled_back` if it
   failed its health check and tugboat restored the previous version. The
   **currently-running** version is therefore the last entry with `result =
   "deployed"` — a trailing `rolled_back` means the prior good version is live.
 - `dirty` — whether the working tree had uncommitted changes at deploy time (so
   `sha` doesn't fully describe what shipped).
-- `at` — Unix epoch seconds.
+- `at` — Unix epoch seconds (stamped at deploy *start*; shared with `id`).
 
 The write is a single short line to an `O_APPEND` file and is best-effort
 (`… || true`): a ledger hiccup never fails an otherwise-healthy deploy. Entries
 are tiny (~150 bytes); the file is not yet rotated.
+
+### Deploy transcripts
+
+Alongside the ledger, every deploy that reaches the install step writes its full
+transcript (build → ship → install, including a rollback's diagnostics) to
+`/var/lib/tugboat/{name}/{id}.log` on the host — for both outcomes, since a
+rolled-back deploy's log is the most useful to keep. The `{id}` matches the
+ledger entry, so a reader (lighthouse) lists history from the ledger and opens
+the matching transcript on demand. Captured uniformly for CLI and daemon deploys
+via a teeing sink; shipped over ssh on the deploy's stdin (so contents are never
+shell-quoted). Best-effort like the ledger, and pruned to the most recent 50 per
+service. Deploys that fail *before* the remote install (e.g. a local build error)
+have no ledger entry and no transcript — that output is a dev-box concern and is
+visible live.
 
 ## The manifest
 
