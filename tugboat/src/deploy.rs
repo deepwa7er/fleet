@@ -109,19 +109,19 @@ pub fn run(
     }
 
     // 3. Ship each artifact next to its destination (same filesystem, so the
-    //    install step's rename is atomic): files via scp, dirs via rsync.
+    //    install step's rename is atomic). Both files and directories go over
+    //    rsync — one transfer path, with compression on the binary for free.
     for (src, artifact) in &artifacts {
         let staged = format!("{host}:{}.tug-new", artifact.dest);
         match artifact.kind {
             ArtifactKind::File => {
                 step(log, "SHIP", &format!("{} → {}:{}", src.display(), host, artifact.dest));
-                scp(src, &staged, log)?;
             }
             ArtifactKind::Dir => {
                 step(log, "SHIP DIR", &format!("{}/ → {}:{}", src.display(), host, artifact.dest));
-                rsync_dir(src, &staged, log)?;
             }
         }
+        rsync(src, &staged, artifact.kind, log)?;
     }
 
     // 4. Atomic install, restart, health-check, rollback-on-failure, enroll,
@@ -215,31 +215,32 @@ fn run_local(cmd: &str, dir: &Path, log: &dyn LogSink) -> Result<()> {
     Ok(())
 }
 
-fn scp(local: &Path, remote: &str, log: &dyn LogSink) -> Result<()> {
-    let mut command = Command::new("scp");
-    command.arg("-q").arg(local).arg(remote);
-    let status = run_streamed(command, None, log).context("spawning scp")?;
-    if !status.success() {
-        bail!("scp failed: {} → {remote}", local.display());
-    }
-    Ok(())
-}
-
-/// Mirror a local directory's contents to a remote path (trailing slashes make
-/// rsync copy the contents into `remote`, and `--delete` removes stale files).
+/// Ship an artifact to `remote` over rsync. A `File` is copied as-is; a `Dir`
+/// gets trailing slashes (so rsync copies the *contents* into `remote`) plus
+/// `--delete` to prune stale files. The remote already needs rsync for the dir
+/// case, so files ride the same path and pick up `-z` compression for free.
 ///
-/// `--no-owner --no-group`: keep permissions/times but do NOT carry the local
-/// machine's uid/gid to the server — the files land owned by the remote SSH
-/// user, not whatever uid happens to match locally.
-fn rsync_dir(local: &Path, remote: &str, log: &dyn LogSink) -> Result<()> {
+/// `-a` preserves permissions and times (the binary keeps its exec bit), while
+/// `--no-owner --no-group` stops the local machine's uid/gid from carrying over
+/// — the files land owned by the remote SSH user, not whatever uid matches
+/// locally. Each ship targets a fresh `.tug-new` path, so there is no basis file
+/// for rsync to delta against; this is whole-file transfer, just compressed.
+fn rsync(local: &Path, remote: &str, kind: ArtifactKind, log: &dyn LogSink) -> Result<()> {
     let mut command = Command::new("rsync");
-    command
-        .args(["-az", "--no-owner", "--no-group", "--delete"])
-        .arg(format!("{}/", local.display()))
-        .arg(format!("{remote}/"));
+    command.args(["-az", "--no-owner", "--no-group"]);
+
+    let (from, to) = match kind {
+        ArtifactKind::File => (local.display().to_string(), remote.to_string()),
+        ArtifactKind::Dir => {
+            command.arg("--delete");
+            (format!("{}/", local.display()), format!("{remote}/"))
+        }
+    };
+    command.arg(&from).arg(&to);
+
     let status = run_streamed(command, None, log).context("spawning rsync")?;
     if !status.success() {
-        bail!("rsync failed: {}/ → {remote}/", local.display());
+        bail!("rsync failed: {from} → {to}");
     }
     Ok(())
 }

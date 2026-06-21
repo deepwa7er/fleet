@@ -41,7 +41,7 @@ pub struct Build {
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ArtifactKind {
-    /// A single file (e.g. a binary), shipped with scp.
+    /// A single file (e.g. a binary), shipped with rsync.
     #[default]
     File,
     /// A directory tree (e.g. built web assets), shipped with rsync --delete.
