@@ -45,8 +45,8 @@ path = "harbor"
 repo = "git@github.com:deepwa7er/harbor.git"
 
 [[members]]
-path = "buoy"
-repo = "git@github.com:deepwa7er/buoy.git"
+path = "lagoon"
+repo = "git@github.com:deepwa7er/lagoon.git"
 
 [[members]]
 path = "driftword"
