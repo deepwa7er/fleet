@@ -190,7 +190,7 @@ impl Config {
     }
 
     /// Build the hostname → target lookup used at request time. Hosts are
-    /// lowercased so matching is case-insensitive. [`validate`] has already
+    /// lowercased so matching is case-insensitive. Config validation has already
     /// guaranteed every route resolves to exactly one target.
     pub fn routing_table(&self) -> HashMap<String, RouteTarget> {
         self.routes
