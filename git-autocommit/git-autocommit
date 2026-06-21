@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+#
+# Auto-commit + push the git repo that contains the given path. Invoked by
+# git-autocommit@<path>.service (triggered by the matching .path watcher), so a
+# change to a tracked file lands in git — and on GitHub — on its own.
+#
+# Reusable for any service whose runtime config/state is a git checkout: the
+# script is repo-agnostic. Per-repo setup (which deploy key, identity) lives in
+# the checkout's own git config, set once when the watch is enabled (see README).
+set -euo pipefail
+
+target="${1:?usage: git-autocommit <path-inside-a-git-repo>}"
+root="$(git -c safe.directory='*' -C "$(dirname "$target")" rev-parse --show-toplevel)"
+
+# Runs as root over a service-user-owned checkout, so allow the dir explicitly
+# and stamp a generic committer; the remote's deploy key comes from the
+# checkout's local core.sshCommand.
+g() {
+  git -C "$root" -c safe.directory="$root" \
+    -c user.name='git-autocommit' -c user.email='git-autocommit@deepwa7er' "$@"
+}
+
+g add -A
+if g diff --cached --quiet; then
+  exit 0  # nothing actually changed (e.g. an identical rewrite)
+fi
+g commit -q -m "auto: $(basename "$target") updated $(date -u +%FT%TZ)"
+g push -q
+echo "git-autocommit: pushed $root"

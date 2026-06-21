@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch %I and auto-commit changes to its git repo
+
+[Path]
+# Fires when the tracked file is rewritten (atomic temp+rename counts). Watch the
+# FILE, not its directory — watching the dir would re-fire on the commit's own
+# .git writes and loop.
+PathModified=%I
+Unit=git-autocommit@%i.service
+
+[Install]
+WantedBy=paths.target
