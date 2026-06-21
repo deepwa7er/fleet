@@ -52,6 +52,11 @@ pub struct Options {
 /// The whole fleet, as the docs site consumes it.
 #[derive(Debug, Serialize)]
 pub struct FleetDoc {
+    /// The docs site's own public URL (from `[docs].url`), so a consumer of
+    /// `fleet.json` — e.g. lighthouse building "open the docs" links — knows
+    /// where the site lives without hardcoding it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docs_url: Option<String>,
     pub services: Vec<ServiceDoc>,
 }
 
@@ -188,7 +193,10 @@ fn assemble(fleet: &Fleet, opts: &Options, out: &Path) -> Result<()> {
         services.push(service);
     }
 
-    let model = FleetDoc { services };
+    let model = FleetDoc {
+        docs_url: fleet.docs.as_ref().and_then(|d| d.url.clone()),
+        services,
+    };
     let json_path = out.join("fleet.json");
     let json = serde_json::to_string_pretty(&model).context("serializing fleet.json")?;
     std::fs::write(&json_path, json)
