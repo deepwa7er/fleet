@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "harbor",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "Personal mission-control new tab — activity pulse across the fleet and quick capture to lagoon.",
   "update_url": "https://harbor.internal.deepwa7er.com/extension/updates.xml",
   "chrome_url_overrides": {

@@ -57,9 +57,34 @@ pub struct State {
     /// secondbrain has no `topology.yaml` — the graph view degrades gracefully.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topology: Option<Topology>,
+    /// Fleet-scale source stat from the docs' `fleet.json`. `None` when that file
+    /// is absent, so the new-tab page simply omits the counter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fleet_stats: Option<FleetStats>,
     /// Map of entry name → markdown file path, for the note endpoint. Not served.
     #[serde(skip)]
     pub note_paths: HashMap<String, PathBuf>,
+}
+
+/// Fleet-scale stats harvested by `tugboat fleet docs` into `fleet.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FleetStats {
+    /// Total hand-written source lines across the fleet.
+    pub total_loc: u64,
+}
+
+/// Read the fleet-scale stats from the docs' `fleet.json`. Best-effort: a missing
+/// or unparseable file yields `None`, and the counter is simply not shown.
+pub fn load_fleet_stats(path: &Path) -> Option<FleetStats> {
+    /// Only the fields harbor needs from the (much larger) fleet.json.
+    #[derive(Deserialize)]
+    struct FleetJson {
+        #[serde(default)]
+        total_loc: u64,
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    let parsed: FleetJson = serde_json::from_str(&text).ok()?;
+    Some(FleetStats { total_loc: parsed.total_loc })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -102,6 +127,7 @@ pub fn build(source_dir: &Path, remote: Option<&str>) -> Result<State> {
         services: Vec::new(),
         external_links: Vec::new(),
         topology,
+        fleet_stats: None,
         note_paths,
     })
 }

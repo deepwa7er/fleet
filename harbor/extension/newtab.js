@@ -595,6 +595,16 @@ function showError(message) {
   setStatus(`can't reach harbor (${message}) — is the server up / are you on the tailnet?`, "err");
 }
 
+// Total lines of code across the fleet, shown in the masthead. Hidden until the
+// server reports it (i.e. fleet.json is present).
+function buildFleetStat(state) {
+  const wrap = document.getElementById("fleet-stat");
+  const loc = state.fleet_stats && state.fleet_stats.total_loc;
+  if (!loc) { wrap.classList.add("hidden"); return; }
+  document.getElementById("fleet-loc").textContent = loc.toLocaleString();
+  wrap.classList.remove("hidden");
+}
+
 // ── data ──────────────────────────────────────────────────────────────────
 let lastState = null;
 
@@ -606,6 +616,7 @@ async function load() {
     const state = await res.json();
     lastState = state;
     buildFocus(state);
+    buildFleetStat(state);
     buildActivity(state);
     graph.update(state);
     const commit = state.source && state.source.commit ? ` @${state.source.commit}` : "";

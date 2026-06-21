@@ -136,6 +136,9 @@ impl Updater {
             }
         }
 
+        // Fleet-scale source stat from the docs' fleet.json (best-effort).
+        state.fleet_stats = secondbrain::load_fleet_stats(&self.config.fleet_json_path);
+
         Ok(state)
     }
 

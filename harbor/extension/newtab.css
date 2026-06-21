@@ -83,6 +83,22 @@ body {
   color: var(--ink-muted);
 }
 
+/* ── Fleet stat — total lines of code, right of the masthead ─────────────── */
+.fleet-stat {
+  flex: none;
+  display: flex; align-items: baseline; gap: var(--s2);
+  margin-right: var(--s5);
+}
+.fleet-loc {
+  font-size: 20px; font-weight: 500; line-height: 1;
+  font-variant-numeric: tabular-nums; letter-spacing: 1px;
+  color: var(--accent);
+}
+.fleet-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--ink-faint);
+}
+
 /* ── Focus bar — top next step, center of masthead ───────────────────────── */
 .focus-bar {
   flex: 1;

@@ -62,6 +62,12 @@ pub struct Config {
     #[serde(default)]
     pub lighthouse_url: Option<String>,
 
+    /// The fleet docs' generated `fleet.json`, read for the fleet-scale source
+    /// stat (total lines of code) shown on the new-tab page. Best-effort: if the
+    /// file is absent the stat is simply omitted.
+    #[serde(default = "default_fleet_json_path")]
+    pub fleet_json_path: PathBuf,
+
     /// CORS allow-origin. `"*"` (the default) is appropriate for a read-only,
     /// tailnet-bound service; set a specific origin to lock it down.
     #[serde(default = "default_allow_origin")]
@@ -98,6 +104,10 @@ fn default_allow_origin() -> String {
 
 fn default_extension_dir() -> PathBuf {
     PathBuf::from("dist")
+}
+
+fn default_fleet_json_path() -> PathBuf {
+    PathBuf::from("/opt/pilot/web/fleet.json")
 }
 
 impl Config {
