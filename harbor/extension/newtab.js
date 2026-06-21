@@ -65,7 +65,7 @@ function buildActivity(state) {
   const events = [];
   for (const p of state.projects || []) {
     for (const c of p.recent || []) {
-      events.push({ project: p.name, sha: c.sha, date: c.date, message: c.message });
+      events.push({ project: p.name, repo: p.repo, sha: c.sha, date: c.date, message: c.message });
     }
   }
   events.sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
@@ -77,7 +77,10 @@ function buildActivity(state) {
     li.textContent = "no recent activity";
     ul.append(li);
   } else {
-    for (const ev of recent) ul.append(actRow(ev.project, ev.message, ev.date, false));
+    for (const ev of recent) {
+    const url = ev.repo ? `https://github.com/${ev.repo}/commit/${ev.sha}` : null;
+    ul.append(actRow(ev.project, ev.message, ev.date, false, url));
+  }
   }
 
   // Going-cold: active projects with no commit in COLD_DAYS days.
@@ -101,9 +104,23 @@ function buildActivity(state) {
   }
 }
 
-function actRow(project, message, date, cold) {
+function actRow(project, message, date, cold, url) {
   const li = document.createElement("li");
-  li.className = cold ? "act-row act-cold" : "act-row";
+  li.className = [
+    "act-row",
+    cold  ? "act-cold"   : "",
+    url   ? "act-linked" : "",
+  ].filter(Boolean).join(" ");
+
+  if (url) {
+    li.tabIndex = 0;
+    li.setAttribute("role", "link");
+    const open = () => window.open(url, "_blank", "noreferrer");
+    li.addEventListener("click", open);
+    li.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    });
+  }
 
   const proj = document.createElement("span");
   proj.className = "act-proj";

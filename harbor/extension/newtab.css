@@ -179,6 +179,13 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Linked commit rows. */
+.act-row.act-linked { cursor: pointer; }
+.act-row.act-linked:hover,
+.act-row.act-linked:focus-visible { background: rgba(255, 255, 255, 0.04); }
+.act-row.act-linked:hover .act-msg,
+.act-row.act-linked:focus-visible .act-msg { color: var(--ink); }
+
 /* Going-cold rows. */
 .act-divider {
   height: 0; border: none; border-top: var(--border);
