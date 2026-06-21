@@ -156,7 +156,7 @@ placements:
     codebase: macbook
     runs_on:
       - { machine: deepwa7er, unit: ferry.service }
-  buoy:
+  lagoon:
     codebase: macbook
 edges:
   - { from: lighthouse, to: ferry, kind: monitors }
@@ -170,7 +170,7 @@ edges:
         assert_eq!(t.machines.len(), 2);
         assert_eq!(t.placements["ferry"].codebase.as_deref(), Some("macbook"));
         assert_eq!(t.placements["ferry"].runs_on[0].unit.as_deref(), Some("ferry.service"));
-        assert!(t.placements["buoy"].runs_on.is_empty());
+        assert!(t.placements["lagoon"].runs_on.is_empty());
         assert_eq!(t.edges.len(), 1);
     }
 
@@ -189,7 +189,7 @@ edges:
         t.edges.push(Edge { from: "ferry".into(), to: "ghost".into(), kind: "x".into() });
 
         let projects: HashSet<String> =
-            ["ferry", "buoy", "lighthouse"].iter().map(|s| (*s).to_string()).collect();
+            ["ferry", "lagoon", "lighthouse"].iter().map(|s| (*s).to_string()).collect();
         t.validate(&projects);
 
         assert!(!t.placements.contains_key("ghost"), "unknown-project placement dropped");
@@ -201,9 +201,9 @@ edges:
     #[test]
     fn unknown_codebase_machine_is_cleared() {
         let mut t = sample();
-        t.placements.get_mut("buoy").unwrap().codebase = Some("ghost-host".into());
-        let projects: HashSet<String> = ["ferry", "buoy"].iter().map(|s| (*s).to_string()).collect();
+        t.placements.get_mut("lagoon").unwrap().codebase = Some("ghost-host".into());
+        let projects: HashSet<String> = ["ferry", "lagoon"].iter().map(|s| (*s).to_string()).collect();
         t.validate(&projects);
-        assert_eq!(t.placements["buoy"].codebase, None);
+        assert_eq!(t.placements["lagoon"].codebase, None);
     }
 }

@@ -1,7 +1,7 @@
-// harbor new-tab: activity pulse across the fleet + quick capture to buoy.
+// harbor new-tab: activity pulse across the fleet + quick capture to lagoon.
 
 const API      = (window.HARBOR && window.HARBOR.api)      || "";
-const BUOY_URL = (window.HARBOR && window.HARBOR.buoy_url) || "";
+const LAGOON_URL = (window.HARBOR && window.HARBOR.lagoon_url) || "";
 
 // ── clock ─────────────────────────────────────────────────────────────────
 function tick() {
@@ -142,15 +142,15 @@ function actRow(project, message, date, cold, url) {
   return li;
 }
 
-// ── buoy capture ──────────────────────────────────────────────────────────
+// ── lagoon capture ──────────────────────────────────────────────────────────
 function initCapture() {
   const input    = document.getElementById("capture-input");
   const btn      = document.getElementById("capture-btn");
   const statusEl = document.getElementById("capture-status");
 
-  if (!BUOY_URL) {
+  if (!LAGOON_URL) {
     input.disabled = true;
-    input.placeholder = "buoy_url not configured in config.js";
+    input.placeholder = "lagoon_url not configured in config.js";
     btn.disabled = true;
     return;
   }
@@ -167,7 +167,7 @@ function initCapture() {
     statusEl.className = "capture-status";
 
     try {
-      const res = await fetch(`${BUOY_URL}/api/thoughts`, {
+      const res = await fetch(`${LAGOON_URL}/api/thoughts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),

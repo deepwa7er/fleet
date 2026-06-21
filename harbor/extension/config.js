@@ -5,5 +5,5 @@
 // Whatever you put here must also be listed in manifest.json `host_permissions`.
 window.HARBOR = {
   api: "https://harbor.internal.deepwa7er.com",
-  buoy_url: "https://buoy.internal.deepwa7er.com",
+  lagoon_url: "https://lagoon.internal.deepwa7er.com",
 };
