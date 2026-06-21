@@ -82,7 +82,9 @@ struct CachedActivity {
 }
 
 /// How many recent commits to fetch per project.
-const RECENT_COMMITS: u32 = 5;
+/// 20 gives the activity feed enough cross-fleet history to show a meaningful
+/// picture of momentum without being excessive on the GitHub API.
+const RECENT_COMMITS: u32 = 20;
 
 /// Builds snapshots: git sync + frontmatter parse (blocking), then async
 /// enrichment — GitHub commit activity (TTL-cached) and lighthouse health.

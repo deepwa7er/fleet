@@ -22,36 +22,35 @@
     </header>
 
     <nav class="viewtabs" role="tablist" aria-label="view">
-      <button id="tab-list" class="viewtab active" role="tab" aria-selected="true">List</button>
+      <button id="tab-main" class="viewtab active" role="tab" aria-selected="true">Main</button>
       <button id="tab-graph" class="viewtab" role="tab" aria-selected="false">Graph</button>
     </nav>
 
-    <div id="list-view">
-    <div id="apps-strip" class="apps-strip hidden"></div>
-
-    <section class="grid">
+    <div id="main-view" class="main-grid">
       <article class="card">
-        <h2>Fleet</h2>
-        <ul id="fleet" class="rows" aria-busy="true">
-          <li class="loading">loading…</li>
+        <h2>Activity</h2>
+        <ul id="activity-feed" class="activity-feed" aria-busy="true">
+          <li class="act-empty">loading…</li>
         </ul>
       </article>
 
-      <article class="card">
-        <h2>Areas</h2>
-        <ul id="areas" class="rows" aria-busy="true">
-          <li class="loading">loading…</li>
-        </ul>
+      <article class="card capture-card">
+        <h2>Capture</h2>
+        <div class="capture-form">
+          <textarea
+            id="capture-input"
+            class="capture-input"
+            placeholder="new thought…"
+            autocomplete="off"
+            spellcheck="true"
+          ></textarea>
+          <div class="capture-footer">
+            <span id="capture-status" class="capture-status"></span>
+            <button id="capture-btn" class="capture-btn">capture ⌘↵</button>
+          </div>
+        </div>
       </article>
-
-      <article class="card">
-        <h2>Services</h2>
-        <ul id="services" class="rows">
-          <li class="loading">—</li>
-        </ul>
-      </article>
-    </section>
-    </div><!-- /list-view -->
+    </div><!-- /main-view -->
 
     <section id="graph-view" class="graph-view hidden" role="tabpanel" aria-label="graph">
       <div class="graph-frame">
@@ -70,11 +69,11 @@
 
     <footer class="waterline">
       <span id="status">connecting…</span>
-      <span class="ver">harbor v0.3.4</span>
+      <span class="ver">harbor v0.3.5</span>
     </footer>
   </main>
 
-  <!-- Note detail overlay -->
+  <!-- Note detail overlay — opened via focus bar -->
   <div id="overlay" class="overlay hidden" role="dialog" aria-modal="true">
     <div class="sheet">
       <header class="sheet-head">
