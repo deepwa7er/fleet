@@ -154,6 +154,10 @@ async fn resolve(config: &Config, unit: &str) -> Result<Monitored, StatusCode> {
 #[derive(Debug, Deserialize)]
 struct DaemonStatus {
     name: String,
+    /// GitHub web base (`https://github.com/owner/repo`), when the remote is on
+    /// GitHub — used to link undeployed commits. Absent otherwise.
+    #[serde(default)]
+    repo_url: Option<String>,
     branch: Option<String>,
     head_sha: Option<String>,
     head_short: Option<String>,
@@ -211,6 +215,29 @@ pub struct DeployStatus {
     verdict: &'static str,
     deployed: Option<DeployedInfo>,
     local: Option<LocalInfo>,
+    /// GitHub compare link (`…/compare/<deployed>...<head>`) showing the
+    /// committed-but-undeployed commits. `None` unless there's such work and the
+    /// repo is on GitHub.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    changes_url: Option<String>,
+}
+
+/// A GitHub compare link for the committed work not yet deployed
+/// (`deployed...HEAD`), or `None` when there's nothing to link: the verdict has
+/// no undeployed commits, the repo isn't on GitHub, or a sha is missing.
+fn changes_url(
+    verdict: &str,
+    repo_url: Option<&str>,
+    deployed: Option<&LedgerEntry>,
+    head_short: Option<&str>,
+) -> Option<String> {
+    if verdict != "stale" && verdict != "diverged" {
+        return None;
+    }
+    let base = repo_url?.trim_end_matches('/');
+    let deployed = deployed?;
+    let head = head_short?;
+    Some(format!("{base}/compare/{}...{head}", deployed.short))
 }
 
 #[derive(Debug, Serialize)]
@@ -304,9 +331,16 @@ pub async fn deploy_status(State(state): State<Arc<AppState>>) -> Json<Vec<Deplo
             continue;
         }
         let local = statuses.iter().find(|s| &s.name == deploy_name).unwrap();
+        let v = verdict(deployed.as_ref(), local);
         out.push(DeployStatus {
             unit: unit.clone(),
-            verdict: verdict(deployed.as_ref(), local),
+            verdict: v,
+            changes_url: changes_url(
+                v,
+                local.repo_url.as_deref(),
+                deployed.as_ref(),
+                local.head_short.as_deref(),
+            ),
             deployed: deployed.as_ref().map(|d| DeployedInfo {
                 short: d.short.clone(),
                 dirty: d.dirty,
@@ -497,7 +531,50 @@ pub async fn deploy_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::valid_log_id;
+    use super::{changes_url, valid_log_id, LedgerEntry};
+
+    fn deployed_entry(short: &str) -> LedgerEntry {
+        LedgerEntry {
+            v: 2,
+            id: Some(format!("1-{short}")),
+            sha: format!("{short}00000000000000000000000000000000"),
+            short: short.to_owned(),
+            dirty: false,
+            branch: Some("main".into()),
+            result: "deployed".into(),
+            at: 1,
+        }
+    }
+
+    #[test]
+    fn changes_url_links_undeployed_commits() {
+        let entry = deployed_entry("deadbeef");
+        let repo = Some("https://github.com/deepwa7er/lagoon");
+
+        // Stale → a GitHub compare from the deployed sha to local HEAD.
+        assert_eq!(
+            changes_url("stale", repo, Some(&entry), Some("cafebabe")),
+            Some("https://github.com/deepwa7er/lagoon/compare/deadbeef...cafebabe".into()),
+        );
+        // Diverged also has committed undeployed work, so it links too.
+        assert!(changes_url("diverged", repo, Some(&entry), Some("cafebabe")).is_some());
+        // A trailing slash on the repo base is normalized away.
+        assert_eq!(
+            changes_url(
+                "stale",
+                Some("https://github.com/deepwa7er/lagoon/"),
+                Some(&entry),
+                Some("cafebabe"),
+            ),
+            Some("https://github.com/deepwa7er/lagoon/compare/deadbeef...cafebabe".into()),
+        );
+        // No link when up to date, off GitHub, or missing a sha.
+        assert_eq!(changes_url("current", repo, Some(&entry), Some("cafebabe")), None);
+        assert_eq!(changes_url("dirty", repo, Some(&entry), Some("cafebabe")), None);
+        assert_eq!(changes_url("stale", None, Some(&entry), Some("cafebabe")), None);
+        assert_eq!(changes_url("stale", repo, None, Some("cafebabe")), None);
+        assert_eq!(changes_url("stale", repo, Some(&entry), None), None);
+    }
 
     #[test]
     fn accepts_real_deploy_ids() {

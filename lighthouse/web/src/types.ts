@@ -38,6 +38,8 @@ export interface DeployStatus {
     dirty: boolean;
     undeployed_commits: number | null;
   } | null;
+  /** GitHub compare link for the undeployed commits, when there are any. */
+  changes_url: string | null;
 }
 
 export interface DeployHistoryEntry {

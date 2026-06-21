@@ -112,12 +112,30 @@ export function ServiceDetail({ service, deploy, onChanged, onDeployed }: Props)
           {deploy && deployStyle && (
             <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide">
               <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", deployStyle.dot)} />
-              <span className={deployStyle.text}>
-                {deployVerdictLabel(
-                  deploy.verdict,
-                  deploy.local?.undeployed_commits ?? null,
-                )}
-              </span>
+              {deploy.changes_url ? (
+                <a
+                  href={deploy.changes_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="View the undeployed commits on GitHub"
+                  className={cn(
+                    deployStyle.text,
+                    "underline decoration-dotted underline-offset-2 hover:decoration-solid",
+                  )}
+                >
+                  {deployVerdictLabel(
+                    deploy.verdict,
+                    deploy.local?.undeployed_commits ?? null,
+                  )}
+                </a>
+              ) : (
+                <span className={deployStyle.text}>
+                  {deployVerdictLabel(
+                    deploy.verdict,
+                    deploy.local?.undeployed_commits ?? null,
+                  )}
+                </span>
+              )}
               {deploy.deployed && (
                 <span className="text-ink-faint">
                   · deployed {deploy.deployed.short} ·{" "}
