@@ -95,8 +95,26 @@ pub struct AcmeConfig {
 pub struct Route {
     /// The public hostname clients use, e.g. `lighthouse.internal.deepwa7er.com`.
     pub host: String,
-    /// The local `host:port` to forward matching requests to, e.g. `127.0.0.1:8080`.
-    pub upstream: String,
+    /// Reverse-proxy target: the local `host:port` to forward matching requests
+    /// to, e.g. `127.0.0.1:8080`. Exactly one of `upstream` or `serve_dir` is set.
+    #[serde(default)]
+    pub upstream: Option<String>,
+    /// Static-site target: an absolute directory served straight from disk, with
+    /// any path that doesn't resolve to a file falling back to its `index.html`
+    /// (so a single-page app's client-side routes load the app shell). Exactly
+    /// one of `upstream` or `serve_dir` is set.
+    #[serde(default)]
+    pub serve_dir: Option<PathBuf>,
+}
+
+/// What a matched route does with a request, resolved from a [`Route`] once the
+/// config has validated that exactly one target is set.
+#[derive(Debug, Clone)]
+pub enum RouteTarget {
+    /// Reverse-proxy to a local `host:port` upstream.
+    Proxy(String),
+    /// Serve a static directory (SPA fallback to its `index.html`).
+    Static(PathBuf),
 }
 
 impl Config {
@@ -139,25 +157,52 @@ impl Config {
             if let Some(prev) = seen.insert(key, host.to_string()) {
                 bail!("duplicate route host {host:?} (also {prev:?})");
             }
-            // An upstream must be a real `host:port` authority — a missing port
-            // is the most likely mistake, so name it specifically.
-            let authority: Authority = route
-                .upstream
-                .parse()
-                .with_context(|| format!("route {host:?} has an invalid upstream {:?}", route.upstream))?;
-            if authority.port_u16().is_none() {
-                bail!("route {host:?} upstream {:?} is missing a port", route.upstream);
+            // A route forwards to an upstream or serves a directory — never both,
+            // never neither — so the request-time target is unambiguous.
+            match (&route.upstream, &route.serve_dir) {
+                (Some(_), Some(_)) => {
+                    bail!("route {host:?} sets both `upstream` and `serve_dir`; set exactly one")
+                }
+                (None, None) => {
+                    bail!("route {host:?} sets neither `upstream` nor `serve_dir`; set exactly one")
+                }
+                (Some(upstream), None) => {
+                    // An upstream must be a real `host:port` authority — a missing
+                    // port is the most likely mistake, so name it specifically.
+                    let authority: Authority = upstream.parse().with_context(|| {
+                        format!("route {host:?} has an invalid upstream {upstream:?}")
+                    })?;
+                    if authority.port_u16().is_none() {
+                        bail!("route {host:?} upstream {upstream:?} is missing a port");
+                    }
+                }
+                (None, Some(dir)) => {
+                    // Resolved against the host's filesystem at request time, so it
+                    // must be absolute; it need not exist yet (the site may deploy
+                    // after breakwater starts).
+                    if !dir.is_absolute() {
+                        bail!("route {host:?} serve_dir {dir:?} must be an absolute path");
+                    }
+                }
             }
         }
         Ok(())
     }
 
-    /// Build the hostname → upstream lookup used at request time. Hosts are
-    /// lowercased so matching is case-insensitive.
-    pub fn routing_table(&self) -> HashMap<String, String> {
+    /// Build the hostname → target lookup used at request time. Hosts are
+    /// lowercased so matching is case-insensitive. [`validate`] has already
+    /// guaranteed every route resolves to exactly one target.
+    pub fn routing_table(&self) -> HashMap<String, RouteTarget> {
         self.routes
             .iter()
-            .map(|r| (r.host.trim().to_ascii_lowercase(), r.upstream.clone()))
+            .map(|r| {
+                let target = match (&r.upstream, &r.serve_dir) {
+                    (Some(upstream), None) => RouteTarget::Proxy(upstream.clone()),
+                    (None, Some(dir)) => RouteTarget::Static(dir.clone()),
+                    _ => unreachable!("validate() guarantees exactly one target per route"),
+                };
+                (r.host.trim().to_ascii_lowercase(), target)
+            })
             .collect()
     }
 }
@@ -279,6 +324,70 @@ mod tests {
         "#;
         let config = Config::from_toml(toml).unwrap();
         let table = config.routing_table();
-        assert_eq!(table.get("mixed.example.com").map(String::as_str), Some("127.0.0.1:8080"));
+        match table.get("mixed.example.com") {
+            Some(RouteTarget::Proxy(upstream)) => assert_eq!(upstream, "127.0.0.1:8080"),
+            other => panic!("expected a proxy target, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn accepts_static_route_and_builds_target() {
+        let toml = r#"
+            https_port = 443
+            [tls]
+            cert = "/x/cert.pem"
+            key = "/x/key.pem"
+            [[routes]]
+            host = "docs.internal.deepwa7er.com"
+            serve_dir = "/opt/pilot/web"
+        "#;
+        let config = Config::from_toml(toml).unwrap();
+        let table = config.routing_table();
+        match table.get("docs.internal.deepwa7er.com") {
+            Some(RouteTarget::Static(dir)) => assert_eq!(dir, Path::new("/opt/pilot/web")),
+            other => panic!("expected a static target, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_route_with_both_targets() {
+        let toml = r#"
+            https_port = 443
+            [tls]
+            cert = "/x/cert.pem"
+            key = "/x/key.pem"
+            [[routes]]
+            host = "a.example.com"
+            upstream = "127.0.0.1:8080"
+            serve_dir = "/opt/site"
+        "#;
+        assert!(Config::from_toml(toml).is_err());
+    }
+
+    #[test]
+    fn rejects_route_with_neither_target() {
+        let toml = r#"
+            https_port = 443
+            [tls]
+            cert = "/x/cert.pem"
+            key = "/x/key.pem"
+            [[routes]]
+            host = "a.example.com"
+        "#;
+        assert!(Config::from_toml(toml).is_err());
+    }
+
+    #[test]
+    fn rejects_relative_serve_dir() {
+        let toml = r#"
+            https_port = 443
+            [tls]
+            cert = "/x/cert.pem"
+            key = "/x/key.pem"
+            [[routes]]
+            host = "a.example.com"
+            serve_dir = "opt/site"
+        "#;
+        assert!(Config::from_toml(toml).is_err());
     }
 }

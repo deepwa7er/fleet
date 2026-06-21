@@ -2,6 +2,7 @@
 name = "breakwater"
 version = "0.1.0"
 edition = "2024"
+description = "Tailnet HTTPS front door — routes *.internal.deepwa7er.com to local services by host."
 
 [dependencies]
 anyhow = "1"
@@ -10,6 +11,14 @@ http = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+
+# Static-directory routes (e.g. the fleet docs site) are served straight from
+# disk by tower-http's ServeDir — audited path-traversal safety, MIME types, and
+# conditional/range handling — with a single-page-app fallback to index.html
+# layered on top. Both are pure Rust, so the static-musl cross-build stays intact.
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs"] }
+
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }

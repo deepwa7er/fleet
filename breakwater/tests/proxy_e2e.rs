@@ -14,6 +14,7 @@ use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream};
 
+use breakwater::config::RouteTarget;
 use breakwater::proxy::{self, Router};
 
 /// A dummy upstream that echoes back the request it received, so the test can
@@ -79,8 +80,13 @@ async fn spawn_proxy(router: Arc<Router>) -> SocketAddr {
     addr
 }
 
-/// Issue one request to `addr` with the given headers and return (status, body).
+/// Issue a `GET /` to `addr` with the given headers and return (status, body).
 async fn request(addr: SocketAddr, headers: &[(&str, &str)]) -> (u16, String) {
+    request_path(addr, "/", headers).await
+}
+
+/// Issue a `GET <path>` to `addr` with the given headers and return (status, body).
+async fn request_path(addr: SocketAddr, path: &str, headers: &[(&str, &str)]) -> (u16, String) {
     let stream = TcpStream::connect(addr).await.unwrap();
     let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
@@ -89,7 +95,7 @@ async fn request(addr: SocketAddr, headers: &[(&str, &str)]) -> (u16, String) {
         let _ = conn.await;
     });
 
-    let mut builder = Request::builder().uri("/");
+    let mut builder = Request::builder().uri(path);
     for (name, value) in headers {
         builder = builder.header(*name, *value);
     }
@@ -105,7 +111,7 @@ async fn request(addr: SocketAddr, headers: &[(&str, &str)]) -> (u16, String) {
 async fn forwards_to_routed_upstream_and_rewrites_headers() {
     let upstream = spawn_upstream().await;
     let mut table = std::collections::HashMap::new();
-    table.insert("test.local".to_string(), upstream.to_string());
+    table.insert("test.local".to_string(), RouteTarget::Proxy(upstream.to_string()));
     let proxy_addr = spawn_proxy(Arc::new(Router::new(table))).await;
 
     let (status, body) = request(
@@ -134,4 +140,45 @@ async fn unrouted_host_yields_404() {
     let proxy_addr = spawn_proxy(Arc::new(Router::new(std::collections::HashMap::new()))).await;
     let (status, _) = request(proxy_addr, &[("host", "nope.local")]).await;
     assert_eq!(status, 404);
+}
+
+#[tokio::test]
+async fn static_route_serves_files_and_falls_back_to_index() {
+    // A built site: an app shell at the root plus a nested file standing in for
+    // a rustdoc page under /doc/<repo>/.
+    let dir = temp_site();
+    std::fs::write(dir.join("index.html"), "<!doctype html><title>app-shell</title>").unwrap();
+    std::fs::create_dir_all(dir.join("doc/ferry")).unwrap();
+    std::fs::write(dir.join("doc/ferry/index.html"), "ferry-rustdoc-page").unwrap();
+
+    let mut table = std::collections::HashMap::new();
+    table.insert("docs.local".to_string(), RouteTarget::Static(dir.clone()));
+    let proxy_addr = spawn_proxy(Arc::new(Router::new(table))).await;
+
+    // A real nested file is served directly (directory index resolution).
+    let (status, body) = request_path(proxy_addr, "/doc/ferry/", &[("host", "docs.local")]).await;
+    assert_eq!(status, 200, "body: {body}");
+    assert!(body.contains("ferry-rustdoc-page"), "expected the rustdoc file, got: {body}");
+
+    // An unknown path — a SPA client-side route — falls back to index.html.
+    let (status, body) = request_path(proxy_addr, "/services/ferry", &[("host", "docs.local")]).await;
+    assert_eq!(status, 200, "body: {body}");
+    assert!(body.contains("app-shell"), "expected the SPA shell, got: {body}");
+
+    // Percent-encoded `..` traversal must not escape the root: ServeDir rejects
+    // it, so the request lands on the SPA fallback rather than reading Cargo.toml.
+    let (_, body) = request_path(proxy_addr, "/%2e%2e/Cargo.toml", &[("host", "docs.local")]).await;
+    assert!(!body.contains("[package]"), "path traversal leaked a file outside the root: {body}");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Create a unique, empty temp directory for a test's served site.
+fn temp_site() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("breakwater-test-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
 }

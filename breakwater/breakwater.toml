@@ -80,6 +80,14 @@ upstream = "127.0.0.1:8765"
 host = "slskd.internal.deepwa7er.com"
 upstream = "127.0.0.1:5030"
 
+# The fleet documentation site (pilot) — process-less static files, so breakwater
+# serves the directory directly instead of proxying an upstream. `tugboat fleet
+# docs` assembles and ships the site to this path; a path that doesn't resolve to
+# a file falls back to the SPA's index.html.
+[[routes]]
+host = "docs.internal.deepwa7er.com"
+serve_dir = "/opt/pilot/web"
+
 # Note: tidepool is intentionally NOT routed here. It runs as its own Tailscale
 # node (tsnet, `-tls`) and serves HTTPS itself at https://tidepool — there is no
 # plain-HTTP backend to proxy to.

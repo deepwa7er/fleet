@@ -16,16 +16,22 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use bytes::Bytes;
-use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
+use http_body_util::{BodyExt, Empty, Full, combinators::UnsyncBoxBody};
 use hyper::body::Incoming;
 use hyper::header::{self, HeaderMap, HeaderName, HeaderValue};
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 
-/// A uniform response body: streamed upstream bodies and small generated pages
-/// (404 / 502 / the 101 tunnel) share one type so a connection can return either.
-pub type ProxyBody = BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
+use crate::config::RouteTarget;
+use crate::static_files;
+
+/// A uniform response body: proxied upstream bodies, files served by tower-http,
+/// and small generated pages (404 / 502 / the 101 tunnel) share one type so a
+/// connection can return any of them. It is `Send` (the connection task is
+/// spawned) but need not be `Sync` — which `tower-http`'s served body is not —
+/// so this is the *unsync* boxed body, the widest type all sources satisfy.
+pub type ProxyBody = UnsyncBoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Hop-by-hop headers (RFC 7230 §6.1): meaningful only for a single transport
 /// link, never forwarded across a proxy. `Connection` may name additional ones.
@@ -40,40 +46,27 @@ const HOP_BY_HOP: [&str; 8] = [
     "upgrade",
 ];
 
-/// The hostname → upstream routing table, shared across all connections.
+/// The hostname → target routing table, shared across all connections.
 pub struct Router {
-    routes: std::collections::HashMap<String, String>,
+    routes: std::collections::HashMap<String, RouteTarget>,
 }
 
 impl Router {
-    pub fn new(routes: std::collections::HashMap<String, String>) -> Self {
+    pub fn new(routes: std::collections::HashMap<String, RouteTarget>) -> Self {
         Self { routes }
     }
 
-    /// Resolve a `Host` header value (which may carry a `:port`) to an upstream.
-    fn upstream_for(&self, host: &str) -> Option<&str> {
+    /// Resolve a `Host` header value (which may carry a `:port`) to a target.
+    fn target_for(&self, host: &str) -> Option<&RouteTarget> {
         let host = host.split(':').next().unwrap_or(host).trim().to_ascii_lowercase();
-        self.routes.get(&host).map(String::as_str)
+        self.routes.get(&host)
     }
 }
 
-/// Entry point for one request. Never fails outward — routing misses become 404
-/// and upstream failures become 502, so the caller's service is infallible.
+/// Entry point for one request. Never fails outward — routing misses become 404,
+/// upstream failures become 502, and static files are served by tower-http — so
+/// the caller's service is infallible.
 pub async fn handle(req: Request<Incoming>, router: Arc<Router>, client_ip: IpAddr) -> Response<ProxyBody> {
-    match proxy(req, &router, client_ip).await {
-        Ok(response) => response,
-        Err(err) => {
-            eprintln!("breakwater: upstream error: {err:#}");
-            status_page(StatusCode::BAD_GATEWAY, "upstream error")
-        }
-    }
-}
-
-async fn proxy(
-    mut req: Request<Incoming>,
-    router: &Router,
-    client_ip: IpAddr,
-) -> anyhow::Result<Response<ProxyBody>> {
     let host = req
         .headers()
         .get(header::HOST)
@@ -81,10 +74,26 @@ async fn proxy(
         .unwrap_or("")
         .to_string();
 
-    let Some(upstream) = router.upstream_for(&host).map(str::to_string) else {
-        return Ok(status_page(StatusCode::NOT_FOUND, "no route for host"));
-    };
+    // Resolve to an owned target so no borrow of the shared router is held across
+    // the await; cloning a target is a single String/PathBuf clone per request.
+    match router.target_for(&host).cloned() {
+        None => status_page(StatusCode::NOT_FOUND, "no route for host"),
+        Some(RouteTarget::Static(root)) => static_files::serve(req, &root).await,
+        Some(RouteTarget::Proxy(upstream)) => match proxy(req, &upstream, client_ip).await {
+            Ok(response) => response,
+            Err(err) => {
+                eprintln!("breakwater: upstream error: {err:#}");
+                status_page(StatusCode::BAD_GATEWAY, "upstream error")
+            }
+        },
+    }
+}
 
+async fn proxy(
+    mut req: Request<Incoming>,
+    upstream: &str,
+    client_ip: IpAddr,
+) -> anyhow::Result<Response<ProxyBody>> {
     let is_upgrade = is_upgrade_request(req.headers());
     let path = req
         .uri()
@@ -97,7 +106,7 @@ async fn proxy(
 
     // One fresh upstream connection per request. `.with_upgrades()` lets the
     // connection task hand back the raw stream if the response is a 101.
-    let stream = TcpStream::connect(&upstream)
+    let stream = TcpStream::connect(upstream)
         .await
         .with_context(|| format!("connecting to upstream {upstream}"))?;
     let (mut sender, connection) =
@@ -114,7 +123,7 @@ async fn proxy(
     let (body, client_upgrade) = if is_upgrade {
         (empty_body(), Some(hyper::upgrade::on(&mut req)))
     } else {
-        let body = req.into_body().map_err(box_err).boxed();
+        let body = req.into_body().map_err(box_err).boxed_unsync();
         (body, None)
     };
 
@@ -131,7 +140,7 @@ async fn proxy(
     // Normal response: strip hop-by-hop headers and stream the body back.
     let status = response.status();
     let headers = strip_hop_by_hop(response.headers());
-    let body = response.into_body().map_err(box_err).boxed();
+    let body = response.into_body().map_err(box_err).boxed_unsync();
     let mut out = Response::new(body);
     *out.status_mut() = status;
     *out.headers_mut() = headers;
@@ -272,14 +281,14 @@ fn strip_hop_by_hop(incoming: &HeaderMap) -> HeaderMap {
 }
 
 fn empty_body() -> ProxyBody {
-    Empty::<Bytes>::new().map_err(box_err).boxed()
+    Empty::<Bytes>::new().map_err(box_err).boxed_unsync()
 }
 
 /// A small plain-text status page (404 / 502).
 fn status_page(status: StatusCode, message: &str) -> Response<ProxyBody> {
     let body = Full::new(Bytes::from(format!("{} {}\n", status.as_u16(), message)))
         .map_err(box_err)
-        .boxed();
+        .boxed_unsync();
     let mut out = Response::new(body);
     *out.status_mut() = status;
     out.headers_mut()
@@ -287,7 +296,9 @@ fn status_page(status: StatusCode, message: &str) -> Response<ProxyBody> {
     out
 }
 
-fn box_err<E: std::error::Error + Send + Sync + 'static>(err: E) -> Box<dyn std::error::Error + Send + Sync> {
+pub(crate) fn box_err<E: std::error::Error + Send + Sync + 'static>(
+    err: E,
+) -> Box<dyn std::error::Error + Send + Sync> {
     Box::new(err)
 }
 
