@@ -72,15 +72,19 @@ TUGBOAT_SERVE_TOKEN=$(openssl rand -hex 32) \
   tugboat serve --bind <this-machine's-tailscale-ip> --port 7878
 ```
 
+- `GET /health` — the running build (sha, build time, pid, start time).
+  **Unauthenticated**; used by `tugboat self-deploy` to confirm a restart.
 - `GET /services` — the deployable fleet members.
 - `POST /deploy/{name}` — start a deploy; returns `{ "job_id": … }`. Returns
   `409` if that service is already deploying.
 - `GET /jobs/{id}/stream` — replay the transcript so far, then stream the rest
   live over Server-Sent Events, closing when the deploy finishes.
 
-Every request must carry `Authorization: Bearer $TUGBOAT_SERVE_TOKEN`. The token
-is **required** — the daemon refuses to start without one, because the endpoint
-runs builds and is more than a read-only surface. The default `--bind` is
+Every request except `GET /health` must carry `Authorization: Bearer
+$TUGBOAT_SERVE_TOKEN`. The token is **required** — the daemon refuses to start
+without one, because the deploy endpoints run builds and are more than a
+read-only surface. `/health` is exempt because it exposes no secrets and a
+self-deploy must reach it while restarting the daemon. The default `--bind` is
 loopback; pass the tailnet IP to expose it to the fleet.
 
 ### Running it as a launchd agent
@@ -122,6 +126,35 @@ service that maps to a deployable fleet member.
 > awake with the agent running when you click Deploy. If it's asleep or the
 > agent is down, the dashboard reports the daemon unreachable and changes
 > nothing — there is no half-deploy.
+
+### Updating tugboat itself
+
+tugboat deploys remote VPS services over ssh + systemd, but the `serve` daemon
+is a **local launchd agent** — a different target on every axis (localhost, not
+ssh; launchd, not systemd; `~/.cargo/bin`, not `/usr/local/bin`). So tugboat
+updates itself with a dedicated command rather than the generic engine:
+
+```sh
+tugboat self-deploy            # rebuild, swap the binary, restart the agent, verify
+tugboat self-deploy --dry-run  # print the plan, change nothing
+tugboat self-deploy --skip-build           # reuse the last release build
+tugboat self-deploy --health-url URL       # override the daemon URL to poll
+```
+
+Run it from the tugboat checkout. It builds a release binary, **atomically swaps**
+`~/.cargo/bin/tugboat` (backing up the old one), `launchctl kickstart -k`s the
+agent, then polls the daemon's `GET /health` until it reports a **newer start
+time** — proof the agent came back up on the new binary. If it doesn't return
+within the timeout (e.g. the new build crashes on boot), the previous binary is
+restored and restarted, so a bad build can't leave the daemon down.
+
+It is **CLI-only by design**: the deploying process must be separate from the
+daemon it restarts. A daemon can't cleanly restart itself mid-request, so this is
+deliberately *not* exposed through `serve` / the lighthouse Deploy button.
+
+`GET /health` (unauthenticated — it carries no secrets) reports the running
+build's git sha, build time, pid, and start time. `tugboat version [--json]`
+prints the same build identity for the local binary.
 
 ### The deploy ledger
 
@@ -170,7 +203,7 @@ cmd = "cargo build --release --target x86_64-unknown-linux-musl"
 [[artifacts]]             # one or more files/dirs to install
 src  = "target/x86_64-unknown-linux-musl/release/ferry"  # {workdir} expanded
 dest = "/usr/local/bin/ferry"                            # absolute remote path
-kind = "file"             # "file" (default, scp) or "dir" (rsync --delete)
+kind = "file"             # "file" (default) or "dir" (rsync --delete); both ship via rsync
 mode = "0755"             # optional, default 0755 (ignored for dirs)
 
 # A directory artifact — e.g. built web assets (lighthouse):
@@ -194,8 +227,8 @@ enroll = true             # systemctl add-wants lighthouse.target {name}.service
 ### How install + rollback work
 
 Each artifact is shipped to `<dest>.tug-new` next to its destination (same
-filesystem) — files via scp, dirs via `rsync --delete` (perms preserved, but
-not the local uid/gid). On the host, in one transaction: move the live file/dir
+filesystem) over rsync — a plain copy for files, `--delete` for dirs (perms
+preserved, but not the local uid/gid). On the host, in one transaction: move the live file/dir
 aside to `<dest>.tug-bak`, rename the new one into place (atomic — safe even
 though a running ELF can't be written in place), restart the unit, then
 health-check. If the check never passes, every artifact is restored from its

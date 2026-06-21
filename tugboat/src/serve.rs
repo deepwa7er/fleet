@@ -18,6 +18,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use axum::extract::{Path, Query, Request, State};
@@ -35,6 +36,7 @@ use crate::deploy::{self, LogSink};
 use crate::fleet::{self, Fleet};
 use crate::git;
 use crate::manifest;
+use crate::version::BuildInfo;
 
 /// CLI arguments for `tugboat serve`.
 pub struct ServeArgs {
@@ -110,6 +112,20 @@ struct ServeState {
     /// Service labels with a deploy currently in flight (one at a time each).
     in_flight: Mutex<HashSet<String>>,
     counter: AtomicU64,
+    /// Unix seconds when this daemon process started. A self-deploy watches this
+    /// flip to a newer value to confirm the daemon actually restarted onto the
+    /// new binary (see [`health`]).
+    started_unix: u64,
+}
+
+/// `GET /health` payload — which build is running and since when. Unauthenticated
+/// on purpose: it exposes no secrets and is the signal a self-deploy polls to
+/// confirm the daemon came back up on the new binary.
+#[derive(Serialize)]
+struct HealthInfo {
+    build: BuildInfo,
+    pid: u32,
+    started_unix: u64,
 }
 
 #[derive(Serialize)]
@@ -139,12 +155,18 @@ pub fn run(args: ServeArgs) -> Result<()> {
     let manifest_path = fleet::resolve_manifest(args.manifest.as_deref())?;
     let fleet = fleet::load(&manifest_path)?;
 
+    let started_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
     let state = Arc::new(ServeState {
         fleet,
         token,
         jobs: Mutex::new(HashMap::new()),
         in_flight: Mutex::new(HashSet::new()),
         counter: AtomicU64::new(1),
+        started_unix,
     });
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -153,12 +175,18 @@ pub fn run(args: ServeArgs) -> Result<()> {
         .context("building tokio runtime")?;
 
     runtime.block_on(async move {
-        let app = Router::new()
+        // Everything is behind the bearer token except `/health`, which carries
+        // no secrets and must be reachable by a self-deploy that is restarting
+        // the daemon (and so cannot assume it holds the token).
+        let authed = Router::new()
             .route("/services", get(list_services))
             .route("/status", get(list_status))
             .route("/deploy/{name}", post(deploy_service))
             .route("/jobs/{id}/stream", get(job_stream))
-            .layer(middleware::from_fn_with_state(state.clone(), auth))
+            .layer(middleware::from_fn_with_state(state.clone(), auth));
+        let app = Router::new()
+            .route("/health", get(health))
+            .merge(authed)
             .with_state(state);
 
         let addr = SocketAddr::new(args.bind, args.port);
@@ -201,6 +229,17 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
         diff |= x ^ y;
     }
     diff == 0
+}
+
+/// `GET /health` — the running build and this process's start time. No auth (see
+/// the router setup); used by `tugboat self-deploy` to confirm the daemon
+/// restarted onto the new binary.
+async fn health(State(state): State<Arc<ServeState>>) -> Json<HealthInfo> {
+    Json(HealthInfo {
+        build: BuildInfo::current(),
+        pid: std::process::id(),
+        started_unix: state.started_unix,
+    })
 }
 
 /// `GET /services` — the deployable fleet members.

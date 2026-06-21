@@ -79,7 +79,7 @@ impl Fleet {
 
 /// Expand a leading `~/` (or a bare `~`) to the home directory; otherwise return
 /// the path unchanged. Keeps `fleet.toml` portable across machines.
-fn expand_tilde(p: &str) -> PathBuf {
+pub(crate) fn expand_tilde(p: &str) -> PathBuf {
     if let Some(rest) = p.strip_prefix("~/") {
         if let Ok(home) = std::env::var("HOME") {
             return Path::new(&home).join(rest);

@@ -12,13 +12,17 @@ mod deploy;
 mod fleet;
 mod git;
 mod manifest;
+mod selfdeploy;
 mod serve;
+mod version;
 
 use std::net::IpAddr;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+
+use crate::version::BuildInfo;
 
 #[derive(Parser)]
 #[command(
@@ -39,6 +43,10 @@ enum Command {
     Fleet(FleetArgs),
     /// Run the HTTP deploy daemon (drives the fleet's deploys from another host).
     Serve(ServeArgs),
+    /// Rebuild tugboat and roll it into the local `serve` launchd agent.
+    SelfDeploy(SelfDeployArgs),
+    /// Print this binary's build identity (git sha, build time).
+    Version(VersionArgs),
 }
 
 #[derive(Parser)]
@@ -69,6 +77,41 @@ struct ServeArgs {
     /// Path to the fleet manifest (defaults like `tugboat fleet`).
     #[arg(long)]
     manifest: Option<PathBuf>,
+}
+
+#[derive(Parser)]
+struct SelfDeployArgs {
+    /// The tugboat source checkout to build.
+    #[arg(long, default_value = ".")]
+    repo: PathBuf,
+    /// Where to install the binary the launchd agent runs.
+    #[arg(long)]
+    install_path: Option<PathBuf>,
+    /// launchd agent label to restart.
+    #[arg(long, default_value_t = selfdeploy::DEFAULT_LABEL.to_string())]
+    label: String,
+    /// Full `/health` URL to poll (default derived from `tailscale ip -4`).
+    #[arg(long)]
+    health_url: Option<String>,
+    /// Port for the derived health URL (when `--health-url` isn't given).
+    #[arg(long, default_value_t = 7878)]
+    port: u16,
+    /// How long to wait for the daemon to come back, in seconds.
+    #[arg(long, default_value_t = 30)]
+    timeout_secs: u64,
+    /// Reuse the existing release build instead of rebuilding.
+    #[arg(long)]
+    skip_build: bool,
+    /// Print the plan and exit without changing anything.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(Parser)]
+struct VersionArgs {
+    /// Emit the build identity as JSON instead of a human-readable line.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Parser)]
@@ -121,6 +164,25 @@ fn main() -> Result<()> {
             port: args.port,
             manifest: args.manifest,
         }),
+        Command::SelfDeploy(args) => selfdeploy::run(selfdeploy::SelfDeployArgs {
+            repo: args.repo,
+            install_path: args.install_path,
+            label: args.label,
+            health_url: args.health_url,
+            port: args.port,
+            timeout_secs: args.timeout_secs,
+            skip_build: args.skip_build,
+            dry_run: args.dry_run,
+        }),
+        Command::Version(args) => {
+            let info = BuildInfo::current();
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&info)?);
+            } else {
+                println!("tugboat {}", info.describe());
+            }
+            Ok(())
+        }
     }
 }
 
