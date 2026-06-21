@@ -83,3 +83,14 @@ export function fetchDeployHistory(
     `${BASE}/services/${encodeURIComponent(unit)}/deploy-history?limit=${limit}`,
   );
 }
+
+/** The saved transcript of a past deploy, as its lines. */
+export async function fetchDeployLog(
+  unit: string,
+  id: string,
+): Promise<string[]> {
+  const { lines } = await getJson<{ lines: string[] }>(
+    `${BASE}/services/${encodeURIComponent(unit)}/deploy-log/${encodeURIComponent(id)}`,
+  );
+  return lines;
+}

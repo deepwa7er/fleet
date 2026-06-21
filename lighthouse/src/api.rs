@@ -169,6 +169,10 @@ struct LedgerEntry {
     #[serde(default)]
     #[allow(dead_code)]
     v: u32,
+    /// Deploy id (`{at}-{short}`), naming the transcript file `<name>/<id>.log`.
+    /// Absent on pre-v2 entries, which have no saved transcript.
+    #[serde(default)]
+    id: Option<String>,
     sha: String,
     short: String,
     #[serde(default)]
@@ -322,6 +326,9 @@ pub async fn deploy_status(State(state): State<Arc<AppState>>) -> Json<Vec<Deplo
 /// One deploy in a service's history, for the dashboard.
 #[derive(Debug, Serialize)]
 pub struct DeployHistoryEntry {
+    /// Deploy id; present means a transcript can be fetched at
+    /// `/api/services/{unit}/deploy-log/{id}`. `None` for pre-v2 deploys.
+    id: Option<String>,
     sha: String,
     short: String,
     branch: Option<String>,
@@ -361,6 +368,7 @@ pub async fn deploy_history(
     let history = entries
         .into_iter()
         .map(|e| DeployHistoryEntry {
+            id: e.id,
             sha: e.sha,
             short: e.short,
             branch: e.branch,
@@ -370,6 +378,47 @@ pub async fn deploy_history(
         })
         .collect();
     Ok(Json(history))
+}
+
+/// The full transcript of a past deploy, newline-split into lines.
+#[derive(Debug, Serialize)]
+pub struct DeployLog {
+    lines: Vec<String>,
+}
+
+/// A deploy id is `{at}-{short}` — all digits, a dash, then a lowercase
+/// alphanumeric sha (or `nogit`). Validating it before touching the filesystem
+/// both rejects malformed ids and makes path traversal impossible (no `/`, `.`).
+fn valid_log_id(id: &str) -> bool {
+    let Some((at, rest)) = id.split_once('-') else {
+        return false;
+    };
+    !at.is_empty()
+        && at.bytes().all(|b| b.is_ascii_digit())
+        && !rest.is_empty()
+        && rest.bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
+}
+
+/// `GET /api/services/{unit}/deploy-log/{id}` — the saved transcript of a past
+/// deploy, read from tugboat's on-host file `<version_dir>/<name>/<id>.log`.
+/// `404` if the unit is unknown, deploy is unconfigured, the id is malformed, or
+/// no transcript exists (e.g. a pre-v2 deploy).
+pub async fn deploy_log(
+    State(state): State<Arc<AppState>>,
+    Path((unit, id)): Path<(String, String)>,
+) -> Result<Json<DeployLog>, StatusCode> {
+    let svc = resolve(&state.config, &unit).await?;
+    let Some(cfg) = &state.config.deploy else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    if !valid_log_id(&id) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let deploy_name = state.config.deploy_name(&svc.unit);
+    let path = cfg.version_dir.join(&deploy_name).join(format!("{id}.log"));
+    let text = std::fs::read_to_string(&path).map_err(|_| StatusCode::NOT_FOUND)?;
+    let lines = text.lines().map(str::to_owned).collect();
+    Ok(Json(DeployLog { lines }))
 }
 
 /// `POST /api/services/{unit}/deploy` — relay a deploy request to the tugboat
@@ -444,4 +493,31 @@ pub async fn deploy_stream(
         body,
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_log_id;
+
+    #[test]
+    fn accepts_real_deploy_ids() {
+        assert!(valid_log_id("1718900000-1a2b3c4d"));
+        assert!(valid_log_id("42-nogit"));
+    }
+
+    #[test]
+    fn rejects_traversal_and_malformed_ids() {
+        // Path traversal and absolute paths must never read outside the dir.
+        assert!(!valid_log_id("../../etc/passwd"));
+        assert!(!valid_log_id("1718900000-../secret"));
+        assert!(!valid_log_id("/etc/passwd"));
+        assert!(!valid_log_id("1718900000-1a2b/3c4d"));
+        // Structurally wrong: no dash, empty halves, uppercase, dots.
+        assert!(!valid_log_id("nodash"));
+        assert!(!valid_log_id("-nogit"));
+        assert!(!valid_log_id("1718900000-"));
+        assert!(!valid_log_id("1718900000-ABCD"));
+        assert!(!valid_log_id("abc-1a2b3c4d"));
+        assert!(!valid_log_id("1718900000-1a2b.log"));
+    }
 }

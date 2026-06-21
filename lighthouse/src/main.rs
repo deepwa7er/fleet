@@ -71,6 +71,10 @@ async fn main() -> anyhow::Result<()> {
             "/api/services/{unit}/deploy-history",
             get(api::deploy_history),
         )
+        .route(
+            "/api/services/{unit}/deploy-log/{id}",
+            get(api::deploy_log),
+        )
         .route("/api/services/{unit}/deploy", post(api::deploy_service))
         .route(
             "/api/services/{unit}/deploy/{job}/stream",

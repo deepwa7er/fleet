@@ -41,6 +41,9 @@ export interface DeployStatus {
 }
 
 export interface DeployHistoryEntry {
+  /** Deploy id; present means a saved transcript can be opened. `null` for
+   *  pre-v2 deploys, which were never captured. */
+  id: string | null;
   sha: string;
   short: string;
   branch: string | null;
