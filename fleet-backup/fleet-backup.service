@@ -8,6 +8,9 @@ Wants=network-online.target
 Type=oneshot
 # Holds the restic repo URL, password, and R2/S3 credentials (mode 600, root).
 EnvironmentFile=/etc/fleet-backup/restic.env
+# The service runs as root with no $HOME, so point restic's cache somewhere
+# stable (otherwise it warns and re-fetches repo metadata every run).
+Environment=RESTIC_CACHE_DIR=/var/cache/fleet-backup
 ExecStart=/usr/local/bin/fleet-backup
 # Reads service state across /var/lib and writes a small staging dir; runs as
 # root so it can read each service user's files and snapshot lagoon's DB.

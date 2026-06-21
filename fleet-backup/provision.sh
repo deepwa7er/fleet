@@ -31,8 +31,9 @@ if ! command -v restic >/dev/null || ! command -v sqlite3 >/dev/null; then
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q restic sqlite3
 fi
 
-# Config dir (the secret env file is installed by hand, not here).
-sudo mkdir -p /etc/fleet-backup /var/lib/fleet-backup
+# Config dir (the secret env file is installed by hand, not here), staging dir,
+# and a stable restic cache dir (the service runs as root with no $HOME).
+sudo mkdir -p /etc/fleet-backup /var/lib/fleet-backup /var/cache/fleet-backup
 sudo chmod 700 /etc/fleet-backup
 
 # Script + units.
