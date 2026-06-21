@@ -2,6 +2,7 @@
 name = "lighthouse"
 version = "0.1.0"
 edition = "2024"
+description = "systemd service status + log dashboard and deploy button for the deepwa7er fleet."
 
 [dependencies]
 anyhow = "1"
