@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::deploy;
 use crate::fleet::{DocsConfig, Fleet, Member};
+use crate::git;
 use crate::manifest::{self, ArtifactKind};
 
 /// What `tugboat fleet docs` was asked to produce.
@@ -359,6 +360,50 @@ fn print_plan(fleet: &Fleet, opts: &Options) -> Result<()> {
         (None, None) => println!("  ship:     (cannot — no [docs] configured; use --out)"),
     }
     Ok(())
+}
+
+// ── change detection (for auto-refresh) ─────────────────────────────────────
+
+/// A fingerprint of every fleet member's committed state — each member's git
+/// HEAD sha. It changes on any commit, amend, rebase, or pull in any member, and
+/// is the signal that the published docs are stale. (Members with no checkout
+/// contribute `none`, so a missing repo is stable, not noisy.)
+pub fn fleet_fingerprint(fleet: &Fleet) -> String {
+    fleet
+        .members
+        .iter()
+        .map(|m| {
+            let head = git::state(&fleet.dir(m)).head_sha.unwrap_or_else(|| "none".into());
+            format!("{}:{head}", m.label())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Where the last successfully-shipped fingerprint is cached on the dev box.
+fn fingerprint_path() -> PathBuf {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("tugboat").join("docs-fingerprint")
+}
+
+/// The fingerprint of the last docs build that shipped successfully, if recorded.
+pub fn read_stored_fingerprint() -> Option<String> {
+    std::fs::read_to_string(fingerprint_path())
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
+/// Record the fingerprint of a docs build that just shipped successfully, so the
+/// next change check can tell whether anything moved since.
+pub fn write_fingerprint(fingerprint: &str) -> Result<()> {
+    let path = fingerprint_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(&path, fingerprint).with_context(|| format!("writing {}", path.display()))
 }
 
 /// A temp directory removed when this guard drops.

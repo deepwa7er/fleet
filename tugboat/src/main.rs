@@ -12,6 +12,7 @@ mod deploy;
 mod docs;
 mod fleet;
 mod git;
+mod hooks;
 mod manifest;
 mod selfdeploy;
 mod serve;
@@ -139,6 +140,35 @@ enum FleetAction {
     Deploy(FleetDeployArgs),
     /// Generate the fleet documentation site (fleet.json + per-repo rustdoc).
     Docs(FleetDocsArgs),
+    /// Install/remove the git hooks that auto-refresh the docs on commit.
+    Hooks(FleetHooksArgs),
+}
+
+#[derive(Parser)]
+struct FleetHooksArgs {
+    #[command(subcommand)]
+    action: FleetHooksAction,
+}
+
+#[derive(Subcommand)]
+enum FleetHooksAction {
+    /// Install the hooks in every member and write the daemon URL/token they use.
+    Install(FleetHooksInstallArgs),
+    /// Remove the hooks from every member (unset `core.hooksPath`).
+    Uninstall,
+}
+
+#[derive(Parser)]
+struct FleetHooksInstallArgs {
+    /// serve daemon base URL the hooks POST to. Default: derived from `tailscale ip -4`.
+    #[arg(long)]
+    url: Option<String>,
+    /// Port for the derived URL.
+    #[arg(long, default_value_t = 7878)]
+    port: u16,
+    /// Bearer token the hooks present. Default: `$TUGBOAT_SERVE_TOKEN`.
+    #[arg(long)]
+    token: Option<String>,
 }
 
 #[derive(Parser)]
@@ -257,5 +287,12 @@ fn run_fleet(args: FleetArgs) -> Result<()> {
                 },
             )
         }
+        FleetAction::Hooks(h) => match h.action {
+            FleetHooksAction::Install(a) => hooks::install(
+                &fleet,
+                &hooks::InstallOpts { url: a.url, port: a.port, token: a.token },
+            ),
+            FleetHooksAction::Uninstall => hooks::uninstall(&fleet),
+        },
     }
 }

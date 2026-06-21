@@ -18,7 +18,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use axum::extract::{Path, Query, Request, State};
@@ -30,13 +30,23 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Notify};
 
 use crate::deploy::{self, LogSink};
+use crate::docs;
 use crate::fleet::{self, Fleet};
 use crate::git;
 use crate::manifest;
 use crate::version::BuildInfo;
+
+/// How long to wait for a burst of commits to settle before rebuilding the docs,
+/// so committing across several repos at once coalesces into one build.
+const DOCS_DEBOUNCE: Duration = Duration::from_secs(20);
+
+/// How often the daemon checks for fleet changes on its own — the backstop that
+/// keeps the docs current even if a commit hook never fired (daemon was down, a
+/// repo lacks the hook, or a commit landed on another machine and was pulled).
+const DOCS_CATCHUP_INTERVAL: Duration = Duration::from_secs(300);
 
 /// CLI arguments for `tugboat serve`.
 pub struct ServeArgs {
@@ -116,6 +126,31 @@ struct ServeState {
     /// flip to a newer value to confirm the daemon actually restarted onto the
     /// new binary (see [`health`]).
     started_unix: u64,
+    /// Pulsed to wake the docs keeper — by a commit-hook ping (`/docs/refresh`)
+    /// and by the periodic catch-up. `notify_one` coalesces, so a burst of
+    /// triggers collapses to a single wake.
+    docs_notify: Arc<Notify>,
+    /// The docs auto-refresh state (last build outcome, whether one is running).
+    docs: Mutex<DocsStatus>,
+}
+
+/// The state of the docs auto-refresh, surfaced at `GET /docs`.
+#[derive(Default, Clone, Serialize)]
+struct DocsStatus {
+    /// Whether a docs build is running right now.
+    building: bool,
+    /// The most recent finished build, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last: Option<DocsRun>,
+}
+
+/// The outcome of one finished docs build.
+#[derive(Clone, Serialize)]
+struct DocsRun {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    finished_unix: u64,
 }
 
 /// `GET /health` payload — which build is running and since when. Unauthenticated
@@ -167,6 +202,8 @@ pub fn run(args: ServeArgs) -> Result<()> {
         in_flight: Mutex::new(HashSet::new()),
         counter: AtomicU64::new(1),
         started_unix,
+        docs_notify: Arc::new(Notify::new()),
+        docs: Mutex::new(DocsStatus::default()),
     });
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -175,6 +212,14 @@ pub fn run(args: ServeArgs) -> Result<()> {
         .context("building tokio runtime")?;
 
     runtime.block_on(async move {
+        // The docs auto-refresh runs only when the fleet actually has a docs site
+        // configured. The keeper does the (debounced, one-at-a-time) builds; the
+        // catch-up pulses it on a timer as the backstop.
+        if state.fleet.docs.is_some() {
+            tokio::spawn(docs_keeper(state.clone()));
+            tokio::spawn(docs_catchup(state.clone()));
+        }
+
         // Everything is behind the bearer token except `/health`, which carries
         // no secrets and must be reachable by a self-deploy that is restarting
         // the daemon (and so cannot assume it holds the token).
@@ -183,6 +228,8 @@ pub fn run(args: ServeArgs) -> Result<()> {
             .route("/status", get(list_status))
             .route("/deploy/{name}", post(deploy_service))
             .route("/jobs/{id}/stream", get(job_stream))
+            .route("/docs", get(docs_status))
+            .route("/docs/refresh", post(docs_refresh))
             .layer(middleware::from_fn_with_state(state.clone(), auth));
         let app = Router::new()
             .route("/health", get(health))
@@ -515,4 +562,101 @@ async fn job_stream(State(state): State<Arc<ServeState>>, Path(id): Path<String>
     Sse::new(stream)
         .keep_alive(KeepAlive::default())
         .into_response()
+}
+
+/// `GET /docs` — the docs auto-refresh state (last outcome, whether building).
+async fn docs_status(State(state): State<Arc<ServeState>>) -> Json<DocsStatus> {
+    Json(state.docs.lock().unwrap().clone())
+}
+
+/// `POST /docs/refresh` — request a docs rebuild and return immediately. The
+/// commit hooks call this; it just wakes the keeper (which debounces and skips
+/// no-op rebuilds), so a commit never waits on a build.
+async fn docs_refresh(State(state): State<Arc<ServeState>>) -> StatusCode {
+    state.docs_notify.notify_one();
+    StatusCode::ACCEPTED
+}
+
+/// Pulse the docs keeper on a timer — the backstop that catches changes no commit
+/// hook reported. `interval`'s first tick fires immediately, so a daemon that
+/// just started (perhaps onto commits made while it was down) refreshes at once.
+async fn docs_catchup(state: Arc<ServeState>) {
+    let mut ticker = tokio::time::interval(DOCS_CATCHUP_INTERVAL);
+    loop {
+        ticker.tick().await;
+        state.docs_notify.notify_one();
+    }
+}
+
+/// Rebuild + reship the docs whenever the fleet changes. Woken by `/docs/refresh`
+/// and the catch-up timer; debounces a burst into one build, then rebuilds only
+/// if the fleet fingerprint actually moved since the last successful ship — so a
+/// redundant wake (or the periodic backstop) costs just a cheap git check.
+///
+/// Builds run one at a time (this is a single task looping), and the fingerprint
+/// is recorded only after a successful ship, so a failed build is retried rather
+/// than masked, and a commit landing mid-build is caught on the next wake.
+async fn docs_keeper(state: Arc<ServeState>) {
+    loop {
+        state.docs_notify.notified().await;
+        // Let a burst settle. Triggers during this window leave a permit, so the
+        // next `notified()` returns at once — nothing is lost, just coalesced.
+        tokio::time::sleep(DOCS_DEBOUNCE).await;
+
+        let fingerprint = docs::fleet_fingerprint(&state.fleet);
+        if docs::read_stored_fingerprint().as_deref() == Some(fingerprint.as_str()) {
+            continue; // nothing changed (e.g. a periodic backstop tick)
+        }
+
+        state.docs.lock().unwrap().building = true;
+        println!("tugboat: fleet changed — rebuilding docs");
+
+        let build_state = state.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            docs::generate(
+                &build_state.fleet,
+                &docs::Options {
+                    out: None,
+                    skip_build: false,
+                    skip_rustdoc: false,
+                    only: None,
+                    dry_run: false,
+                },
+            )
+        })
+        .await;
+
+        let result = match outcome {
+            Ok(result) => result,
+            Err(join) => Err(anyhow::anyhow!("docs build task panicked: {join}")),
+        };
+
+        let error = match &result {
+            Ok(()) => {
+                if let Err(err) = docs::write_fingerprint(&fingerprint) {
+                    eprintln!("tugboat: docs shipped but recording the fingerprint failed: {err:#}");
+                }
+                None
+            }
+            Err(err) => {
+                eprintln!("tugboat: docs refresh failed: {err:#}");
+                Some(format!("{err:#}"))
+            }
+        };
+
+        let mut docs_state = state.docs.lock().unwrap();
+        docs_state.building = false;
+        docs_state.last = Some(DocsRun {
+            ok: result.is_ok(),
+            error,
+            finished_unix: now_unix(),
+        });
+    }
+}
+
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
