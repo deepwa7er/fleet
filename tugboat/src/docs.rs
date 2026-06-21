@@ -57,6 +57,9 @@ pub struct FleetDoc {
     /// where the site lives without hardcoding it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub docs_url: Option<String>,
+    /// Total hand-written source lines across the fleet (sum of each service's
+    /// `loc`). A fleet-scale stat; harbor displays it on the new-tab page.
+    pub total_loc: u64,
     pub services: Vec<ServiceDoc>,
 }
 
@@ -84,6 +87,9 @@ pub struct ServiceDoc {
     pub build_cmd: Option<String>,
     /// Whether the unit is enrolled in `lighthouse.target`.
     pub lighthouse_enrolled: bool,
+    /// Hand-written source lines in this repo — tracked code files only (via
+    /// `git ls-files`, so build output and vendored deps are excluded).
+    pub loc: u64,
     /// Relationships derived from ground truth (no hand-curated graph).
     pub relationships: Relationships,
     /// Rustdoc bundles for the repo's crates.
@@ -195,6 +201,7 @@ fn assemble(fleet: &Fleet, opts: &Options, out: &Path) -> Result<()> {
 
     let model = FleetDoc {
         docs_url: fleet.docs.as_ref().and_then(|d| d.url.clone()),
+        total_loc: services.iter().map(|s| s.loc).sum(),
         services,
     };
     let json_path = out.join("fleet.json");
@@ -497,8 +504,40 @@ fn build_service_doc(
         health,
         build_cmd,
         lighthouse_enrolled: enrolled,
+        loc: count_loc(&fleet.dir(member)),
         crates,
     })
+}
+
+/// Source file extensions counted as hand-written code (excludes config, data,
+/// lock files, and prose like Markdown).
+const CODE_EXTENSIONS: &[&str] = &[
+    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "go", "swift", "py", "rb", "sh", "fish", "css",
+    "scss", "sass", "html", "sql",
+];
+
+/// Count hand-written source lines in a repo: tracked code files only (via
+/// `git ls-files`, so build artifacts and vendored deps — being git-ignored —
+/// don't count). Best-effort: a non-repo or a read hiccup yields 0.
+fn count_loc(dir: &Path) -> u64 {
+    let Ok(output) = Command::new("git").arg("-C").arg(dir).arg("ls-files").output() else {
+        return 0;
+    };
+    if !output.status.success() {
+        return 0;
+    }
+    let files = String::from_utf8_lossy(&output.stdout);
+    let mut total = 0u64;
+    for rel in files.lines() {
+        let ext = Path::new(rel).extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !CODE_EXTENSIONS.contains(&ext) {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(dir.join(rel)) {
+            total += content.lines().count() as u64;
+        }
+    }
+    total
 }
 
 // ── breakwater routes ───────────────────────────────────────────────────────
