@@ -1,6 +1,8 @@
 # tugboat deploy manifest — github.com/deepwa7er/tugboat
 #   deploy:  tugboat deploy      (from this directory)
 name = "tidepool"
+# Service description for the fleet docs (this is a Go service, no Cargo metadata).
+description = "Cross-device file + clipboard relay over Tailscale."
 host = "deepwa7er"
 
 [build]
