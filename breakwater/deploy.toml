@@ -1,10 +1,12 @@
 # tugboat deploy manifest — github.com/deepwa7er/tugboat
 #   deploy:  tugboat deploy      (from this directory)
 #
-# Routine deploy: cross-compile the static musl binary locally and ship it.
-# Infrastructure (service user, systemd unit, /etc/breakwater config, the
-# Cloudflare token) is deploy/provision.sh — a one-time/on-change step, not run
-# here. See README.md for the first-deploy order.
+# Routine deploy: cross-compile the static musl binary locally, then ship it
+# together with breakwater.toml — so routing changes apply by editing the config
+# and re-deploying (the deploy restarts breakwater, which re-reads it).
+# Infrastructure (service user, systemd unit, /etc/breakwater dir, the Cloudflare
+# token) is deploy/provision.sh — a one-time/on-change step, not run here. See
+# README.md for the first-deploy order.
 name = "breakwater"
 host = "deepwa7er"
 
@@ -16,6 +18,14 @@ cmd = "rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true; CARG
 [[artifacts]]
 src = "target/x86_64-unknown-linux-musl/release/breakwater"
 dest = "/usr/local/bin/breakwater"
+
+# The routing config ships on every deploy and overwrites the live copy — this
+# is the supported way to change routes. It carries no secrets (the Cloudflare
+# token is a separate file installed out of band), so world-readable is fine.
+[[artifacts]]
+src = "breakwater.toml"
+dest = "/etc/breakwater/breakwater.toml"
+mode = "0644"
 
 [health]
 # breakwater opens its loopback health port only after TLS is ready. On the very

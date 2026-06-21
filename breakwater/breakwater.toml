@@ -4,16 +4,20 @@
 # IP, so breakwater is reachable only from the tailnet — the tailnet is the
 # security boundary, the same model as the rest of the deepwa7er fleet.
 #
-# This file is the committed example. The live config is installed at
-# /etc/breakwater/breakwater.toml by deploy/provision.sh; adding a service is a
-# new [[routes]] block here followed by a config reload.
+# This file IS the live config: tugboat ships it verbatim to
+# /etc/breakwater/breakwater.toml on every deploy (see deploy.toml). To change
+# routing, edit a [[routes]] block here and `tugboat deploy` — the deploy
+# restarts breakwater, which picks up the new routes. No host edits, no sed.
+#
+# The listeners carry no IP: breakwater resolves the host's Tailscale IPv4 at
+# startup and binds these ports on it, so the file is host-independent.
 
 # TLS listener — the front door. Every service is reached as
 # https://<name>.internal.deepwa7er.com on the tailnet IP.
-https_addr = "100.98.184.58:443"
+https_port = 443
 
 # Plain-HTTP listener; 308-redirects everything to its https:// equivalent.
-http_redirect_addr = "100.98.184.58:80"
+http_redirect_port = 80
 
 # Loopback-only health endpoint for tugboat's deploy health check.
 health_addr = "127.0.0.1:8079"

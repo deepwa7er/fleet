@@ -15,6 +15,11 @@ serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
 toml = "0.8"
 
+# Enumerate local interface addresses to discover the host's Tailscale IPv4 at
+# startup (see src/tailscale.rs). Pure-Rust libc FFI over getifaddrs(3) — no C
+# build, so it cross-compiles to static musl like the rest of the tree.
+if-addrs = "0.13"
+
 # TLS + ACME. Every crypto-bearing dependency is pinned to the ring provider
 # (not the default aws-lc-rs) so the whole tree cross-compiles cleanly to musl
 # with no C/cmake toolchain, keeping the build-locally-ship-a-static-binary model.

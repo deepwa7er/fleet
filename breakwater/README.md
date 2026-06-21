@@ -24,8 +24,10 @@ and WebSocket/`Upgrade` connections are tunnelled. A plain-HTTP listener
 308-redirects everything to HTTPS, and a loopback `/healthz` backs the deploy
 health check.
 
-Adding a service is a new `[[routes]]` block plus a reload — no DNS change
-(thanks to the wildcard record below) and no per-app changes.
+Adding a service (or changing a route) is a new/edited `[[routes]]` block in
+`breakwater.toml` followed by `tugboat deploy` — the config ships with the binary
+and the deploy restarts breakwater, which re-reads it. No DNS change (thanks to
+the wildcard record below) and no per-app changes.
 
 ## Certificates
 
@@ -75,12 +77,13 @@ CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc \
 
 ## Deploy
 
-Infrastructure is provisioned once; the binary ships via
-[tugboat](https://github.com/deepwa7er/tugboat). **First deploy order matters**
-because the first start performs an ACME issuance:
+Infrastructure is provisioned once; the binary **and `breakwater.toml`** ship via
+[tugboat](https://github.com/deepwa7er/tugboat) (so routing changes are just a
+config edit + redeploy). **First deploy order matters** because the first start
+performs an ACME issuance:
 
-1. **Provision** the host (service user, `/etc/breakwater` config auto-bound to
-   the Tailscale IP, systemd unit):
+1. **Provision** the host (service user, `/etc/breakwater` directory, systemd
+   unit — the config file itself ships in step 4 via tugboat):
    ```sh
    ./deploy/provision.sh
    ```
@@ -91,14 +94,16 @@ because the first start performs an ACME issuance:
    ```
 3. **Confirm the wildcard DNS record** exists (see above).
 4. **Test against Let's Encrypt staging first** by uncommenting the staging
-   `directory` in `/etc/breakwater/breakwater.toml`, then deploy:
+   `directory` in `breakwater.toml` (the repo file — tugboat ships it), then
+   deploy:
    ```sh
    tugboat
    ```
    Check `journalctl -u breakwater` for `certificate issued and cached`. Staging
    certs are untrusted — that is expected; this only proves the flow.
-5. **Switch to production:** comment the staging `directory` back out, clear the
-   staging cache so a trusted cert is issued, and redeploy:
+5. **Switch to production:** comment the staging `directory` back out in
+   `breakwater.toml`, clear the staging cache so a trusted cert is issued, and
+   redeploy:
    ```sh
    ssh deepwa7er 'rm -f /var/lib/breakwater/acme/*'   # drop staging account+cert
    tugboat
@@ -113,8 +118,8 @@ shows up in the lighthouse dashboard.
 
 | key | meaning |
 |---|---|
-| `https_addr` | TLS listener (the tailnet IP, `:443`) |
-| `http_redirect_addr` | optional plain-HTTP listener that redirects to HTTPS |
+| `https_port` | TLS listener port, bound on the resolved Tailscale IP (e.g. `443`) |
+| `http_redirect_port` | optional plain-HTTP listener port (same IP) that redirects to HTTPS |
 | `health_addr` | optional loopback health endpoint for tugboat |
 | `[tls] cert` / `key` | static-cert mode: PEM files on disk |
 | `[acme]` | automatic-cert mode (see above) |

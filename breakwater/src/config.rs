@@ -25,15 +25,17 @@ fn default_renew_before_days() -> i64 {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// TLS listener — the tailnet-facing front door. Every service is reached
-    /// here as `https://<name>.internal.deepwa7er.com`. Binds the Tailscale IP,
-    /// so it is reachable only from the tailnet.
-    pub https_addr: SocketAddr,
+    /// Port for the TLS listener — the tailnet-facing front door. Every service
+    /// is reached here as `https://<name>.internal.deepwa7er.com`. breakwater
+    /// resolves the host's Tailscale IPv4 at startup and binds this port on it,
+    /// so it is reachable only from the tailnet and the config carries no
+    /// host-specific address (see [`crate::tailscale`]).
+    pub https_port: u16,
 
-    /// Optional plain-HTTP listener that 308-redirects every request to its
-    /// `https://` equivalent. Omit to not listen on `:80` at all.
+    /// Optional plain-HTTP listener (on the same Tailscale IP) that 308-redirects
+    /// every request to its `https://` equivalent. Omit to not listen on `:80`.
     #[serde(default)]
-    pub http_redirect_addr: Option<SocketAddr>,
+    pub http_redirect_port: Option<u16>,
 
     /// Optional loopback health endpoint for tugboat's deploy health check.
     /// Kept off the tailnet listener so it is never reachable by clients.
@@ -174,7 +176,7 @@ mod tests {
     #[test]
     fn rejects_empty_routes() {
         let toml = r#"
-            https_addr = "100.98.184.58:443"
+            https_port = 443
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"
@@ -185,7 +187,7 @@ mod tests {
     #[test]
     fn rejects_upstream_without_port() {
         let toml = r#"
-            https_addr = "100.98.184.58:443"
+            https_port = 443
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"
@@ -199,7 +201,7 @@ mod tests {
     #[test]
     fn rejects_duplicate_hosts_differing_only_in_case() {
         let toml = r#"
-            https_addr = "100.98.184.58:443"
+            https_port = 443
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"
@@ -216,7 +218,7 @@ mod tests {
     #[test]
     fn rejects_both_tls_and_acme() {
         let toml = r#"
-            https_addr = "100.98.184.58:443"
+            https_port = 443
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"
@@ -236,7 +238,7 @@ mod tests {
     #[test]
     fn rejects_neither_tls_nor_acme() {
         let toml = r#"
-            https_addr = "100.98.184.58:443"
+            https_port = 443
             [[routes]]
             host = "a.example.com"
             upstream = "127.0.0.1:8080"
@@ -247,7 +249,7 @@ mod tests {
     #[test]
     fn acme_directory_defaults_to_production() {
         let toml = r#"
-            https_addr = "100.98.184.58:443"
+            https_port = 443
             [acme]
             domains = ["*.internal.deepwa7er.com"]
             contact = "mailto:a@b.com"
@@ -267,7 +269,7 @@ mod tests {
     #[test]
     fn routing_table_lowercases_hosts() {
         let toml = r#"
-            https_addr = "100.98.184.58:443"
+            https_port = 443
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"

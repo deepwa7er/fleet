@@ -6,9 +6,10 @@
 //! only from the tailnet, which is the security boundary.
 
 use std::convert::Infallible;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, bail};
 use bytes::Bytes;
@@ -23,12 +24,26 @@ use tokio_rustls::TlsAcceptor;
 use breakwater::cert::{self, CertMaterial};
 use breakwater::config::Config;
 use breakwater::proxy::{self, Router};
+use breakwater::tailscale;
 use breakwater::tls::{self, CertResolver};
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/breakwater/breakwater.toml";
 
+/// How long to wait for tailscaled to assign the node's tailnet address before
+/// giving up at startup (systemd then restarts us via `Restart=on-failure`).
+const TAILSCALE_RESOLVE_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Diagnostic: resolve and print the host's Tailscale IPv4, then exit. Lets a
+    // deploy confirm the resolver finds the address on a host before relying on
+    // it to bind the front door. Runs before any config/cert work.
+    if std::env::args().nth(1).as_deref() == Some("--check-tailnet-ip") {
+        let ip = tailscale::resolve(TAILSCALE_RESOLVE_TIMEOUT).await?;
+        println!("{ip}");
+        return Ok(());
+    }
+
     // rustls needs a process-wide crypto provider. We compile with ring only
     // (see Cargo.toml), so install it explicitly rather than relying on a
     // default that isn't wired up when aws-lc-rs is disabled.
@@ -52,11 +67,21 @@ async fn main() -> anyhow::Result<()> {
     let acceptor = tls::acceptor(resolver);
     let router = Arc::new(Router::new(config.routing_table()));
 
+    // The tailnet-facing listeners bind the host's Tailscale IP, discovered at
+    // startup so the config holds no host-specific address. tailscaled may still
+    // be assigning that address as we come up, so allow a short grace period.
+    let tailnet_ip = tailscale::resolve(TAILSCALE_RESOLVE_TIMEOUT).await?;
+    let https_addr = SocketAddr::new(IpAddr::V4(tailnet_ip), config.https_port);
+    let redirect_addr = config
+        .http_redirect_port
+        .map(|port| SocketAddr::new(IpAddr::V4(tailnet_ip), port));
+    println!("breakwater: tailnet address {tailnet_ip}");
+
     // The TLS proxy is mandatory; the redirect and health listeners are optional
     // and degrade to a never-resolving future when not configured. Any bind
     // failure surfaces immediately and stops the process.
-    let https = serve_https(config.https_addr, acceptor, router);
-    let redirect = optional(config.http_redirect_addr, serve_redirect);
+    let https = serve_https(https_addr, acceptor, router);
+    let redirect = optional(redirect_addr, serve_redirect);
     let health = optional(config.health_addr, serve_health);
 
     tokio::try_join!(https, redirect, health)?;
