@@ -2,6 +2,7 @@
 name = "ferry"
 version = "0.1.0"
 edition = "2024"
+description = "Address-bar redirect front door for the deepwa7er fleet — `b mail` → mail."
 
 [dependencies]
 anyhow = "1"
