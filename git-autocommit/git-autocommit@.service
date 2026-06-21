@@ -1,10 +1,11 @@
 [Unit]
-Description=Auto-commit+push the git repo containing %I
+Description=Auto-commit+push the git repo containing %f
 # Needs the network to push to GitHub.
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-# %I is the unescaped watched path; the script finds and pushes its repo.
-ExecStart=/usr/local/bin/git-autocommit %I
+# %f is the unescaped instance as an ABSOLUTE path (leading slash); the script
+# finds and pushes the git repo that contains it. (%I would drop the slash.)
+ExecStart=/usr/local/bin/git-autocommit %f
