@@ -44,6 +44,8 @@ tugboat fleet deploy    # deploy each `deploy = true` member, in listed order
 tugboat fleet deploy --only lighthouse,buoy   # a subset
 tugboat fleet deploy --dry-run                # print every member's plan
 tugboat fleet deploy --continue-on-error      # don't stop at the first failure
+tugboat fleet docs           # build + ship the docs site (see "Fleet documentation")
+tugboat fleet hooks install  # auto-refresh the docs on every commit
 ```
 
 `fleet deploy` reuses the single-service engine per member, so each member gets
@@ -79,6 +81,9 @@ TUGBOAT_SERVE_TOKEN=$(openssl rand -hex 32) \
   `409` if that service is already deploying.
 - `GET /jobs/{id}/stream` — replay the transcript so far, then stream the rest
   live over Server-Sent Events, closing when the deploy finishes.
+- `GET /docs` — the docs auto-refresh state (last build outcome, whether
+  building). `POST /docs/refresh` — request a docs rebuild (the commit hooks call
+  this; returns at once). See [Fleet documentation](#fleet-documentation).
 
 Every request except `GET /health` must carry `Authorization: Bearer
 $TUGBOAT_SERVE_TOKEN`. The token is **required** — the daemon refuses to start
@@ -200,6 +205,89 @@ shell-quoted). Best-effort like the ledger, and pruned to the most recent 50 per
 service. Deploys that fail *before* the remote install (e.g. a local build error)
 have no ledger entry and no transcript — that output is a dev-box concern and is
 visible live.
+
+## Fleet documentation
+
+`tugboat fleet docs` generates the fleet's documentation site (the `pilot`
+frontend repo) — a service reference plus each Rust repo's rustdoc — and ships
+it. It is a whole-fleet op because it joins facts from every member: each repo's
+`deploy.toml`, breakwater's routing table, and `cargo metadata`, plus `cargo doc
+--no-deps` per Rust repo.
+
+```sh
+tugboat fleet docs                 # build the frontend + harvest + rustdoc, then ship
+tugboat fleet docs --out ./site    # assemble locally into ./site, don't ship
+tugboat fleet docs --skip-rustdoc  # emit only fleet.json (+ frontend), skip cargo doc
+tugboat fleet docs --skip-build    # reuse the frontend's existing dist
+tugboat fleet docs --only ferry    # limit the (slow) rustdoc pass to some repos
+tugboat fleet docs --dry-run       # print the plan
+```
+
+Configured by a `[docs]` table in `fleet.toml`:
+
+```toml
+[docs]
+repo  = "pilot"                                  # member holding the frontend
+build = "cd web && bun install && bun run build"
+dist  = "web/dist"                               # built frontend, relative to the repo
+host  = "deepwa7er"                              # ship target
+dest  = "/opt/pilot/web"                         # served by breakwater (a serve_dir route)
+url   = "https://docs.internal.deepwa7er.com"    # polled after a ship
+```
+
+The site is process-less static files (breakwater serves the directory), so the
+ship is a directory rsync + atomic swap, not a unit deploy. The harvested model
+is `fleet.json`; each repo's rustdoc mounts at `/doc/<repo>/` (one bundle per
+repo, so rustdoc's per-invocation search index keeps working). A service's
+description comes from its crate's Cargo `description`, overridden by an optional
+`description` in its `deploy.toml` — authoritative, and the right source for a
+workspace (no single crate speaks for the service) or a non-Rust service.
+
+### Auto-refresh on commit
+
+The `serve` daemon keeps the docs current. A debounced, single-flight **docs
+keeper** rebuilds + reships whenever the fleet's combined git-HEAD fingerprint
+moves. It's woken two ways:
+
+- a **commit hook** → `POST /docs/refresh`, for immediacy, and
+- a **periodic catch-up** in the daemon (every 5 min) — the backstop that covers
+  a missed hook (the daemon was down, a repo lacks the hook, or a commit was
+  pulled from another machine).
+
+The fingerprint (cached at `~/.cache/tugboat/docs-fingerprint`) is recorded only
+after a successful ship, so a failed build is retried, not masked; `GET /docs`
+reports the last outcome. Builds are coalesced (a 20s debounce) and run one at a
+time.
+
+Install the hooks into every fleet member:
+
+```sh
+tugboat fleet hooks install     # --url / --token override the daemon URL / token
+tugboat fleet hooks uninstall   # unset core.hooksPath in each member
+```
+
+`install` writes the shared hook scripts to `~/.config/tugboat/hooks` (plus the
+daemon URL and token they read) and points each member at them via
+`core.hooksPath`. The URL defaults to `http://$(tailscale ip -4):7878`, the token
+to `$TUGBOAT_SERVE_TOKEN`. The hooks (`post-commit`, `post-merge`,
+`post-rewrite`) are **fire-and-forget** — a commit never blocks or fails on them.
+Re-run after `fleet clone` or adding a member; the catch-up covers any gap.
+
+> Same dev-machine-awake constraint as the Deploy button: the build runs here, so
+> auto-refresh happens when the box is up with the agent running. The catch-up
+> means the docs self-heal on wake.
+
+### The docs site on a new dev box
+
+```sh
+tugboat fleet clone          # check out the members
+cargo install --path .       # install tugboat
+# install + load the serve agent — see "Running it as a launchd agent" above
+tugboat fleet hooks install  # wire the commit hooks to the daemon
+```
+
+The daemon's catch-up runs the first build on startup, so the site comes current
+on its own once the agent is up.
 
 ## The manifest
 
