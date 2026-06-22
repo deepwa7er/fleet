@@ -842,40 +842,94 @@ fn go_markdown(module_dir: &Path) -> Result<String> {
 /// and to sections (Index, Variables, …) via heading slugs — so we give every
 /// heading a GitHub-style slug `id` to make the section links resolve too.
 fn render_markdown_page(module: &str, markdown: &str) -> String {
-    use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd, html};
+    use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd, html};
+    use syntect::highlighting::ThemeSet;
+    use syntect::parsing::SyntaxSet;
+
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
+
+    // Loaded once per page (cheap relative to the build); used to highlight code.
+    let syntaxes = SyntaxSet::load_defaults_newlines();
+    let theme_set = ThemeSet::load_defaults();
+    let theme = &theme_set.themes["base16-ocean.dark"];
 
     let events: Vec<Event> = Parser::new_ext(markdown, options).collect();
     let mut out: Vec<Event> = Vec::with_capacity(events.len());
     let mut i = 0;
     while i < events.len() {
-        if let Event::Start(Tag::Heading { level, id: None, classes, attrs }) = &events[i] {
-            // Slug the heading's text (the events up to its End) for the id.
-            let mut text = String::new();
-            let mut j = i + 1;
-            while j < events.len() && !matches!(events[j], Event::End(TagEnd::Heading(_))) {
-                if let Event::Text(t) | Event::Code(t) = &events[j] {
-                    text.push_str(t);
+        match &events[i] {
+            // Give each heading a slug id so gomarkdoc's section links resolve.
+            Event::Start(Tag::Heading { level, id: None, classes, attrs }) => {
+                let mut text = String::new();
+                let mut j = i + 1;
+                while j < events.len() && !matches!(events[j], Event::End(TagEnd::Heading(_))) {
+                    if let Event::Text(t) | Event::Code(t) = &events[j] {
+                        text.push_str(t);
+                    }
+                    j += 1;
                 }
-                j += 1;
+                out.push(Event::Start(Tag::Heading {
+                    level: *level,
+                    id: Some(slugify(&text).into()),
+                    classes: classes.clone(),
+                    attrs: attrs.clone(),
+                }));
+                i += 1;
             }
-            out.push(Event::Start(Tag::Heading {
-                level: *level,
-                id: Some(slugify(&text).into()),
-                classes: classes.clone(),
-                attrs: attrs.clone(),
-            }));
-        } else {
-            out.push(events[i].clone());
+            // Syntax-highlight fenced code blocks (gomarkdoc emits ```go), replacing
+            // the block's events with one highlighted HTML fragment.
+            Event::Start(Tag::CodeBlock(kind)) => {
+                let lang = match kind {
+                    CodeBlockKind::Fenced(lang) => lang.to_string(),
+                    CodeBlockKind::Indented => String::new(),
+                };
+                let mut code = String::new();
+                let mut j = i + 1;
+                while j < events.len() && !matches!(events[j], Event::End(TagEnd::CodeBlock)) {
+                    if let Event::Text(t) = &events[j] {
+                        code.push_str(t);
+                    }
+                    j += 1;
+                }
+                out.push(Event::Html(highlight_code(&syntaxes, theme, &lang, &code).into()));
+                i = j + 1; // skip the block's Text and End events
+            }
+            _ => {
+                out.push(events[i].clone());
+                i += 1;
+            }
         }
-        i += 1;
     }
 
     let mut body = String::new();
     html::push_html(&mut body, out.into_iter());
     markdown_html(module, &body)
+}
+
+/// Highlight one code block to an HTML `<pre>`, with per-token color spans from
+/// the theme. syntect's inline `<pre>` background is stripped so the page CSS
+/// owns the container (border, padding, background); on any failure the code is
+/// emitted plain, never lost.
+fn highlight_code(
+    syntaxes: &syntect::parsing::SyntaxSet,
+    theme: &syntect::highlighting::Theme,
+    lang: &str,
+    code: &str,
+) -> String {
+    let syntax = syntaxes
+        .find_syntax_by_token(lang)
+        .unwrap_or_else(|| syntaxes.find_syntax_plain_text());
+    match syntect::html::highlighted_html_for_string(code, syntaxes, syntax, theme) {
+        // Drop the leading `<pre style="background-color:…">` so our CSS controls
+        // the container; keep the inner color spans and the closing `</pre>`.
+        Ok(html) => match html.find('>') {
+            Some(end) => format!("<pre>{}", &html[end + 1..]),
+            None => html,
+        },
+        Err(_) => format!("<pre>{}</pre>", html_escape(code)),
+    }
 }
 
 /// A GitHub-style heading slug: lowercase, non-alphanumerics dropped, spaces and
