@@ -99,3 +99,6 @@ dist = "web/dist"
 host = "deepwa7er"
 dest = "/opt/pilot/web"
 url = "https://docs.internal.deepwa7er.com"
+# Extra repos counted in the line-of-code total beyond the deployable members:
+# tugboat itself (the fleet's deployer) is fleet code we wrote, but not a service.
+extra_loc = ["tugboat"]

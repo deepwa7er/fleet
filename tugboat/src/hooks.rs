@@ -97,11 +97,9 @@ pub fn install(fleet: &Fleet, opts: &InstallOpts) -> Result<()> {
     }
 
     let hooks_path = hooks.to_string_lossy().into_owned();
-    println!("\nPointing fleet members at the hooks:");
+    println!("\nPointing fleet repos at the hooks:");
     let mut installed = 0;
-    for member in &fleet.members {
-        let dir = fleet.dir(member);
-        let label = member.label();
+    for (label, dir) in hooked_repos(fleet) {
         if !dir.join(".git").is_dir() {
             println!("  {label:<14} (no checkout — skipped)");
             continue;
@@ -113,7 +111,7 @@ pub fn install(fleet: &Fleet, opts: &InstallOpts) -> Result<()> {
             eprintln!("  {label:<14} failed to set core.hooksPath");
         }
     }
-    println!("\n✓ docs commit-hook installed in {installed} member(s)");
+    println!("\n✓ docs commit-hook installed in {installed} repo(s)");
     println!(
         "  (re-run after `fleet clone`/adding a member; the daemon's catch-up covers any gap)"
     );
@@ -123,9 +121,7 @@ pub fn install(fleet: &Fleet, opts: &InstallOpts) -> Result<()> {
 /// Remove the hooks from every fleet member (unset `core.hooksPath`). The shared
 /// scripts are left in place; re-running `install` re-points members at them.
 pub fn uninstall(fleet: &Fleet) -> Result<()> {
-    for member in &fleet.members {
-        let dir = fleet.dir(member);
-        let label = member.label();
+    for (label, dir) in hooked_repos(fleet) {
         if !dir.join(".git").is_dir() {
             continue;
         }
@@ -133,8 +129,27 @@ pub fn uninstall(fleet: &Fleet) -> Result<()> {
         let _ = git::run(&dir, &["config", "--unset", "core.hooksPath"]);
         println!("  {label:<14} core.hooksPath unset");
     }
-    println!("\n✓ docs commit-hook removed from fleet members");
+    println!("\n✓ docs commit-hook removed from fleet repos");
     Ok(())
+}
+
+/// The repos whose commits should refresh the docs: every fleet member, plus any
+/// `[docs] extra_loc` repos (e.g. the deployer) — these contribute to the docs'
+/// line count, so a commit to them should rebuild too. Returned as
+/// (label, checkout dir) pairs; extra repos already present as a member are
+/// skipped so nothing is hooked twice.
+fn hooked_repos(fleet: &Fleet) -> Vec<(String, PathBuf)> {
+    let mut repos: Vec<(String, PathBuf)> =
+        fleet.members.iter().map(|m| (m.label().to_owned(), fleet.dir(m))).collect();
+    if let Some(docs) = &fleet.docs {
+        for rel in &docs.extra_loc {
+            let dir = fleet.root_dir().join(rel);
+            if !repos.iter().any(|(_, d)| d == &dir) {
+                repos.push((rel.clone(), dir));
+            }
+        }
+    }
+    repos
 }
 
 /// Derive the serve daemon URL from the host's tailnet IP (the daemon binds it so

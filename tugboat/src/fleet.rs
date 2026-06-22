@@ -54,6 +54,12 @@ pub struct DocsConfig {
     /// Public URL, polled after a ship to confirm the site is live. Optional.
     #[serde(default)]
     pub url: Option<String>,
+    /// Extra repos (paths relative to the fleet `root`) to include in the docs'
+    /// line-of-code total beyond the deployable members — e.g. the deployer
+    /// itself, `tugboat`. They count toward `total_loc` but aren't documented as
+    /// services.
+    #[serde(default)]
+    pub extra_loc: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,6 +94,11 @@ impl Member {
 }
 
 impl Fleet {
+    /// The fleet root as an absolute path (a leading `~/` expanded).
+    pub fn root_dir(&self) -> PathBuf {
+        expand_tilde(&self.root)
+    }
+
     /// Absolute path to a member's checkout.
     pub fn dir(&self, member: &Member) -> PathBuf {
         expand_tilde(&self.root).join(&member.path)
