@@ -804,20 +804,105 @@ fn build_rustdoc(manifest_path: &Path) -> Result<()> {
 // HTML page per repo. It's text-based rather than navigable like rustdoc, but
 // honest and dependency-free, and the monospace styling fits the fleet's look.
 
-/// Build a Go module's docs into `dest/index.html` from `go doc -all` over every
-/// package in the module.
+/// Build a Go module's docs into `dest/index.html`. Prefers **gomarkdoc**
+/// (structured Markdown — index, signatures, prose, source links — rendered to
+/// HTML), and falls back to plain `go doc` text if gomarkdoc isn't installed.
 fn build_go_docs(module_dir: &Path, dest: &Path) -> Result<()> {
-    let packages = go_list(module_dir)?;
-    if packages.is_empty() {
-        bail!("no Go packages found in {}", module_dir.display());
-    }
     let module = go_module_name(module_dir).unwrap_or_else(|| "package".to_owned());
+    let html = match go_markdown(module_dir) {
+        Ok(markdown) if !markdown.trim().is_empty() => render_markdown_page(&module, &markdown),
+        result => {
+            if let Err(err) = &result {
+                eprintln!("    note: gomarkdoc unavailable ({err}); falling back to `go doc` text");
+            }
+            go_doc_html(&module, &go_doc_text_sections(module_dir)?)
+        }
+    };
+    std::fs::create_dir_all(dest).with_context(|| format!("creating {}", dest.display()))?;
+    std::fs::write(dest.join("index.html"), html)
+        .with_context(|| format!("writing {}", dest.join("index.html").display()))
+}
+
+/// Markdown for the whole module from `gomarkdoc ./...` (combined, on stdout).
+/// Errors if gomarkdoc isn't installed or fails — the caller then falls back.
+fn go_markdown(module_dir: &Path) -> Result<String> {
+    let output = Command::new("gomarkdoc")
+        .arg("./...")
+        .current_dir(module_dir)
+        .output()
+        .context("spawning gomarkdoc (install: `go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest`)")?;
+    if !output.status.success() {
+        bail!("gomarkdoc failed: {}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Render gomarkdoc's Markdown to a styled HTML page. gomarkdoc links to types
+/// and funcs via explicit `<a name="…">` anchors (which pass through as raw HTML)
+/// and to sections (Index, Variables, …) via heading slugs — so we give every
+/// heading a GitHub-style slug `id` to make the section links resolve too.
+fn render_markdown_page(module: &str, markdown: &str) -> String {
+    use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd, html};
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+
+    let events: Vec<Event> = Parser::new_ext(markdown, options).collect();
+    let mut out: Vec<Event> = Vec::with_capacity(events.len());
+    let mut i = 0;
+    while i < events.len() {
+        if let Event::Start(Tag::Heading { level, id: None, classes, attrs }) = &events[i] {
+            // Slug the heading's text (the events up to its End) for the id.
+            let mut text = String::new();
+            let mut j = i + 1;
+            while j < events.len() && !matches!(events[j], Event::End(TagEnd::Heading(_))) {
+                if let Event::Text(t) | Event::Code(t) = &events[j] {
+                    text.push_str(t);
+                }
+                j += 1;
+            }
+            out.push(Event::Start(Tag::Heading {
+                level: *level,
+                id: Some(slugify(&text).into()),
+                classes: classes.clone(),
+                attrs: attrs.clone(),
+            }));
+        } else {
+            out.push(events[i].clone());
+        }
+        i += 1;
+    }
+
+    let mut body = String::new();
+    html::push_html(&mut body, out.into_iter());
+    markdown_html(module, &body)
+}
+
+/// A GitHub-style heading slug: lowercase, non-alphanumerics dropped, spaces and
+/// separators collapsed to single hyphens (e.g. "Variables" → "variables").
+fn slugify(text: &str) -> String {
+    let mut slug = String::new();
+    let mut prev_dash = false;
+    for ch in text.chars() {
+        if ch.is_alphanumeric() {
+            slug.extend(ch.to_lowercase());
+            prev_dash = false;
+        } else if (ch == ' ' || ch == '-' || ch == '_') && !slug.is_empty() && !prev_dash {
+            slug.push('-');
+            prev_dash = true;
+        }
+    }
+    slug.trim_end_matches('-').to_owned()
+}
+
+/// Fallback: one `<section>` per documentable package, from `go doc -all`. A
+/// `main` package (a binary) exports nothing, so `go doc` is empty — skip it.
+fn go_doc_text_sections(module_dir: &Path) -> Result<String> {
+    let packages = go_list(module_dir)?;
     let mut sections = String::new();
     for package in &packages {
         let text = go_doc(module_dir, package)?;
         let text = text.trim();
-        // A `main` package (a binary) exports nothing, so `go doc` is empty —
-        // skip it rather than render a header over a blank block.
         if text.is_empty() {
             continue;
         }
@@ -830,9 +915,7 @@ fn build_go_docs(module_dir: &Path, dest: &Path) -> Result<()> {
     if sections.is_empty() {
         bail!("no documentable Go packages in {}", module_dir.display());
     }
-    std::fs::create_dir_all(dest).with_context(|| format!("creating {}", dest.display()))?;
-    std::fs::write(dest.join("index.html"), go_doc_html(&module, &sections))
-        .with_context(|| format!("writing {}", dest.join("index.html").display()))
+    Ok(sections)
 }
 
 /// The import paths of every package in the module (`go list ./...`).
@@ -904,6 +987,46 @@ fn go_doc_html(module: &str, sections: &str) -> String {
 <body><div class="wrap">
 <header><h1>{module}</h1><div class="sub">Go package documentation · generated by `go doc`</div></header>
 {sections}</div></body></html>
+"#
+    )
+}
+
+/// Wrap gomarkdoc-rendered HTML in a styled page (the fleet's DG-001 palette,
+/// inlined). Styles the full structure gomarkdoc produces — headings, the index
+/// list, fenced code (signatures), tables, and links — so it reads like real
+/// docs rather than a text dump.
+fn markdown_html(module: &str, body: &str) -> String {
+    format!(
+        r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{module} — Go docs</title>
+<style>
+  :root {{ color-scheme: dark; }}
+  body {{ margin:0; background:#0b0c0d; color:#e6e4dd;
+    font-family:"Berkeley Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+    font-size:13px; line-height:1.6; }}
+  .wrap {{ max-width:920px; margin:0 auto; padding:2rem 1.5rem; }}
+  a {{ color:#f08c00; text-decoration:none; }}
+  a:hover {{ text-decoration:underline; }}
+  h1 {{ font-size:1.5rem; color:#f08c00; margin:2rem 0 .5rem;
+    padding-top:1rem; border-top:1px solid #2a2b2d; }}
+  h1:first-of-type {{ border-top:0; padding-top:0; margin-top:0; }}
+  h2 {{ font-size:1.1rem; color:#e6e4dd; margin:1.75rem 0 .5rem; }}
+  h3, h4 {{ font-size:1rem; color:#9a978d; margin:1.25rem 0 .4rem; }}
+  p {{ color:#c9c6bd; }}
+  ul {{ padding-left:1.25rem; }}
+  li {{ margin:.15rem 0; }}
+  code {{ background:#16181a; border:1px solid #2a2b2d; border-radius:3px;
+    padding:.05rem .3rem; font-size:.92em; }}
+  pre {{ background:#121315; border:1px solid #2a2b2d; border-radius:4px;
+    padding:.75rem 1rem; overflow-x:auto; }}
+  pre code {{ background:none; border:0; padding:0; }}
+  table {{ border-collapse:collapse; margin:.5rem 0; }}
+  th, td {{ border:1px solid #2a2b2d; padding:.3rem .6rem; text-align:left; }}
+  hr {{ border:0; border-top:1px solid #2a2b2d; margin:1.5rem 0; }}
+</style></head>
+<body><div class="wrap">{body}</div></body></html>
 "#
     )
 }
@@ -980,5 +1103,16 @@ mod tests {
         // Nothing described — empty string.
         let none = vec![package("zzz", None, vec![])];
         assert_eq!(choose_description(&none, "lagoon"), "");
+    }
+
+    #[test]
+    fn slugify_matches_gomarkdoc_section_anchors() {
+        // gomarkdoc's section links (#variables, #index) target heading slugs.
+        assert_eq!(slugify("Variables"), "variables");
+        assert_eq!(slugify("Index"), "index");
+        // Multi-word / punctuated headings collapse separators to single hyphens.
+        assert_eq!(slugify("type Clip"), "type-clip");
+        assert_eq!(slugify("func (d *DB) GetClip"), "func-d-db-getclip");
+        assert_eq!(slugify(""), "");
     }
 }
