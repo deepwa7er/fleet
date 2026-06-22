@@ -1,0 +1,31 @@
+# tugboat agent manifest — deploys the tidepool-clipd daemon to dev machines.
+#   tugboat agent deploy            (from this directory)
+#
+# Unlike a VPS service (deploy.toml), this is a per-user daemon that runs on the
+# dev machines themselves: a launchd agent on the Mac, a systemd --user unit on
+# the Fedora desktop. The pure-Go binary cross-compiles for each from wherever
+# tugboat runs, ships to the target, and the agent/unit is restarted.
+
+name = "tidepool-clipd"
+
+# Built locally, in this repo dir, once per target. `{goos}`/`{goarch}` select the
+# platform; `{out}` is a temp path tugboat provides for the built binary.
+build = "GOOS={goos} GOARCH={goarch} CGO_ENABLED=0 go build -o {out} ./cmd/tidepool-clipd"
+
+[[targets]]
+# This MacBook — built here, installed locally, run as a launchd login agent.
+name = "mac"
+local = true
+goos = "darwin"
+goarch = "arm64"
+dest = "~/.local/bin/tidepool-clipd"
+launchd = "com.deepwa7er.tidepool-clipd"
+
+[[targets]]
+# The Fedora desktop — reached over Tailscale SSH, run as a systemd --user unit.
+name = "desktop"
+ssh = "deepwater@fedora"
+goos = "linux"
+goarch = "amd64"
+dest = "~/.local/bin/tidepool-clipd"
+systemd_user = "tidepool-clipd"
