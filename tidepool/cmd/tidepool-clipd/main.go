@@ -142,7 +142,22 @@ func (d *daemon) subscribe(ctx context.Context) {
 	}
 }
 
-func (d *daemon) streamOnce(ctx context.Context) error {
+// errIdleTimeout marks an SSE connection we abandoned because no data — not even
+// the server's periodic keepalive — arrived for [idleTimeout]. The connection
+// has silently died (laptop sleep, network change, NAT timeout) and must be
+// reconnected.
+var errIdleTimeout = errors.New("no data from server within idle timeout")
+
+func (d *daemon) streamOnce(parent context.Context) error {
+	// The SSE read blocks indefinitely, so a silently-dropped TCP connection
+	// would otherwise wedge it forever with no error and no reconnect. The server
+	// sends a keepalive comment every 30s; if we see no data at all for
+	// idleTimeout, treat the connection as dead and cancel so we reconnect.
+	const idleTimeout = 75 * time.Second
+
+	ctx, cancel := context.WithCancelCause(parent)
+	defer cancel(nil)
+
 	req, err := http.NewRequestWithContext(ctx, "GET", d.baseURL+"/clip/stream", nil)
 	if err != nil {
 		return err
@@ -158,12 +173,41 @@ func (d *daemon) streamOnce(ctx context.Context) error {
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
 
+	// Idle watchdog: reset on every received line (events, data, or keepalives);
+	// if the stream goes quiet past idleTimeout, cancel to unblock the read.
+	activity := make(chan struct{}, 1)
+	go func() {
+		timer := time.NewTimer(idleTimeout)
+		defer timer.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-activity:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(idleTimeout)
+			case <-timer.C:
+				cancel(errIdleTimeout)
+				return
+			}
+		}
+	}()
+
 	var eventName string
 	var dataLines []string
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
+		select {
+		case activity <- struct{}{}:
+		default:
+		}
 		line := scanner.Text()
 		switch {
 		case line == "":
@@ -186,6 +230,9 @@ func (d *daemon) streamOnce(ctx context.Context) error {
 				dataLines = append(dataLines, v)
 			}
 		}
+	}
+	if context.Cause(ctx) == errIdleTimeout {
+		return errIdleTimeout
 	}
 	return scanner.Err()
 }
