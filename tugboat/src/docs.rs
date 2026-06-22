@@ -161,36 +161,49 @@ fn assemble(fleet: &Fleet, opts: &Options, out: &Path) -> Result<()> {
 
     println!("==> harvesting {} fleet members", fleet.members.len());
     let mut services = Vec::new();
-    let mut rustdoc_built = Vec::new();
-    let mut rustdoc_failed = Vec::new();
+    let mut docs_built = Vec::new();
+    let mut docs_failed = Vec::new();
 
     for m in &fleet.members {
         let label = m.label().to_string();
-        let cargo = harvest_cargo(&fleet.dir(m), &label)
-            .with_context(|| format!("reading Cargo metadata for {label}"))?;
-        let service = build_service_doc(fleet, m, &routes, &cargo.description, cargo.crates.clone())
-            .with_context(|| format!("describing {label}"))?;
+        let member_docs = harvest_docs(&fleet.dir(m), &label)
+            .with_context(|| format!("harvesting docs for {label}"))?;
+        let service =
+            build_service_doc(fleet, m, &routes, &member_docs.description, member_docs.crates.clone())
+                .with_context(|| format!("describing {label}"))?;
 
-        let rustdoc_wanted = !opts.skip_rustdoc
+        let docs_wanted = !opts.skip_rustdoc
             && opts.only.as_ref().is_none_or(|names| names.iter().any(|n| n == &label));
-        if rustdoc_wanted {
-            for root in &cargo.roots {
+        if docs_wanted {
+            // Rust members are documented with `cargo doc`, one bundle per root.
+            for root in &member_docs.roots {
                 println!("==> cargo doc: {label} ({})", root.manifest_path.display());
                 match build_rustdoc(&root.manifest_path) {
                     Ok(()) if root.target_doc.is_dir() => {
                         copy_dir_all(&root.target_doc, &doc_root.join(&label))
                             .with_context(|| format!("copying rustdoc for {label}"))?;
-                        rustdoc_built.push(label.clone());
+                        docs_built.push(label.clone());
                     }
                     Ok(()) => {
                         eprintln!("    warning: no rustdoc output at {}", root.target_doc.display());
-                        rustdoc_failed.push(label.clone());
+                        docs_failed.push(label.clone());
                     }
                     Err(err) => {
                         // One repo that doesn't `cargo doc` on this host must not
                         // sink the whole site — degrade visibly, don't drop silently.
                         eprintln!("    warning: cargo doc failed for {label}: {err:#}");
-                        rustdoc_failed.push(label.clone());
+                        docs_failed.push(label.clone());
+                    }
+                }
+            }
+            // A Go member is documented with `go doc` → one HTML page.
+            if let Some(module_dir) = &member_docs.go_module {
+                println!("==> go doc: {label} ({})", module_dir.display());
+                match build_go_docs(module_dir, &doc_root.join(&label)) {
+                    Ok(()) => docs_built.push(label.clone()),
+                    Err(err) => {
+                        eprintln!("    warning: go doc failed for {label}: {err:#}");
+                        docs_failed.push(label.clone());
                     }
                 }
             }
@@ -223,11 +236,11 @@ fn assemble(fleet: &Fleet, opts: &Options, out: &Path) -> Result<()> {
     println!("  services:   {}", model.services.len());
     println!("  fleet.json: {}", json_path.display());
     if opts.skip_rustdoc {
-        println!("  rustdoc:    skipped (--skip-rustdoc)");
+        println!("  api docs:   skipped (--skip-rustdoc)");
     } else {
-        println!("  rustdoc:    built {}", fmt_list(&rustdoc_built));
-        if !rustdoc_failed.is_empty() {
-            println!("  rustdoc:    skipped/failed {}", fmt_list(&rustdoc_failed));
+        println!("  api docs:   built {}", fmt_list(&docs_built));
+        if !docs_failed.is_empty() {
+            println!("  api docs:   skipped/failed {}", fmt_list(&docs_failed));
         }
     }
     Ok(())
@@ -621,14 +634,16 @@ fn load_routes(fleet: &Fleet) -> HashMap<String, RouteInfo> {
 
 // ── Cargo metadata + rustdoc ────────────────────────────────────────────────
 
-/// Cargo facts harvested for one member.
-struct CargoInfo {
-    /// Best service description found among the member's crates (may be empty).
+/// Doc facts harvested for one member: how to document it and what to link.
+struct MemberDocs {
+    /// Best service description from Cargo (empty for non-Rust; deploy.toml fills).
     description: String,
-    /// One entry per documentable crate, with its site-absolute rustdoc path.
+    /// Doc links to surface on the site (Rust: one per crate; Go: one).
     crates: Vec<CrateDoc>,
-    /// Cargo roots to run `cargo doc` against (a member usually has one).
+    /// Cargo roots to run `cargo doc` against (empty unless this is a Rust member).
     roots: Vec<CargoRoot>,
+    /// Module directory to run `go doc` against, when this is a Go member.
+    go_module: Option<PathBuf>,
 }
 
 /// A Cargo package/workspace root within a member, and where its built docs land.
@@ -638,36 +653,57 @@ struct CargoRoot {
     target_doc: PathBuf,
 }
 
-/// Harvest a member's Cargo facts via `cargo metadata` (fast — no compilation).
-/// A non-Rust member (no `Cargo.toml` anywhere) yields empty facts.
-fn harvest_cargo(member_dir: &Path, label: &str) -> Result<CargoInfo> {
+/// Harvest a member's doc facts. A Rust member is documented with `cargo doc`
+/// (discovered via `cargo metadata` — fast, no compilation); a Go member (a
+/// `go.mod` and no `Cargo.toml`) with `go doc`; anything else gets no API docs.
+fn harvest_docs(member_dir: &Path, label: &str) -> Result<MemberDocs> {
     let manifests = discover_cargo_roots(member_dir);
-    let mut roots = Vec::new();
-    let mut packages = Vec::new();
-    let mut crates = Vec::new();
-
-    for manifest_path in manifests {
-        let metadata = cargo_metadata(&manifest_path)
-            .with_context(|| format!("cargo metadata for {}", manifest_path.display()))?;
-        roots.push(CargoRoot {
-            manifest_path,
-            target_doc: PathBuf::from(&metadata.target_directory).join("doc"),
-        });
-        for package in metadata.packages {
-            if let Some(doc_dir) = primary_doc_dir(&package) {
-                crates.push(CrateDoc {
-                    name: package.name.clone(),
-                    doc_path: format!("/doc/{label}/{doc_dir}/"),
-                });
+    if !manifests.is_empty() {
+        let mut roots = Vec::new();
+        let mut packages = Vec::new();
+        let mut crates = Vec::new();
+        for manifest_path in manifests {
+            let metadata = cargo_metadata(&manifest_path)
+                .with_context(|| format!("cargo metadata for {}", manifest_path.display()))?;
+            roots.push(CargoRoot {
+                manifest_path,
+                target_doc: PathBuf::from(&metadata.target_directory).join("doc"),
+            });
+            for package in metadata.packages {
+                if let Some(doc_dir) = primary_doc_dir(&package) {
+                    crates.push(CrateDoc {
+                        name: package.name.clone(),
+                        doc_path: format!("/doc/{label}/{doc_dir}/"),
+                    });
+                }
+                packages.push(package);
             }
-            packages.push(package);
         }
+        return Ok(MemberDocs {
+            description: choose_description(&packages, label),
+            crates,
+            roots,
+            go_module: None,
+        });
     }
 
-    Ok(CargoInfo {
-        description: choose_description(&packages, label),
-        crates,
-        roots,
+    // A Go module (go.mod, no Cargo.toml) is documented with `go doc`, mounted as
+    // a single page at /doc/<label>/. Its description comes from deploy.toml.
+    if member_dir.join("go.mod").is_file() {
+        let module = go_module_name(member_dir).unwrap_or_else(|| label.to_owned());
+        return Ok(MemberDocs {
+            description: String::new(),
+            crates: vec![CrateDoc { name: module, doc_path: format!("/doc/{label}/") }],
+            roots: Vec::new(),
+            go_module: Some(member_dir.to_path_buf()),
+        });
+    }
+
+    Ok(MemberDocs {
+        description: String::new(),
+        crates: Vec::new(),
+        roots: Vec::new(),
+        go_module: None,
     })
 }
 
@@ -759,6 +795,117 @@ fn build_rustdoc(manifest_path: &Path) -> Result<()> {
         bail!("cargo doc exited with {status}");
     }
     Ok(())
+}
+
+// ── Go docs ─────────────────────────────────────────────────────────────────
+//
+// rustdoc has no Go equivalent that emits a static site, so we render `go doc`
+// (which ships with the Go toolchain — no extra tooling) into one self-contained
+// HTML page per repo. It's text-based rather than navigable like rustdoc, but
+// honest and dependency-free, and the monospace styling fits the fleet's look.
+
+/// Build a Go module's docs into `dest/index.html` from `go doc -all` over every
+/// package in the module.
+fn build_go_docs(module_dir: &Path, dest: &Path) -> Result<()> {
+    let packages = go_list(module_dir)?;
+    if packages.is_empty() {
+        bail!("no Go packages found in {}", module_dir.display());
+    }
+    let module = go_module_name(module_dir).unwrap_or_else(|| "package".to_owned());
+    let mut sections = String::new();
+    for package in &packages {
+        let text = go_doc(module_dir, package)?;
+        let text = text.trim();
+        // A `main` package (a binary) exports nothing, so `go doc` is empty —
+        // skip it rather than render a header over a blank block.
+        if text.is_empty() {
+            continue;
+        }
+        sections.push_str(&format!(
+            "<section><h2>{}</h2><pre>{}</pre></section>\n",
+            html_escape(package),
+            html_escape(text),
+        ));
+    }
+    if sections.is_empty() {
+        bail!("no documentable Go packages in {}", module_dir.display());
+    }
+    std::fs::create_dir_all(dest).with_context(|| format!("creating {}", dest.display()))?;
+    std::fs::write(dest.join("index.html"), go_doc_html(&module, &sections))
+        .with_context(|| format!("writing {}", dest.join("index.html").display()))
+}
+
+/// The import paths of every package in the module (`go list ./...`).
+fn go_list(module_dir: &Path) -> Result<Vec<String>> {
+    let output = Command::new("go")
+        .args(["list", "./..."])
+        .current_dir(module_dir)
+        .output()
+        .context("spawning go list")?;
+    if !output.status.success() {
+        bail!("go list failed: {}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+/// The full doc text for one package (`go doc -all <pkg>`).
+fn go_doc(module_dir: &Path, package: &str) -> Result<String> {
+    let output = Command::new("go")
+        .args(["doc", "-all", package])
+        .current_dir(module_dir)
+        .output()
+        .context("spawning go doc")?;
+    if !output.status.success() {
+        bail!("go doc failed for {package}: {}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// The module path from a `go.mod`'s `module` line.
+fn go_module_name(module_dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(module_dir.join("go.mod")).ok()?;
+    text.lines()
+        .find_map(|l| l.strip_prefix("module "))
+        .map(|s| s.trim().to_owned())
+}
+
+/// Escape text for safe inclusion in HTML.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Wrap the rendered package sections in a self-contained dark, monospace page
+/// (the fleet's DG-001 palette, inlined since this isn't part of the React app).
+fn go_doc_html(module: &str, sections: &str) -> String {
+    format!(
+        r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{module} — Go docs</title>
+<style>
+  :root {{ color-scheme: dark; }}
+  body {{ margin:0; background:#0b0c0d; color:#e6e4dd;
+    font-family:"Berkeley Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+    font-size:13px; line-height:1.5; }}
+  .wrap {{ max-width:980px; margin:0 auto; padding:2rem 1.5rem; }}
+  header {{ border-bottom:1px solid #2a2b2d; padding-bottom:1rem; margin-bottom:1.5rem; }}
+  h1 {{ font-size:1.4rem; margin:0; color:#f08c00; }}
+  .sub {{ color:#6a675f; font-size:12px; margin-top:.3rem; }}
+  section {{ border:1px solid #2a2b2d; background:#121315; margin-bottom:1rem; }}
+  h2 {{ font-size:13px; margin:0; padding:.5rem .75rem; background:#16181a;
+    border-bottom:1px solid #2a2b2d; color:#9a978d; font-weight:600; }}
+  pre {{ margin:0; padding:.75rem; overflow-x:auto; white-space:pre-wrap; }}
+</style></head>
+<body><div class="wrap">
+<header><h1>{module}</h1><div class="sub">Go package documentation · generated by `go doc`</div></header>
+{sections}</div></body></html>
+"#
+    )
 }
 
 /// Recursively copy `src`'s contents into `dst` (created if missing).
