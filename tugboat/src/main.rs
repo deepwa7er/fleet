@@ -8,6 +8,7 @@
 //! `tugboat fleet …` operates on the whole suite at once (clone, pull, deploy,
 //! status), driven by a `fleet.toml` that lists the member repos.
 
+mod agent;
 mod deploy;
 mod docs;
 mod fleet;
@@ -43,6 +44,8 @@ enum Command {
     Deploy(DeployArgs),
     /// Operate on the whole fleet (driven by `fleet.toml`).
     Fleet(FleetArgs),
+    /// Deploy a per-user daemon (launchd / systemd-user) to dev machines.
+    Agent(AgentArgs),
     /// Run the HTTP deploy daemon (drives the fleet's deploys from another host).
     Serve(ServeArgs),
     /// Rebuild tugboat and roll it into the local `serve` launchd agent.
@@ -114,6 +117,31 @@ struct VersionArgs {
     /// Emit the build identity as JSON instead of a human-readable line.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Parser)]
+struct AgentArgs {
+    #[command(subcommand)]
+    action: AgentAction,
+}
+
+#[derive(Subcommand)]
+enum AgentAction {
+    /// Build and install the agent on each target machine.
+    Deploy(AgentDeployArgs),
+}
+
+#[derive(Parser)]
+struct AgentDeployArgs {
+    /// Path to the agent manifest.
+    #[arg(long, default_value = "agent.toml")]
+    manifest: PathBuf,
+    /// Restrict to a comma-separated set of target names.
+    #[arg(long)]
+    only: Option<String>,
+    /// Print the plan and exit without building or installing.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Parser)]
@@ -213,6 +241,9 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Deploy(args) => run_deploy(args),
         Command::Fleet(args) => run_fleet(args),
+        Command::Agent(args) => match args.action {
+            AgentAction::Deploy(d) => agent::deploy(&d.manifest, d.only.as_deref(), d.dry_run),
+        },
         Command::Serve(args) => serve::run(serve::ServeArgs {
             bind: args.bind,
             port: args.port,

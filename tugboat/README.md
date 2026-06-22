@@ -289,6 +289,52 @@ tugboat fleet hooks install  # wire the commit hooks to the daemon
 The daemon's catch-up runs the first build on startup, so the site comes current
 on its own once the agent is up.
 
+## Agent deploys (dev-machine daemons)
+
+`tugboat agent deploy` installs a small **per-user daemon onto the dev machines
+themselves** — a launchd login agent on macOS, a `systemd --user` unit on Linux —
+rather than a root systemd service on the VPS. tidepool's clipboard daemon
+(`tidepool-clipd`) is the first user: it runs on the Mac and the Fedora desktop.
+
+The pure-Go binary cross-compiles for each target from wherever tugboat runs, is
+shipped (a local atomic install, or rsync over SSH), and the agent/unit is
+restarted. No health-check / rollback / ledger — these are trivially restartable
+user daemons, not the VPS's load-bearing services.
+
+```sh
+tugboat agent deploy                 # build + install on every target
+tugboat agent deploy --only desktop  # one target
+tugboat agent deploy --dry-run       # print the plan
+```
+
+Driven by an `agent.toml` in the daemon's repo:
+
+```toml
+name  = "tidepool-clipd"
+build = "GOOS={goos} GOARCH={goarch} CGO_ENABLED=0 go build -o {out} ./cmd/tidepool-clipd"
+
+[[targets]]
+name = "mac"
+local = true                          # build + install on this machine
+goos = "darwin"
+goarch = "arm64"
+dest = "~/.local/bin/tidepool-clipd"
+launchd = "com.deepwa7er.tidepool-clipd"
+
+[[targets]]
+name = "desktop"
+ssh = "deepwater@fedora"              # reached over Tailscale SSH
+goos = "linux"
+goarch = "amd64"
+dest = "~/.local/bin/tidepool-clipd"
+systemd_user = "tidepool-clipd"
+```
+
+Each target is `local = true` (built + installed here) or `ssh = "user@host"`
+(rsync'd over SSH); it restarts via `launchd = "<label>"` or
+`systemd_user = "<unit>"`. `{goos}`/`{goarch}` choose the build platform and
+`{out}` is the binary path tugboat provides.
+
 ## The manifest
 
 `deploy.toml` (committed) describes the deploy. An optional, untracked
