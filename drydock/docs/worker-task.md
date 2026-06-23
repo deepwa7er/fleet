@@ -6,8 +6,10 @@ iteration. Set the interval to taste (e.g. every 20–30 min).
 
 Prerequisites on the Mac:
 
-- `drydock serve` is running (the daemon) and reachable at `DRYDOCK_ADDR`.
-- `drydock` is on `PATH` (`cargo install --path .`).
+- `drydock` CLI on `PATH` (`cargo install --path .`), with
+  `DRYDOCK_URL=https://drydock.internal.deepwa7er.com` in the task environment.
+  The server itself runs on the VPS (see the repo README) — nothing to start here.
+- The Mac is on the tailnet (so the VPS host resolves and is reachable).
 - `gh` is authenticated; the fleet repos and `~/secondbrain/PORTFOLIO.md` exist.
 
 ---

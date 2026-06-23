@@ -15,8 +15,16 @@ You (browser / phone)  ──HTTP───┘        (single writer)
 ```
 
 `drydock serve` is the only writer to SQLite. Every CLI subcommand is a thin
-HTTP client over the local server, which keeps writes serialized and lets the
-web view reflect worker activity live (polled).
+HTTP client over the server, which keeps writes serialized and lets the web view
+reflect worker activity live (polled).
+
+**Where it runs.** The server is a fleet service on the **VPS** (`deepwa7er`),
+deployed with tugboat and fronted by breakwater at
+`https://drydock.internal.deepwa7er.com`. The SQLite DB lives in `/var/lib/drydock`
+(backed up to R2 by fleet-backup). The **worker** runs on the **Mac** (Claude
+Desktop local scheduled task) and reaches the server over the tailnet by setting
+`DRYDOCK_URL=https://drydock.internal.deepwa7er.com`. Only the worker's progress
+depends on the Mac being awake — the ticket store and web view are always up.
 
 ## Ticket lifecycle
 
@@ -53,15 +61,28 @@ drydock serve
 
 Configuration (environment):
 
-| Var                  | Default                            | Meaning                                   |
-| -------------------- | ---------------------------------- | ----------------------------------------- |
-| `DRYDOCK_DB`         | `$XDG_DATA_HOME/drydock/drydock.db`| SQLite database path                      |
-| `DRYDOCK_ADDR`       | `127.0.0.1:7878`                   | listen address (also used by the CLI)     |
-| `DRYDOCK_WEB_DIR`    | `web/dist`                         | built web bundle to serve                 |
-| `DRYDOCK_STALE_HOURS`| `3`                                | reclaim in-progress tickets older than    |
+| Var                  | Default                            | Used by | Meaning                                |
+| -------------------- | ---------------------------------- | ------- | -------------------------------------- |
+| `DRYDOCK_DB`         | `$XDG_DATA_HOME/drydock/drydock.db`| server  | SQLite database path                   |
+| `DRYDOCK_ADDR`       | `127.0.0.1:8093`                   | server  | listen (bind) address                  |
+| `DRYDOCK_WEB_DIR`    | `web/dist`                         | server  | built web bundle to serve              |
+| `DRYDOCK_STALE_HOURS`| `3`                                | server  | reclaim in-progress tickets older than |
+| `DRYDOCK_URL`        | `http://127.0.0.1:8093`            | CLI     | base URL the CLI talks to              |
 
-The web view is at `http://127.0.0.1:7878/`. To reach it from your phone later,
-front it with breakwater at e.g. `drydock.internal.deepwa7er.com`.
+On the VPS these are set in `deploy/drydock.service`. The worker on the Mac sets
+`DRYDOCK_URL=https://drydock.internal.deepwa7er.com`.
+
+## Deploy (VPS)
+
+```sh
+# one-time / on unit change: service user, web dir, systemd unit
+bash deploy/provision.sh
+# routine: build web + musl binary, ship both, restart
+tugboat deploy
+```
+
+Then add a breakwater route (`drydock.internal.deepwa7er.com` →
+`127.0.0.1:8093`) in `breakwater.toml` and `tugboat deploy` breakwater.
 
 ## Worker CLI (what the scheduled task calls)
 

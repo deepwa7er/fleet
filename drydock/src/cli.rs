@@ -42,9 +42,12 @@ impl fmt::Display for CliError {
 
 impl Client {
     pub fn from_env() -> Self {
-        let addr = std::env::var("DRYDOCK_ADDR").unwrap_or_else(|_| "127.0.0.1:7878".into());
+        // Full base URL so the worker can point at the VPS through breakwater,
+        // e.g. DRYDOCK_URL=https://drydock.internal.deepwa7er.com. Defaults to a
+        // local server for development on the same machine.
+        let base = std::env::var("DRYDOCK_URL").unwrap_or_else(|_| "http://127.0.0.1:8093".into());
         Client {
-            base: format!("http://{addr}"),
+            base: base.trim_end_matches('/').to_string(),
         }
     }
 

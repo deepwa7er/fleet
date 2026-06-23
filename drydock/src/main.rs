@@ -108,7 +108,7 @@ fn run_serve() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("database at {}", db_path.display());
 
     let config = server::ServerConfig {
-        addr: env_or("DRYDOCK_ADDR", "127.0.0.1:7878").parse::<SocketAddr>()?,
+        addr: env_or("DRYDOCK_ADDR", "127.0.0.1:8093").parse::<SocketAddr>()?,
         web_dir: PathBuf::from(env_or("DRYDOCK_WEB_DIR", "web/dist")),
         stale_hours: env_or("DRYDOCK_STALE_HOURS", "3").parse()?,
     };

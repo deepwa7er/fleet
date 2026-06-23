@@ -1,0 +1,32 @@
+# tugboat deploy manifest — github.com/deepwa7er/tugboat
+#   deploy:  tugboat deploy      (from this directory)
+#
+# Routine deploy: build the web bundle (bun) and a static musl binary locally,
+# then ship the binary and the built web assets. Infra provisioning (service
+# user, systemd unit, state dir) is deploy/provision.sh — a one-time/on-change
+# step, not run here. drydock binds loopback; breakwater fronts it at
+# https://drydock.internal.deepwa7er.com (add the route in breakwater.toml).
+name = "drydock"
+host = "deepwa7er"
+
+[build]
+# Frontend (bun) then a static musl cross-compile. Unlike the pure-Rust services,
+# drydock bundles SQLite's C source via rusqlite, so the cross C-compiler/archiver
+# are wired up alongside the linker.
+cmd = "(cd web && bun install && bun run build) && (rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true) && CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc AR_x86_64_unknown_linux_musl=x86_64-linux-musl-ar CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --target x86_64-unknown-linux-musl"
+
+[[artifacts]]
+src = "target/x86_64-unknown-linux-musl/release/drydock"
+dest = "/usr/local/bin/drydock"
+
+[[artifacts]]
+kind = "dir"
+src = "web/dist"
+dest = "/opt/drydock/web"
+
+# drydock binds loopback (see deploy/drydock.service), so health is the unit's
+# active state. (default health = `systemctl is-active drydock`)
+
+[lighthouse]
+# Monitor drydock from the fleet dashboard (status + logs).
+enroll = true
