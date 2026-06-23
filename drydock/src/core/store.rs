@@ -1,0 +1,554 @@
+//! All SQLite access. The binary is the single writer, so one `Connection`
+//! behind a `Mutex` is sufficient and trivially correct. Every state change
+//! runs inside a transaction and is guarded by `core::state` transitions.
+
+use std::path::Path;
+use std::str::FromStr;
+use std::sync::Mutex;
+
+use chrono::{Duration, SecondsFormat, Utc};
+use rusqlite::types::Type;
+use rusqlite::{params, Connection, OptionalExtension, Row};
+
+use super::model::*;
+use super::state::{self, Transition};
+use crate::error::{Error, Result};
+
+const TICKET_COLS: &str = "id, title, type, target, state, priority, goal, \
+                           acceptance, constraints, branch, pr_url, created_at, updated_at";
+
+pub struct Store {
+    conn: Mutex<Connection>,
+}
+
+/// Fields supplied by a human creating a ticket.
+pub struct NewTicket {
+    pub title: String,
+    pub target: String,
+    pub priority: Priority,
+    pub goal: String,
+    pub acceptance: Option<String>,
+    pub constraints: Option<String>,
+}
+
+fn now() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+/// Parse a TEXT column into a string-backed enum, surfacing a precise SQLite
+/// conversion error rather than panicking if the DB ever holds a bad value.
+fn parse_col<T: FromStr<Err = String>>(s: &str, col: usize) -> rusqlite::Result<T> {
+    T::from_str(s).map_err(|msg| {
+        rusqlite::Error::FromSqlConversionFailure(
+            col,
+            Type::Text,
+            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, msg)),
+        )
+    })
+}
+
+fn ticket_from_row(row: &Row) -> rusqlite::Result<Ticket> {
+    Ok(Ticket {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        ticket_type: parse_col(&row.get::<_, String>(2)?, 2)?,
+        target: row.get(3)?,
+        state: parse_col(&row.get::<_, String>(4)?, 4)?,
+        priority: parse_col(&row.get::<_, String>(5)?, 5)?,
+        goal: row.get(6)?,
+        acceptance: row.get(7)?,
+        constraints: row.get(8)?,
+        branch: row.get(9)?,
+        pr_url: row.get(10)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+    })
+}
+
+fn load_ticket(conn: &Connection, id: i64) -> Result<Ticket> {
+    conn.query_row(
+        &format!("SELECT {TICKET_COLS} FROM tickets WHERE id = ?1"),
+        [id],
+        ticket_from_row,
+    )
+    .optional()?
+    .ok_or(Error::NotFound(id))
+}
+
+impl Store {
+    /// Open (creating if needed) the database at `path` and apply the schema.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let conn = Connection::open(path)?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.execute_batch(include_str!("../../migrations/001_init.sql"))?;
+        Ok(Store {
+            conn: Mutex::new(conn),
+        })
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().expect("store mutex poisoned")
+    }
+
+    // ---- creation & reads -------------------------------------------------
+
+    pub fn create(&self, input: NewTicket) -> Result<Ticket> {
+        let mut conn = self.lock();
+        let now = now();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO tickets
+               (title, type, target, state, priority, goal, acceptance, constraints, created_at, updated_at)
+             VALUES (?1, 'feature', ?2, 'open', ?3, ?4, ?5, ?6, ?7, ?7)",
+            params![
+                input.title,
+                input.target,
+                input.priority.as_str(),
+                input.goal,
+                input.acceptance,
+                input.constraints,
+                now,
+            ],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO events (ticket_id, from_state, to_state, actor, detail, created_at)
+             VALUES (?1, NULL, 'open', 'human', 'created', ?2)",
+            params![id, now],
+        )?;
+        let ticket = load_ticket(&tx, id)?;
+        tx.commit()?;
+        Ok(ticket)
+    }
+
+    pub fn list(&self, state: Option<State>) -> Result<Vec<Ticket>> {
+        let conn = self.lock();
+        let sql = format!(
+            "SELECT {TICKET_COLS} FROM tickets
+             WHERE (?1 IS NULL OR state = ?1)
+             ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'med' THEN 1 ELSE 2 END,
+                      created_at ASC, id ASC",
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params![state.map(|s| s.as_str())], ticket_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn detail(&self, id: i64) -> Result<TicketDetail> {
+        let conn = self.lock();
+        let ticket = load_ticket(&conn, id)?;
+
+        let mut cstmt = conn.prepare(
+            "SELECT id, ticket_id, author, kind, body, created_at
+             FROM comments WHERE ticket_id = ?1 ORDER BY id ASC",
+        )?;
+        let comments = cstmt
+            .query_map([id], |r| {
+                Ok(Comment {
+                    id: r.get(0)?,
+                    ticket_id: r.get(1)?,
+                    author: parse_col(&r.get::<_, String>(2)?, 2)?,
+                    kind: parse_col(&r.get::<_, String>(3)?, 3)?,
+                    body: r.get(4)?,
+                    created_at: r.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut estmt = conn.prepare(
+            "SELECT id, ticket_id, from_state, to_state, actor, detail, created_at
+             FROM events WHERE ticket_id = ?1 ORDER BY id ASC",
+        )?;
+        let events = estmt
+            .query_map([id], |r| {
+                let from: Option<String> = r.get(2)?;
+                Ok(Event {
+                    id: r.get(0)?,
+                    ticket_id: r.get(1)?,
+                    from_state: from.as_deref().map(|s| parse_col(s, 2)).transpose()?,
+                    to_state: parse_col(&r.get::<_, String>(3)?, 3)?,
+                    actor: parse_col(&r.get::<_, String>(4)?, 4)?,
+                    detail: r.get(5)?,
+                    created_at: r.get(6)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        Ok(TicketDetail {
+            ticket,
+            comments,
+            events,
+        })
+    }
+
+    /// The worker's selection: reclaim stale claims, then return the
+    /// highest-priority, oldest `open` ticket (without claiming it).
+    pub fn next(&self, stale_after_hours: i64) -> Result<Option<Ticket>> {
+        let mut conn = self.lock();
+        let now = now();
+        let cutoff =
+            (Utc::now() - Duration::hours(stale_after_hours)).to_rfc3339_opts(SecondsFormat::Secs, true);
+        let tx = conn.transaction()?;
+
+        // Reclaim: any in-progress ticket not touched since the cutoff is
+        // assumed to be a crashed run and returned to the pool. The state
+        // strings come from the RECLAIM transition so they stay in one place.
+        let reclaim = &state::RECLAIM;
+        let stale: Vec<i64> = {
+            let mut s = tx.prepare(
+                "SELECT id FROM tickets WHERE state = ?1 AND updated_at < ?2",
+            )?;
+            let ids = s
+                .query_map(params![reclaim.from.as_str(), &cutoff], |r| r.get(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            ids
+        };
+        for id in stale {
+            tx.execute(
+                "UPDATE tickets SET state = ?1, updated_at = ?2 WHERE id = ?3",
+                params![reclaim.to.as_str(), now, id],
+            )?;
+            tx.execute(
+                "INSERT INTO events (ticket_id, from_state, to_state, actor, detail, created_at)
+                 VALUES (?1, ?2, ?3, 'worker', 'reclaimed stale claim', ?4)",
+                params![id, reclaim.from.as_str(), reclaim.to.as_str(), now],
+            )?;
+        }
+
+        let next = tx
+            .query_row(
+                &format!(
+                    "SELECT {TICKET_COLS} FROM tickets WHERE state = 'open'
+                     ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'med' THEN 1 ELSE 2 END,
+                              created_at ASC, id ASC
+                     LIMIT 1"
+                ),
+                [],
+                ticket_from_row,
+            )
+            .optional()?;
+        tx.commit()?;
+        Ok(next)
+    }
+
+    // ---- state transitions -----------------------------------------------
+
+    /// Apply a single legal transition atomically: guard the current state,
+    /// update the row, append an optional comment, and record the event.
+    fn transition(
+        &self,
+        id: i64,
+        t: &Transition,
+        actor: Author,
+        comment: Option<(CommentKind, &str)>,
+        branch: Option<&str>,
+        pr_url: Option<&str>,
+        detail: Option<&str>,
+    ) -> Result<Ticket> {
+        let mut conn = self.lock();
+        let now = now();
+        let tx = conn.transaction()?;
+
+        let changed = tx.execute(
+            "UPDATE tickets
+               SET state = ?1,
+                   updated_at = ?2,
+                   branch = COALESCE(?3, branch),
+                   pr_url = COALESCE(?4, pr_url)
+             WHERE id = ?5 AND state = ?6",
+            params![t.to.as_str(), now, branch, pr_url, id, t.from.as_str()],
+        )?;
+
+        if changed == 0 {
+            // Distinguish "no such ticket" from "wrong state".
+            let actual: Option<String> = tx
+                .query_row("SELECT state FROM tickets WHERE id = ?1", [id], |r| r.get(0))
+                .optional()?;
+            return match actual {
+                None => Err(Error::NotFound(id)),
+                Some(s) => Err(Error::InvalidTransition {
+                    id,
+                    action: t.action,
+                    required: t.from,
+                    actual: State::from_str(&s).unwrap_or(t.from),
+                }),
+            };
+        }
+
+        if let Some((kind, body)) = comment {
+            tx.execute(
+                "INSERT INTO comments (ticket_id, author, kind, body, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id, actor.as_str(), kind.as_str(), body, now],
+            )?;
+        }
+        tx.execute(
+            "INSERT INTO events (ticket_id, from_state, to_state, actor, detail, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, t.from.as_str(), t.to.as_str(), actor.as_str(), detail, now],
+        )?;
+
+        let ticket = load_ticket(&tx, id)?;
+        tx.commit()?;
+        Ok(ticket)
+    }
+
+    // Worker actions.
+
+    pub fn claim(&self, id: i64, branch: &str) -> Result<Ticket> {
+        match self.transition(id, &state::CLAIM, Author::Worker, None, Some(branch), None, None) {
+            // A ticket already in-progress means someone else grabbed it first.
+            Err(Error::InvalidTransition {
+                actual: State::InProgress,
+                ..
+            }) => Err(Error::Conflict(id)),
+            other => other,
+        }
+    }
+
+    pub fn needs_input(&self, id: i64, question: &str) -> Result<Ticket> {
+        self.transition(
+            id,
+            &state::NEEDS_INPUT,
+            Author::Worker,
+            Some((CommentKind::Question, question)),
+            None,
+            None,
+            None,
+        )
+    }
+
+    pub fn block(&self, id: i64, reason: &str) -> Result<Ticket> {
+        self.transition(
+            id,
+            &state::BLOCK,
+            Author::Worker,
+            Some((CommentKind::Note, reason)),
+            None,
+            None,
+            None,
+        )
+    }
+
+    pub fn resolve(&self, id: i64, pr_url: &str) -> Result<Ticket> {
+        let note = format!("Opened PR: {pr_url}");
+        self.transition(
+            id,
+            &state::RESOLVE,
+            Author::Worker,
+            Some((CommentKind::Note, &note)),
+            None,
+            Some(pr_url),
+            None,
+        )
+    }
+
+    // Human actions.
+
+    pub fn answer(&self, id: i64, body: &str) -> Result<Ticket> {
+        self.transition(
+            id,
+            &state::ANSWER,
+            Author::Human,
+            Some((CommentKind::Answer, body)),
+            None,
+            None,
+            None,
+        )
+    }
+
+    pub fn unblock(&self, id: i64, note: Option<&str>) -> Result<Ticket> {
+        let comment = note.filter(|s| !s.trim().is_empty()).map(|s| (CommentKind::Note, s));
+        self.transition(id, &state::UNBLOCK, Author::Human, comment, None, None, None)
+    }
+
+    pub fn mark_done(&self, id: i64) -> Result<Ticket> {
+        self.transition(id, &state::MARK_DONE, Author::Human, None, None, None, None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::model::{Author, CommentKind, Priority, State};
+
+    fn store() -> Store {
+        Store::open(":memory:").expect("open in-memory store")
+    }
+
+    fn mk(s: &Store, title: &str, priority: Priority) -> Ticket {
+        s.create(NewTicket {
+            title: title.into(),
+            target: "svc".into(),
+            priority,
+            goal: "goal".into(),
+            acceptance: None,
+            constraints: None,
+        })
+        .expect("create")
+    }
+
+    #[test]
+    fn create_starts_open_with_creation_event() {
+        let s = store();
+        let t = mk(&s, "a", Priority::Med);
+        assert_eq!(t.state, State::Open);
+        assert!(t.branch.is_none() && t.pr_url.is_none());
+
+        let d = s.detail(t.id).unwrap();
+        assert_eq!(d.events.len(), 1);
+        assert_eq!(d.events[0].from_state, None);
+        assert_eq!(d.events[0].to_state, State::Open);
+        assert_eq!(d.events[0].actor, Author::Human);
+    }
+
+    #[test]
+    fn detail_not_found() {
+        let s = store();
+        assert!(matches!(s.detail(999), Err(Error::NotFound(999))));
+    }
+
+    #[test]
+    fn next_orders_by_priority_then_age() {
+        let s = store();
+        let _low = mk(&s, "low", Priority::Low);
+        let med1 = mk(&s, "med1", Priority::Med);
+        let _med2 = mk(&s, "med2", Priority::Med);
+        let high = mk(&s, "high", Priority::High);
+
+        // Highest priority wins regardless of creation order.
+        assert_eq!(s.next(3).unwrap().unwrap().id, high.id);
+        // With the high one claimed, the older of the two med tickets is next
+        // (low priority loses; id tiebreaker makes age deterministic).
+        s.claim(high.id, "b").unwrap();
+        assert_eq!(s.next(3).unwrap().unwrap().id, med1.id);
+    }
+
+    #[test]
+    fn next_is_none_when_no_open_tickets() {
+        let s = store();
+        assert!(s.next(3).unwrap().is_none());
+        let t = mk(&s, "a", Priority::Med);
+        s.claim(t.id, "b").unwrap();
+        // Only ticket is in-progress and not stale → nothing to hand out.
+        assert!(s.next(3).unwrap().is_none());
+    }
+
+    #[test]
+    fn claim_is_compare_and_swap() {
+        let s = store();
+        let t = mk(&s, "a", Priority::Med);
+
+        let claimed = s.claim(t.id, "ticket/1-a").unwrap();
+        assert_eq!(claimed.state, State::InProgress);
+        assert_eq!(claimed.branch.as_deref(), Some("ticket/1-a"));
+
+        // Second claim loses the race.
+        assert!(matches!(s.claim(t.id, "x"), Err(Error::Conflict(_))));
+        // Claiming a non-existent ticket is NotFound, not Conflict.
+        assert!(matches!(s.claim(404, "x"), Err(Error::NotFound(404))));
+    }
+
+    #[test]
+    fn happy_path_to_done() {
+        let s = store();
+        let t = mk(&s, "a", Priority::High);
+        s.claim(t.id, "ticket/1-a").unwrap();
+        let resolved = s.resolve(t.id, "https://example/pr/1").unwrap();
+        assert_eq!(resolved.state, State::InReview);
+        assert_eq!(resolved.pr_url.as_deref(), Some("https://example/pr/1"));
+        let done = s.mark_done(t.id).unwrap();
+        assert_eq!(done.state, State::Done);
+    }
+
+    #[test]
+    fn transitions_require_correct_source_state() {
+        let s = store();
+        let t = mk(&s, "a", Priority::Med);
+        // Can't ask for input on an unclaimed (open) ticket.
+        assert!(matches!(
+            s.needs_input(t.id, "?"),
+            Err(Error::InvalidTransition { .. })
+        ));
+        // Can't mark done before review.
+        assert!(matches!(
+            s.mark_done(t.id),
+            Err(Error::InvalidTransition { .. })
+        ));
+        // Can't resolve before claiming.
+        assert!(matches!(
+            s.resolve(t.id, "pr"),
+            Err(Error::InvalidTransition { .. })
+        ));
+    }
+
+    #[test]
+    fn answer_resurfaces_parked_ticket() {
+        let s = store();
+        let t = mk(&s, "a", Priority::Med);
+        s.claim(t.id, "b").unwrap();
+        let parked = s.needs_input(t.id, "Global or per-route?").unwrap();
+        assert_eq!(parked.state, State::NeedsInput);
+        // While parked it is not handed out as the next ticket.
+        assert!(s.next(3).unwrap().is_none());
+
+        let answered = s.answer(t.id, "Per-route.").unwrap();
+        assert_eq!(answered.state, State::Open);
+        // Now it is selectable again.
+        assert_eq!(s.next(3).unwrap().unwrap().id, t.id);
+
+        // The thread carries both the question and the answer.
+        let d = s.detail(t.id).unwrap();
+        let kinds: Vec<_> = d.comments.iter().map(|c| c.kind).collect();
+        assert_eq!(kinds, vec![CommentKind::Question, CommentKind::Answer]);
+    }
+
+    #[test]
+    fn block_then_unblock() {
+        let s = store();
+        let t = mk(&s, "a", Priority::Med);
+        s.claim(t.id, "b").unwrap();
+        assert_eq!(s.block(t.id, "needs a new API").unwrap().state, State::Blocked);
+        assert!(s.next(3).unwrap().is_none());
+        assert_eq!(s.unblock(t.id, Some("added the API")).unwrap().state, State::Open);
+    }
+
+    #[test]
+    fn stale_in_progress_is_reclaimed() {
+        let s = store();
+        let t = mk(&s, "a", Priority::Med);
+        s.claim(t.id, "b").unwrap();
+
+        // A negative threshold puts the cutoff in the future, so any in-progress
+        // ticket counts as stale — deterministic stand-in for "claimed long ago".
+        let next = s.next(-1).unwrap().expect("stale ticket reclaimed");
+        assert_eq!(next.id, t.id);
+        assert_eq!(next.state, State::Open);
+
+        let d = s.detail(t.id).unwrap();
+        let reclaim = d
+            .events
+            .iter()
+            .find(|e| e.detail.as_deref() == Some("reclaimed stale claim"))
+            .expect("reclaim event recorded");
+        assert_eq!(reclaim.from_state, Some(State::InProgress));
+        assert_eq!(reclaim.to_state, State::Open);
+    }
+
+    #[test]
+    fn list_filters_by_state() {
+        let s = store();
+        let a = mk(&s, "a", Priority::Med);
+        let _b = mk(&s, "b", Priority::Med);
+        s.claim(a.id, "br").unwrap();
+
+        assert_eq!(s.list(None).unwrap().len(), 2);
+        assert_eq!(s.list(Some(State::Open)).unwrap().len(), 1);
+        let inprog = s.list(Some(State::InProgress)).unwrap();
+        assert_eq!(inprog.len(), 1);
+        assert_eq!(inprog[0].id, a.id);
+    }
+}
