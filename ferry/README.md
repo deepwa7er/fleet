@@ -110,18 +110,30 @@ command. A config entry named `list` shadows the built-in.
 ### Managing commands from the page
 
 The `/commands` page lets you manage shortcuts without editing the file by hand.
-All writes preserve your config's existing comments and formatting, are atomic
-(a crash never truncates the file), and take effect on the next request.
+Each row is one *entry*: a URL together with every command name (alias) that
+points at it. So if both `drift` and `words` map to the same URL, they share a
+row and are managed as a unit. All writes preserve your config's existing
+comments and formatting, are atomic (a crash never truncates the file), and take
+effect on the next request.
 
-- **Add**: enter a URL and one or more names. Space-separate the names to create
-  several aliases for the same URL in one go — e.g. names `mail m gmail` all map
-  to `https://mail.google.com`. Include `{query}` in the URL to make it
-  parameterized. An existing name is overwritten.
-- **Edit**: each row is editable in place. Change the name and/or URL and press
-  *Save*. Renaming onto a *different* existing command is refused so you can't
-  silently clobber another shortcut. (Renaming drops any TOML comment that was
-  attached to that specific line; comments elsewhere are untouched.)
-- **Delete**: the *Delete* button on a row removes it.
+- **Add**: enter a URL and one or more names. List several names to create
+  aliases for the same URL in one go — e.g. names `mail, m, gmail` all map to
+  `https://mail.google.com`. Names may be separated by commas and/or whitespace,
+  so `mail, m` and `mail m` are equivalent. Include `{query}` in the URL to make
+  it parameterized. An existing name is overwritten.
+- **Edit**: each row is editable in place. Change the alias list and/or the URL
+  and press *Save* — adding a name to the list creates a new alias for that
+  entry, removing one deletes that alias. Naming a command that already belongs
+  to a *different* entry is refused so you can't silently clobber another
+  shortcut. (A removed alias loses any TOML comment on its line; aliases that
+  stay keep theirs, and comments elsewhere are untouched.)
+- **Delete**: the *Delete* button removes the whole entry — every alias that
+  points at its URL.
+
+The same form endpoints back programmatic use (`POST /commands`,
+`POST /commands/edit`, `POST /commands/delete`), so a client can manage aliases
+exactly as the page does — `names` is the comma/whitespace-separated list, and
+edit/delete identify the entry by its current URL via the `original_url` field.
 
 Note that anyone who can reach the page can change commands. When ferry is
 shared over a tailnet (see below) that means every device on your tailnet —
