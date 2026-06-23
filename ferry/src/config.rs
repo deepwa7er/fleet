@@ -49,6 +49,39 @@ fn default_port() -> u16 {
     7777
 }
 
+/// A distinct redirect target together with every command name that points at
+/// it. Several names for one URL are aliases; the `/commands` page renders one
+/// row per group so a URL's aliases are edited as a unit rather than drifting
+/// apart. Storage stays flat (one `name = url` line per alias) — grouping is a
+/// presentation concern derived on the fly.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CommandGroup {
+    /// The command names that map to `url`, sorted alphabetically. Always
+    /// non-empty (a group exists only because at least one name targets it).
+    pub names: Vec<String>,
+    pub url: String,
+}
+
+impl Config {
+    /// Group the commands by their target URL. Names within a group are sorted,
+    /// and the groups are ordered by their first (alphabetically smallest)
+    /// name, so the listing is stable and alphabetical.
+    pub fn command_groups(&self) -> Vec<CommandGroup> {
+        // `commands` is a BTreeMap, so names arrive already sorted; pushing them
+        // per URL preserves that order within each group.
+        let mut by_url: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+        for (name, url) in &self.commands {
+            by_url.entry(url).or_default().push(name.clone());
+        }
+        let mut groups: Vec<CommandGroup> = by_url
+            .into_iter()
+            .map(|(url, names)| CommandGroup { names, url: url.to_string() })
+            .collect();
+        groups.sort_by(|a, b| a.names[0].cmp(&b.names[0]));
+        groups
+    }
+}
+
 impl Config {
     pub fn load(path: &Path) -> anyhow::Result<Config> {
         let text = std::fs::read_to_string(path)
@@ -179,6 +212,36 @@ mod tests {
     #[test]
     fn rejects_relative_fallback() {
         assert!(Config::from_toml(r#"fallback = "/search?q={query}""#).is_err());
+    }
+
+    #[test]
+    fn command_groups_collapse_aliases_by_url() {
+        let config = Config::from_toml(
+            r#"
+            fallback = "https://example.com/search?q={query}"
+            [commands]
+            mail = "https://mail.example/"
+            m = "https://mail.example/"
+            gmail = "https://mail.example/"
+            cal = "https://cal.example/"
+            "#,
+        )
+        .unwrap();
+        let groups = config.command_groups();
+        // Three names share one URL → one group; ordered by first name.
+        assert_eq!(
+            groups,
+            vec![
+                CommandGroup {
+                    names: vec!["cal".to_string()],
+                    url: "https://cal.example/".to_string(),
+                },
+                CommandGroup {
+                    names: vec!["gmail".to_string(), "m".to_string(), "mail".to_string()],
+                    url: "https://mail.example/".to_string(),
+                },
+            ],
+        );
     }
 
     #[test]

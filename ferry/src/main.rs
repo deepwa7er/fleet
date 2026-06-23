@@ -53,10 +53,11 @@ impl AppState {
     /// Apply `edit` to the parsed `[commands]` table (created if absent) under
     /// the write lock, then persist atomically — so existing comments and
     /// formatting survive and a reader never sees a partially written file.
-    /// The closure may reject the change with a user-facing message.
-    fn mutate_commands<F>(&self, edit: F) -> Result<(), WriteError>
+    /// The closure may reject the change with a user-facing message, and
+    /// returns a value (e.g. the names it removed) carried back to the caller.
+    fn mutate_commands<F, T>(&self, edit: F) -> Result<T, WriteError>
     where
-        F: FnOnce(&mut toml_edit::Table) -> Result<(), WriteError>,
+        F: FnOnce(&mut toml_edit::Table) -> Result<T, WriteError>,
     {
         let _guard = self
             .write_lock
@@ -75,55 +76,104 @@ impl AppState {
             .as_table_mut()
             .context("`commands` exists but is not a table")?;
 
-        edit(commands)?;
+        let value = edit(commands)?;
 
         write_atomic(&self.config_path, doc.to_string().as_bytes())?;
-        Ok(())
+        Ok(value)
     }
 
     /// Add or overwrite every name, all pointing at the same URL. Several names
     /// for one URL are just several entries — that is how aliases work.
     fn add_commands(&self, names: &[String], url: &str) -> Result<(), WriteError> {
         self.mutate_commands(|commands| {
-            for name in names {
-                commands.insert(name, toml_edit::value(url));
-            }
+            apply_add(commands, names, url);
             Ok(())
         })
     }
 
-    /// Update a command, optionally renaming it. Renaming onto a *different*
-    /// existing command is rejected so an edit can't silently clobber another.
-    fn edit_command(&self, original: &str, name: &str, url: &str) -> Result<(), WriteError> {
+    /// Replace the alias set for the entry currently at `original_url` with
+    /// `names`, all pointing at `url`. See [`apply_edit`] for the exact rules.
+    fn edit_group(&self, original_url: &str, names: &[String], url: &str) -> Result<(), WriteError> {
         self.mutate_commands(|commands| {
-            if !commands.contains_key(original) {
-                return Err(WriteError::Rejected(format!(
-                    "No command named {original:?} to edit — it may have just been removed."
-                )));
-            }
-            if name != original && commands.contains_key(name) {
-                return Err(WriteError::Rejected(format!(
-                    "A command named {name:?} already exists."
-                )));
-            }
-            if name != original {
-                commands.remove(original);
-            }
-            commands.insert(name, toml_edit::value(url));
-            Ok(())
+            apply_edit(commands, original_url, names, url).map_err(WriteError::Rejected)
         })
     }
 
-    /// Remove a command. A missing name is reported rather than silently
-    /// succeeding, so the UI can explain why nothing changed.
-    fn delete_command(&self, name: &str) -> Result<(), WriteError> {
+    /// Remove the whole entry at `original_url`, returning the names removed so
+    /// the UI can confirm exactly what changed. A missing entry is reported
+    /// rather than silently succeeding.
+    fn delete_group(&self, original_url: &str) -> Result<Vec<String>, WriteError> {
         self.mutate_commands(|commands| {
-            if commands.remove(name).is_none() {
-                return Err(WriteError::Rejected(format!("No command named {name:?}.")));
-            }
-            Ok(())
+            apply_delete(commands, original_url).map_err(WriteError::Rejected)
         })
     }
+}
+
+/// The command names that currently point at `url`, in document order.
+fn names_for_url(commands: &toml_edit::Table, url: &str) -> Vec<String> {
+    commands
+        .iter()
+        .filter(|(_, item)| item.as_str() == Some(url))
+        .map(|(key, _)| key.to_string())
+        .collect()
+}
+
+/// Insert every name pointing at `url`, overwriting any existing entry of the
+/// same name (the documented add-form behaviour).
+fn apply_add(commands: &mut toml_edit::Table, names: &[String], url: &str) {
+    for name in names {
+        commands.insert(name, toml_edit::value(url));
+    }
+}
+
+/// Replace the alias set of the entry currently at `original_url` with `names`,
+/// all targeting `url`. Names already in the group keep their TOML line (and any
+/// comment); names that leave the group are removed; new names are inserted.
+/// Rejected — with a user-facing message — when the entry no longer exists, or
+/// when a new name is already used by a *different* entry (so an edit can't
+/// silently clobber another shortcut).
+fn apply_edit(
+    commands: &mut toml_edit::Table,
+    original_url: &str,
+    names: &[String],
+    url: &str,
+) -> Result<(), String> {
+    let old_names = names_for_url(commands, original_url);
+    if old_names.is_empty() {
+        return Err(format!(
+            "No entry for {original_url:?} to edit — it may have just been changed."
+        ));
+    }
+    for name in names {
+        let in_group = old_names.iter().any(|old| old == name);
+        if !in_group && commands.contains_key(name) {
+            return Err(format!("A command named {name:?} already exists."));
+        }
+    }
+    for old in &old_names {
+        if !names.iter().any(|name| name == old) {
+            commands.remove(old);
+        }
+    }
+    // Re-inserting a name that's already present updates its value in place and
+    // preserves its comment; only a dropped name (above) loses its line.
+    for name in names {
+        commands.insert(name, toml_edit::value(url));
+    }
+    Ok(())
+}
+
+/// Remove every name in the entry at `original_url`, returning the removed
+/// names. Rejected when there is no such entry.
+fn apply_delete(commands: &mut toml_edit::Table, original_url: &str) -> Result<Vec<String>, String> {
+    let names = names_for_url(commands, original_url);
+    if names.is_empty() {
+        return Err(format!("No entry for {original_url:?}."));
+    }
+    for name in &names {
+        commands.remove(name);
+    }
+    Ok(names)
 }
 
 /// Replace a file's contents atomically: write a sibling temp file, then rename
@@ -267,6 +317,117 @@ mod tests {
     #[test]
     fn origin_rejects_bogus_scheme() {
         assert_eq!(build_origin(Some("javascript"), None, Some("host")), "http://host");
+    }
+
+    #[test]
+    fn parse_names_accepts_commas_and_whitespace() {
+        let want = vec!["mail".to_string(), "m".to_string()];
+        assert_eq!(parse_names("mail, m"), want);
+        assert_eq!(parse_names("mail m"), want);
+        assert_eq!(parse_names("mail,m"), want);
+        // Stray separators and surrounding noise collapse away.
+        assert_eq!(parse_names("  mail ,, , m  "), want);
+        assert!(parse_names("   ").is_empty());
+        assert!(parse_names(",,").is_empty());
+    }
+
+    /// Apply a table edit to a config and return the resulting `[commands]` map,
+    /// re-parsed through `Config` so the output is proven still valid.
+    fn commands_after(
+        toml: &str,
+        edit: impl FnOnce(&mut toml_edit::Table),
+    ) -> std::collections::BTreeMap<String, String> {
+        let mut doc = toml.parse::<toml_edit::DocumentMut>().unwrap();
+        let table = doc
+            .entry("commands")
+            .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+            .as_table_mut()
+            .unwrap();
+        edit(table);
+        Config::from_toml(&doc.to_string()).unwrap().commands
+    }
+
+    const BASE: &str = r#"
+fallback = "https://search.example/?q={query}"
+[commands]
+mail = "https://mail.example/"
+m = "https://mail.example/"
+cal = "https://cal.example/"
+"#;
+
+    #[test]
+    fn add_inserts_every_alias_at_one_url() {
+        let names = ["docs".to_string(), "d".to_string()];
+        let commands = commands_after(BASE, |t| apply_add(t, &names, "https://docs.example/"));
+        assert_eq!(commands["docs"], "https://docs.example/");
+        assert_eq!(commands["d"], "https://docs.example/");
+    }
+
+    #[test]
+    fn edit_adds_an_alias_to_an_existing_entry() {
+        // The mail entry currently has {mail, m}; add `gmail` to it.
+        let names = ["mail".to_string(), "m".to_string(), "gmail".to_string()];
+        let commands = commands_after(BASE, |t| {
+            apply_edit(t, "https://mail.example/", &names, "https://mail.example/").unwrap()
+        });
+        assert_eq!(commands["gmail"], "https://mail.example/");
+        assert_eq!(commands["mail"], "https://mail.example/");
+        assert_eq!(commands["m"], "https://mail.example/");
+        // The unrelated entry is untouched.
+        assert_eq!(commands["cal"], "https://cal.example/");
+    }
+
+    #[test]
+    fn edit_can_drop_an_alias_and_change_the_url_together() {
+        // Replace {mail, m} with just {mail}, pointed at a new URL.
+        let names = ["mail".to_string()];
+        let commands = commands_after(BASE, |t| {
+            apply_edit(t, "https://mail.example/", &names, "https://newmail.example/").unwrap()
+        });
+        assert_eq!(commands["mail"], "https://newmail.example/");
+        assert!(!commands.contains_key("m"), "the dropped alias is gone");
+    }
+
+    #[test]
+    fn edit_rejects_stealing_another_entrys_name() {
+        let names = ["mail".to_string(), "cal".to_string()];
+        let err = commands_after(BASE, |t| {
+            let result = apply_edit(t, "https://mail.example/", &names, "https://mail.example/");
+            assert_eq!(result, Err("A command named \"cal\" already exists.".to_string()));
+        });
+        // Nothing changed: `cal` still points where it did.
+        assert_eq!(err["cal"], "https://cal.example/");
+    }
+
+    #[test]
+    fn edit_rejects_a_vanished_entry() {
+        commands_after(BASE, |t| {
+            let result = apply_edit(t, "https://gone.example/", &["x".to_string()], "https://x.example/");
+            assert!(matches!(result, Err(message) if message.contains("No entry for")));
+        });
+    }
+
+    #[test]
+    fn delete_removes_every_alias_in_the_entry() {
+        let mut removed = Vec::new();
+        let commands = commands_after(BASE, |t| {
+            removed = apply_delete(t, "https://mail.example/").unwrap();
+        });
+        removed.sort();
+        assert_eq!(removed, vec!["m".to_string(), "mail".to_string()]);
+        assert!(!commands.contains_key("mail"));
+        assert!(!commands.contains_key("m"));
+        assert_eq!(commands["cal"], "https://cal.example/");
+    }
+
+    #[test]
+    fn delete_rejects_a_vanished_entry() {
+        commands_after(BASE, |t| {
+            assert_eq!(
+                apply_delete(t, "https://gone.example/"),
+                Err("No entry for \"https://gone.example/\".".to_string()),
+            );
+        });
     }
 }
 
@@ -430,9 +591,33 @@ fn success_notice(query: &CommandsQuery) -> Option<Notice> {
     Some(Notice { error: false, message: format!("{verb} \u{201c}{names}\u{201d}.") })
 }
 
+/// Split a user- or client-entered name list into individual command names,
+/// accepting commas and/or whitespace as separators and dropping empties. The
+/// web form uses a comma-separated list; a programmatic client can use either,
+/// so `"mail, m"`, `"mail m"`, and `"mail,m"` all yield `["mail", "m"]`.
+fn parse_names(raw: &str) -> Vec<String> {
+    raw.split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Validate a parsed name list and its URL together, so the add and edit forms
+/// reject the same bad input with the same messages.
+fn validate_names_and_url(names: &[String], url: &str) -> Result<(), String> {
+    if names.is_empty() {
+        return Err("At least one command name is required.".to_string());
+    }
+    for name in names {
+        validate_command_name(name)?;
+    }
+    validate_command_url(url)
+}
+
 #[derive(Deserialize)]
 struct NewCommand {
-    /// One or more whitespace-separated names, all mapped to the same URL.
+    /// One or more names (comma- and/or whitespace-separated), all mapped to
+    /// the same URL.
     names: String,
     url: String,
 }
@@ -444,24 +629,14 @@ async fn handle_add_command(
 ) -> Response {
     let raw_names = form.names.trim();
     let url = form.url.trim();
-    let names: Vec<String> = raw_names.split_whitespace().map(str::to_string).collect();
+    let names = parse_names(raw_names);
     let entered = || FormValues { names: raw_names.to_string(), url: url.to_string() };
 
-    let validation = (|| {
-        if names.is_empty() {
-            return Err("At least one command name is required.".to_string());
-        }
-        for name in &names {
-            validate_command_name(name)?;
-        }
-        validate_command_url(url)
-    })();
-    if let Err(message) = validation {
+    if let Err(message) = validate_names_and_url(&names, url) {
         return rerender_error(&state, message, entered());
     }
-
     match state.add_commands(&names, url) {
-        Ok(()) => redirect_with("added", &names.join(" ")),
+        Ok(()) => redirect_with("added", &names.join(", ")),
         Err(WriteError::Rejected(message)) => rerender_error(&state, message, entered()),
         Err(WriteError::Internal(err)) => internal_error(err),
     }
@@ -469,26 +644,27 @@ async fn handle_add_command(
 
 #[derive(Deserialize)]
 struct EditCommand {
-    /// The command's current name, used to locate the row being edited.
-    original: String,
-    name: String,
+    /// The entry's current URL, identifying which alias group is being edited.
+    original_url: String,
+    /// The new alias set (comma- and/or whitespace-separated).
+    names: String,
     url: String,
 }
 
-/// Save an edit to one row, renaming the command if `name` changed.
+/// Save an edit to one entry: replace its alias set and/or its URL.
 async fn handle_edit_command(
     State(state): State<Arc<AppState>>,
     Form(form): Form<EditCommand>,
 ) -> Response {
-    let original = form.original.trim();
-    let name = form.name.trim();
+    let original_url = form.original_url.trim();
     let url = form.url.trim();
+    let names = parse_names(form.names.trim());
 
-    if let Err(message) = validate_command_name(name).and_then(|()| validate_command_url(url)) {
+    if let Err(message) = validate_names_and_url(&names, url) {
         return rerender_error(&state, message, FormValues::default());
     }
-    match state.edit_command(original, name, url) {
-        Ok(()) => redirect_with("updated", name),
+    match state.edit_group(original_url, &names, url) {
+        Ok(()) => redirect_with("updated", &names.join(", ")),
         Err(WriteError::Rejected(message)) => rerender_error(&state, message, FormValues::default()),
         Err(WriteError::Internal(err)) => internal_error(err),
     }
@@ -496,19 +672,19 @@ async fn handle_edit_command(
 
 #[derive(Deserialize)]
 struct DeleteCommand {
-    /// The row's name. Named `original` so the per-row form can carry it as a
-    /// hidden field alongside the editable `name`.
-    original: String,
+    /// The entry's URL, carried as a hidden field so Delete can target the same
+    /// alias group the row's Save edits.
+    original_url: String,
 }
 
-/// Delete one row.
+/// Delete one entry — every alias that points at its URL.
 async fn handle_delete_command(
     State(state): State<Arc<AppState>>,
     Form(form): Form<DeleteCommand>,
 ) -> Response {
-    let name = form.original.trim();
-    match state.delete_command(name) {
-        Ok(()) => redirect_with("removed", name),
+    let original_url = form.original_url.trim();
+    match state.delete_group(original_url) {
+        Ok(names) => redirect_with("removed", &names.join(", ")),
         Err(WriteError::Rejected(message)) => rerender_error(&state, message, FormValues::default()),
         Err(WriteError::Internal(err)) => internal_error(err),
     }
@@ -564,34 +740,36 @@ struct FormValues {
 }
 
 fn render_commands_page(config: &Config, notice: Option<&Notice>, form: &FormValues) -> String {
-    // Each row is its own form: Save posts to /commands/edit, while Delete
-    // reuses the same form via `formaction` (and `formnovalidate`, so the
-    // required fields don't block a delete). The hidden `original` lets an edit
-    // rename the command and lets delete target the right row.
+    // One row per entry (a URL with all its aliases), each its own form: Save
+    // posts to /commands/edit, while Delete reuses the same form via
+    // `formaction` (and `formnovalidate`, so the required fields don't block a
+    // delete). The hidden `original_url` identifies which alias group the edit
+    // replaces or the delete removes; the editable `names` field is the
+    // comma-separated alias set.
     let mut rows = String::new();
-    for (name, url) in &config.commands {
-        let name = escape_html(name);
-        let url = escape_html(url);
+    for group in config.command_groups() {
+        let names = escape_html(&group.names.join(", "));
+        let url = escape_html(&group.url);
         rows.push_str(&format!(
             r#"<form class="row" method="post" action="/commands/edit">
-  <input type="hidden" name="original" value="{name}">
-  <input name="name" value="{name}" aria-label="command name" required>
+  <input type="hidden" name="original_url" value="{url}">
+  <input name="names" value="{names}" aria-label="command name(s)" required>
   <input name="url" value="{url}" aria-label="URL" required>
   <button type="submit" class="btn">Save</button>
   <button type="submit" class="btn danger" formaction="/commands/delete" formnovalidate
-    onclick="return confirm('Delete this command?')">Delete</button>
+    onclick="return confirm('Delete this entry?')">Delete</button>
 </form>
 "#
         ));
     }
 
     // The command list is the datasheet: a labeled column header over one row
-    // per command (each row its own form). Empty state is explicit, not blank.
+    // per entry (each row its own form). Empty state is explicit, not blank.
     let table = if config.commands.is_empty() {
         "<p class=\"empty\">No commands yet.</p>\n".to_string()
     } else {
         format!(
-            "<div class=\"cmd-head\"><span>Command</span><span>URL</span><span class=\"act-col\">Actions</span></div>\n{rows}"
+            "<div class=\"cmd-head\"><span>Command(s)</span><span>URL</span><span class=\"act-col\">Actions</span></div>\n{rows}"
         )
     };
 
@@ -606,7 +784,7 @@ fn render_commands_page(config: &Config, notice: Option<&Notice>, form: &FormVal
     let form_html = format!(
         r#"<form class="add" method="post" action="/commands">
   <label class="field"><span class="field-label">Name(s)</span>
-    <input name="names" placeholder="mail m" value="{names}" required autofocus></label>
+    <input name="names" placeholder="mail, m" value="{names}" required autofocus></label>
   <label class="field field--grow"><span class="field-label">URL</span>
     <input name="url" placeholder="https://…  (use {{query}} for arguments)" value="{url}" required></label>
   <button type="submit" class="btn btn--primary">Add</button>
