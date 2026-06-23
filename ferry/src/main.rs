@@ -429,6 +429,57 @@ cal = "https://cal.example/"
             );
         });
     }
+
+    /// A row not being edited is read-only: plain text plus an Edit link, no
+    /// name/URL inputs and no Save/Delete controls for that entry.
+    #[test]
+    fn listing_rows_are_read_only_by_default() {
+        let config = Config::from_toml(BASE).unwrap();
+        let page = render_commands_page(&config, None, &FormValues::default(), None);
+        // The mail entry shows its aliases as text and offers an Edit link.
+        assert!(page.contains(r#"<span class="cell-names">m, mail</span>"#));
+        assert!(page.contains("/commands?edit=https%3A%2F%2Fmail%2Eexample%2F#edit"));
+        // No row is in edit mode, so no Save/Delete controls are present.
+        assert!(!page.contains("class=\"row editing\""));
+        assert!(!page.contains("formaction=\"/commands/delete\""));
+    }
+
+    /// Opening one entry for editing turns only that row into a form (inputs +
+    /// Save/Delete/Cancel); the others stay read-only.
+    #[test]
+    fn editing_one_row_shows_its_form_only() {
+        let config = Config::from_toml(BASE).unwrap();
+        let editing = EditTarget { url: "https://mail.example/".to_string(), values: None };
+        let page = render_commands_page(&config, None, &FormValues::default(), Some(&editing));
+        // The edited row is now a form prefilled from the entry's stored values.
+        assert!(page.contains("class=\"row editing\""));
+        assert!(page.contains(r#"<input type="hidden" name="original_url" value="https://mail.example/">"#));
+        assert!(page.contains(r#"<input name="names" value="m, mail""#));
+        assert!(page.contains("formaction=\"/commands/delete\""));
+        assert!(page.contains(r#"<a class="btn" href="/commands">Cancel</a>"#));
+        // The unrelated `cal` row stays read-only.
+        assert!(page.contains(r#"<span class="cell-names">cal</span>"#));
+    }
+
+    /// Re-rendering after a rejected save refills the edit form with what the
+    /// user typed, not the entry's stored values.
+    #[test]
+    fn editing_with_rejected_input_preserves_what_the_user_typed() {
+        let config = Config::from_toml(BASE).unwrap();
+        let editing = EditTarget {
+            url: "https://mail.example/".to_string(),
+            values: Some(FormValues {
+                names: "mail, m, gmail".to_string(),
+                url: "https://newmail.example/".to_string(),
+            }),
+        };
+        let page = render_commands_page(&config, None, &FormValues::default(), Some(&editing));
+        // Inputs carry the typed (rejected) values...
+        assert!(page.contains(r#"<input name="names" value="mail, m, gmail""#));
+        assert!(page.contains(r#"value="https://newmail.example/""#));
+        // ...while the hidden identity stays the entry's stored URL.
+        assert!(page.contains(r#"<input type="hidden" name="original_url" value="https://mail.example/">"#));
+    }
 }
 
 #[derive(Deserialize)]
@@ -563,6 +614,9 @@ struct CommandsQuery {
     added: Option<String>,
     updated: Option<String>,
     removed: Option<String>,
+    /// The URL of the entry to open in edit mode, set by a row's Edit link.
+    /// Absent on the default (read-only) listing.
+    edit: Option<String>,
 }
 
 async fn handle_commands(
@@ -574,7 +628,16 @@ async fn handle_commands(
         Err(response) => return response,
     };
     let notice = success_notice(&query);
-    Html(render_commands_page(&config, notice.as_ref(), &FormValues::default())).into_response()
+    // An Edit link carries the entry's URL; open that one row for editing,
+    // prefilled from its stored values (`values: None`).
+    let editing = query.edit.map(|url| EditTarget { url, values: None });
+    Html(render_commands_page(
+        &config,
+        notice.as_ref(),
+        &FormValues::default(),
+        editing.as_ref(),
+    ))
+    .into_response()
 }
 
 /// Build the confirmation banner for whichever action just redirected here.
@@ -633,11 +696,11 @@ async fn handle_add_command(
     let entered = || FormValues { names: raw_names.to_string(), url: url.to_string() };
 
     if let Err(message) = validate_names_and_url(&names, url) {
-        return rerender_error(&state, message, entered());
+        return rerender_error(&state, message, entered(), None);
     }
     match state.add_commands(&names, url) {
         Ok(()) => redirect_with("added", &names.join(", ")),
-        Err(WriteError::Rejected(message)) => rerender_error(&state, message, entered()),
+        Err(WriteError::Rejected(message)) => rerender_error(&state, message, entered(), None),
         Err(WriteError::Internal(err)) => internal_error(err),
     }
 }
@@ -657,15 +720,25 @@ async fn handle_edit_command(
     Form(form): Form<EditCommand>,
 ) -> Response {
     let original_url = form.original_url.trim();
+    let raw_names = form.names.trim();
     let url = form.url.trim();
-    let names = parse_names(form.names.trim());
+    let names = parse_names(raw_names);
+    // On rejection, keep this row in edit mode and refill it with what the user
+    // typed, so the correction starts from their input rather than reverting to
+    // the stored values. The row is still identified by its stored URL.
+    let reopen = || EditTarget {
+        url: original_url.to_string(),
+        values: Some(FormValues { names: raw_names.to_string(), url: url.to_string() }),
+    };
 
     if let Err(message) = validate_names_and_url(&names, url) {
-        return rerender_error(&state, message, FormValues::default());
+        return rerender_error(&state, message, FormValues::default(), Some(reopen()));
     }
     match state.edit_group(original_url, &names, url) {
         Ok(()) => redirect_with("updated", &names.join(", ")),
-        Err(WriteError::Rejected(message)) => rerender_error(&state, message, FormValues::default()),
+        Err(WriteError::Rejected(message)) => {
+            rerender_error(&state, message, FormValues::default(), Some(reopen()))
+        }
         Err(WriteError::Internal(err)) => internal_error(err),
     }
 }
@@ -685,7 +758,9 @@ async fn handle_delete_command(
     let original_url = form.original_url.trim();
     match state.delete_group(original_url) {
         Ok(names) => redirect_with("removed", &names.join(", ")),
-        Err(WriteError::Rejected(message)) => rerender_error(&state, message, FormValues::default()),
+        Err(WriteError::Rejected(message)) => {
+            rerender_error(&state, message, FormValues::default(), None)
+        }
         Err(WriteError::Internal(err)) => internal_error(err),
     }
 }
@@ -696,15 +771,27 @@ fn redirect_with(action: &str, names: &str) -> Response {
     Redirect::to(&format!("/commands?{action}={names}")).into_response()
 }
 
-/// Re-render the listing (HTTP 400) with an error banner, preserving any
-/// add-form input the user had typed.
-fn rerender_error(state: &AppState, message: String, values: FormValues) -> Response {
+/// Re-render the listing (HTTP 400) with an error banner. `add_form` preserves
+/// any add-form input the user had typed; `editing` reopens the row that failed
+/// to save (with the rejected input), so a failed edit doesn't drop the user
+/// out of the editor.
+fn rerender_error(
+    state: &AppState,
+    message: String,
+    add_form: FormValues,
+    editing: Option<EditTarget>,
+) -> Response {
     match load_config(state) {
         Ok(config) => {
             let notice = Notice { error: true, message };
             (
                 StatusCode::BAD_REQUEST,
-                Html(render_commands_page(&config, Some(&notice), &values)),
+                Html(render_commands_page(
+                    &config,
+                    Some(&notice),
+                    &add_form,
+                    editing.as_ref(),
+                )),
             )
                 .into_response()
         }
@@ -731,45 +818,91 @@ struct Notice {
     message: String,
 }
 
-/// Values to pre-fill the add form with — empty on a normal view, the rejected
-/// input when re-rendering after a validation error.
+/// Values to pre-fill a name/URL form with — empty on a normal view, the
+/// rejected input when re-rendering after a validation error. Used for both the
+/// add form and (via [`EditTarget`]) an in-progress edit.
 #[derive(Default)]
 struct FormValues {
     names: String,
     url: String,
 }
 
-fn render_commands_page(config: &Config, notice: Option<&Notice>, form: &FormValues) -> String {
-    // One row per entry (a URL with all its aliases), each its own form: Save
-    // posts to /commands/edit, while Delete reuses the same form via
-    // `formaction` (and `formnovalidate`, so the required fields don't block a
-    // delete). The hidden `original_url` identifies which alias group the edit
-    // replaces or the delete removes; the editable `names` field is the
-    // comma-separated alias set.
+/// The single entry the listing should render in edit mode, if any. Identified
+/// by its stored (config) URL. `values` is `None` for a freshly opened editor
+/// (prefill from the entry's current names/URL) or `Some` when re-rendering
+/// after a rejected save (prefill from the user's input so they can correct it).
+struct EditTarget {
+    url: String,
+    values: Option<FormValues>,
+}
+
+fn render_commands_page(
+    config: &Config,
+    notice: Option<&Notice>,
+    add_form: &FormValues,
+    editing: Option<&EditTarget>,
+) -> String {
+    // The command list shows one row per entry (a URL with all its aliases).
+    // A row is read-only by default — names and URL as plain text with an Edit
+    // button — and becomes a form only for the single entry the user chose to
+    // edit, identified by its stored URL. So the inputs and the Save/Delete
+    // controls that mutate state appear only during an explicit edit, never on
+    // every row. Edit is a GET link (`?edit=<url>`); Save posts to
+    // /commands/edit and Delete reuses the same form via `formaction` (and
+    // `formnovalidate`, so the required fields don't block a delete); Cancel
+    // links back to the plain listing. The hidden `original_url` identifies
+    // which alias group the edit replaces or the delete removes.
     let mut rows = String::new();
     for group in config.command_groups() {
-        let names = escape_html(&group.names.join(", "));
         let url = escape_html(&group.url);
-        rows.push_str(&format!(
-            r#"<form class="row" method="post" action="/commands/edit">
+        let editing_this = editing.is_some_and(|target| target.url == group.url);
+        if editing_this {
+            let typed = editing.and_then(|target| target.values.as_ref());
+            let names = match typed {
+                Some(values) => escape_html(&values.names),
+                None => escape_html(&group.names.join(", ")),
+            };
+            let value_url = match typed {
+                Some(values) => escape_html(&values.url),
+                None => url.clone(),
+            };
+            rows.push_str(&format!(
+                r#"<form class="row editing" id="edit" method="post" action="/commands/edit">
   <input type="hidden" name="original_url" value="{url}">
-  <input name="names" value="{names}" aria-label="command name(s)" required>
-  <input name="url" value="{url}" aria-label="URL" required>
-  <button type="submit" class="btn">Save</button>
-  <button type="submit" class="btn danger" formaction="/commands/delete" formnovalidate
-    onclick="return confirm('Delete this entry?')">Delete</button>
+  <input name="names" value="{names}" aria-label="command name(s)" required autofocus>
+  <input name="url" value="{value_url}" aria-label="URL" required>
+  <div class="actions">
+    <button type="submit" class="btn btn--primary">Save</button>
+    <button type="submit" class="btn danger" formaction="/commands/delete" formnovalidate
+      onclick="return confirm('Delete this entry?')">Delete</button>
+    <a class="btn" href="/commands">Cancel</a>
+  </div>
 </form>
 "#
-        ));
+            ));
+        } else {
+            let names = escape_html(&group.names.join(", "));
+            let edit_query = utf8_percent_encode(&group.url, NON_ALPHANUMERIC);
+            rows.push_str(&format!(
+                r#"<div class="row">
+  <span class="cell-names">{names}</span>
+  <span class="cell-url">{url}</span>
+  <div class="actions">
+    <a class="btn" href="/commands?edit={edit_query}#edit">Edit</a>
+  </div>
+</div>
+"#
+            ));
+        }
     }
 
-    // The command list is the datasheet: a labeled column header over one row
-    // per entry (each row its own form). Empty state is explicit, not blank.
+    // The command list is the datasheet: a labeled column header over the rows.
+    // Empty state is explicit, not blank.
     let table = if config.commands.is_empty() {
         "<p class=\"empty\">No commands yet.</p>\n".to_string()
     } else {
         format!(
-            "<div class=\"cmd-head\"><span>Command(s)</span><span>URL</span><span class=\"act-col\">Actions</span></div>\n{rows}"
+            "<div class=\"cmd-head\"><span>Command(s)</span><span>URL</span><span class=\"act-col\">Actions</span></div>\n<div class=\"rows\">\n{rows}</div>\n"
         )
     };
 
@@ -790,8 +923,8 @@ fn render_commands_page(config: &Config, notice: Option<&Notice>, form: &FormVal
   <button type="submit" class="btn btn--primary">Add</button>
 </form>
 "#,
-        names = escape_html(&form.names),
-        url = escape_html(&form.url),
+        names = escape_html(&add_form.names),
+        url = escape_html(&add_form.url),
     );
 
     // Surface the note-capture keyword (configured in the TOML, not via this UI)
@@ -860,6 +993,7 @@ fn render_commands_page(config: &Config, notice: Option<&Notice>, form: &FormVal
     font: inherit; font-size: 13px; padding: var(--s2) var(--s3); cursor: pointer;
     border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink);
     border-radius: 0; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap;
+    display: inline-flex; align-items: center; justify-content: center; text-decoration: none;
   }}
   .btn:hover {{ border-color: var(--ink); }}
   .btn--primary {{ background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }}
@@ -877,11 +1011,15 @@ fn render_commands_page(config: &Config, notice: Option<&Notice>, form: &FormVal
     font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-muted);
   }}
   .cmd-head .act-col {{ text-align: right; }}
-  form.row {{
-    display: grid; grid-template-columns: 12rem 1fr auto auto; gap: var(--s2);
+  .row {{
+    display: grid; grid-template-columns: 12rem 1fr auto; gap: var(--s2);
     align-items: center; padding: var(--s2) 0; border-bottom: 1px solid var(--rule); margin: 0;
   }}
-  form.row:last-of-type {{ border-bottom: none; }}
+  .rows .row:last-child {{ border-bottom: none; }}
+  .row input {{ width: 100%; }}
+  .cell-names {{ word-break: break-word; }}
+  .cell-url {{ color: var(--ink-muted); word-break: break-all; }}
+  .actions {{ display: flex; gap: var(--s2); justify-content: flex-end; }}
   .empty {{ color: var(--ink-faint); font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; margin: 0; }}
   .fallback {{
     margin: var(--s5) 0 0; padding-top: var(--s3); border-top: 1px solid var(--rule-strong);
@@ -889,7 +1027,8 @@ fn render_commands_page(config: &Config, notice: Option<&Notice>, form: &FormVal
   }}
   @media (max-width: 640px) {{
     .cmd-head {{ display: none; }}
-    form.row {{ grid-template-columns: 1fr; }}
+    .row {{ grid-template-columns: 1fr; }}
+    .actions {{ justify-content: flex-start; }}
   }}
 </style>
 </head>
