@@ -48,7 +48,13 @@ export type DeployVerdict =
 export interface DeployStatus {
   unit: string;
   verdict: DeployVerdict;
-  deployed: { short: string; dirty: boolean; deployed_at: number } | null;
+  deployed: {
+    short: string;
+    /** GitHub link to this commit, when the repo is on GitHub. */
+    commit_url: string | null;
+    dirty: boolean;
+    deployed_at: number;
+  } | null;
   local: {
     branch: string | null;
     head_short: string | null;
@@ -65,6 +71,8 @@ export interface DeployHistoryEntry {
   id: string | null;
   sha: string;
   short: string;
+  /** GitHub link to this commit, when the repo is on GitHub. */
+  commit_url: string | null;
   branch: string | null;
   dirty: boolean;
   result: "deployed" | "rolled_back";

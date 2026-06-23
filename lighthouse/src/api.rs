@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::{Stream, StreamExt};
 
 use crate::AppState;
-use crate::config::Config;
+use crate::config::{Config, DeployConfig};
 use crate::systemd::{self, ServiceStatus};
 
 const DEFAULT_LOG_LINES: u32 = 200;
@@ -246,9 +246,49 @@ fn changes_url(
     Some(format!("{base}/compare/{}...{head}", deployed.short))
 }
 
+/// A GitHub link to a single commit (`<repo>/commit/<sha>`), or `None` when the
+/// repo isn't on GitHub. Built from the full sha so the link is unambiguous even
+/// though the dashboard shows the short form.
+fn commit_url(repo_url: Option<&str>, sha: &str) -> Option<String> {
+    let base = repo_url?.trim_end_matches('/');
+    Some(format!("{base}/commit/{sha}"))
+}
+
+/// Query the tugboat daemon's `/status` for every fleet member. `deployed`
+/// carries the `name:sha` pairs that let the daemon compute each one's
+/// ahead/diverged relationship; pass `""` when only the static fields (repo_url,
+/// branch) are wanted. Best-effort: an unreachable or unparsable daemon yields an
+/// empty list, so callers degrade to live-only rather than failing.
+async fn daemon_statuses(
+    http: &reqwest::Client,
+    cfg: &DeployConfig,
+    deployed: &str,
+) -> Vec<DaemonStatus> {
+    let url = format!("{}/status", cfg.tugboat_url.trim_end_matches('/'));
+    match http
+        .get(&url)
+        .query(&[("deployed", deployed)])
+        .bearer_auth(&cfg.token)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+    {
+        Ok(resp) => resp.json().await.unwrap_or_else(|err| {
+            eprintln!("parsing tugboat /status failed: {err}");
+            Vec::new()
+        }),
+        Err(err) => {
+            eprintln!("tugboat /status unreachable: {err}");
+            Vec::new()
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct DeployedInfo {
     short: String,
+    /// GitHub link to this commit, when the repo is on GitHub.
+    commit_url: Option<String>,
     dirty: bool,
     deployed_at: u64,
 }
@@ -309,25 +349,7 @@ pub async fn deploy_status(State(state): State<Arc<AppState>>) -> Json<Vec<Deplo
         .collect::<Vec<_>>()
         .join(",");
 
-    let url = format!("{}/status", cfg.tugboat_url.trim_end_matches('/'));
-    let statuses: Vec<DaemonStatus> = match state
-        .http
-        .get(&url)
-        .query(&[("deployed", deployed_param.as_str())])
-        .bearer_auth(&cfg.token)
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-    {
-        Ok(resp) => resp.json().await.unwrap_or_else(|err| {
-            eprintln!("parsing tugboat /status failed: {err}");
-            Vec::new()
-        }),
-        Err(err) => {
-            eprintln!("tugboat /status unreachable: {err}");
-            Vec::new()
-        }
-    };
+    let statuses = daemon_statuses(&state.http, cfg, &deployed_param).await;
     let by_name: HashSet<&str> = statuses.iter().map(|s| s.name.as_str()).collect();
 
     let mut out = Vec::new();
@@ -349,6 +371,7 @@ pub async fn deploy_status(State(state): State<Arc<AppState>>) -> Json<Vec<Deplo
             ),
             deployed: deployed.as_ref().map(|d| DeployedInfo {
                 short: d.short.clone(),
+                commit_url: commit_url(local.repo_url.as_deref(), &d.sha),
                 dirty: d.dirty,
                 deployed_at: d.at,
             }),
@@ -371,6 +394,8 @@ pub struct DeployHistoryEntry {
     id: Option<String>,
     sha: String,
     short: String,
+    /// GitHub link to this commit, when the repo is on GitHub.
+    commit_url: Option<String>,
     branch: Option<String>,
     dirty: bool,
     /// `deployed` or `rolled_back`.
@@ -405,9 +430,19 @@ pub async fn deploy_history(
     let limit = query.limit.unwrap_or(DEFAULT_HISTORY_LIMIT).min(MAX_HISTORY_LIMIT);
     entries.truncate(limit);
 
+    // Each commit links to GitHub, but the repo's web URL lives only in the
+    // daemon's status — fetch it. Best-effort: an asleep daemon just means the
+    // history renders without commit links, exactly as before this feature.
+    let repo_url = daemon_statuses(&state.http, cfg, "")
+        .await
+        .into_iter()
+        .find(|s| s.name == deploy_name)
+        .and_then(|s| s.repo_url);
+
     let history = entries
         .into_iter()
         .map(|e| DeployHistoryEntry {
+            commit_url: commit_url(repo_url.as_deref(), &e.sha),
             id: e.id,
             sha: e.sha,
             short: e.short,
@@ -537,7 +572,7 @@ pub async fn deploy_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::{changes_url, valid_log_id, LedgerEntry};
+    use super::{changes_url, commit_url, valid_log_id, LedgerEntry};
 
     fn deployed_entry(short: &str) -> LedgerEntry {
         LedgerEntry {
@@ -580,6 +615,26 @@ mod tests {
         assert_eq!(changes_url("stale", None, Some(&entry), Some("cafebabe")), None);
         assert_eq!(changes_url("stale", repo, None, Some("cafebabe")), None);
         assert_eq!(changes_url("stale", repo, Some(&entry), None), None);
+    }
+
+    #[test]
+    fn commit_url_links_a_single_commit() {
+        let repo = Some("https://github.com/deepwa7er/lagoon");
+        // The full sha is used in the href, even though the UI shows the short form.
+        assert_eq!(
+            commit_url(repo, "deadbeef00000000000000000000000000000000"),
+            Some(
+                "https://github.com/deepwa7er/lagoon/commit/deadbeef00000000000000000000000000000000"
+                    .into()
+            ),
+        );
+        // A trailing slash on the repo base is normalized away.
+        assert_eq!(
+            commit_url(Some("https://github.com/deepwa7er/lagoon/"), "cafebabe"),
+            Some("https://github.com/deepwa7er/lagoon/commit/cafebabe".into()),
+        );
+        // Off GitHub (no repo URL) → no link.
+        assert_eq!(commit_url(None, "deadbeef"), None);
     }
 
     #[test]
