@@ -13,7 +13,7 @@ interface Props {
  * and where to reach it — in a responsive grid. */
 export function FleetHome({ services, deployByUnit, error, onSelect }: Props) {
   return (
-    <div className="mx-auto max-w-6xl p-6">
+    <div className="mx-auto max-w-6xl p-4 sm:p-6">
       {error && (
         <div className="mb-4 border-l-2 border-failed bg-failed/10 px-3 py-2 text-xs text-failed">
           {error}

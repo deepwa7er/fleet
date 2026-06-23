@@ -149,7 +149,7 @@ export function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-baseline gap-3 border-b border-rule-strong px-6 py-4">
+      <header className="flex items-baseline gap-3 border-b border-rule-strong px-4 py-4 sm:px-6">
         <button
           type="button"
           onClick={goHome}
@@ -160,14 +160,15 @@ export function App() {
         <span className="text-xs uppercase tracking-wider text-ink-muted">
           Fleet · deepwa7er
         </span>
-        <span className="ml-auto text-[10px] uppercase tracking-wider text-ink-faint">
+        {/* Decorative doc stamp — dropped on narrow screens where space is for content. */}
+        <span className="ml-auto hidden text-[10px] uppercase tracking-wider text-ink-faint sm:block">
           DOC. LH-001 · REV 0.1.0
         </span>
       </header>
 
       {selectedService ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <nav className="flex items-center gap-1 border-b border-rule px-6 py-2 text-xs">
+          <nav className="flex items-center gap-1 border-b border-rule px-4 py-2 text-xs sm:px-6">
             <button
               type="button"
               onClick={goHome}
