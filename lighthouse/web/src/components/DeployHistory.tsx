@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { DeployHistoryEntry } from "../types.ts";
 import { fetchDeployHistory } from "../api.ts";
 import { cn, formatRelative } from "../lib/utils.ts";
+import { CommitLink } from "./CommitLink.tsx";
 import { TranscriptView } from "./TranscriptView.tsx";
 
 interface Props {
@@ -35,13 +36,15 @@ export function DeployHistory({ unit }: Props) {
   }, [unit]);
 
   if (selected?.id) {
-    const verdict =
+    const status =
       selected.result === "rolled_back" ? "rolled back" : "deployed";
     return (
       <TranscriptView
         unit={unit}
         id={selected.id}
-        label={`${selected.short} · ${verdict}`}
+        short={selected.short}
+        commitUrl={selected.commit_url}
+        status={status}
         onBack={() => setSelected(null)}
       />
     );
@@ -80,7 +83,11 @@ export function DeployHistory({ unit }: Props) {
                   hasLog && "cursor-pointer hover:bg-surface",
                 )}
               >
-                <span className="font-mono text-ink">{entry.short}</span>
+                <CommitLink
+                  short={entry.short}
+                  url={entry.commit_url}
+                  className="text-ink"
+                />
                 {entry.branch && (
                   <span className="text-ink-muted">{entry.branch}</span>
                 )}

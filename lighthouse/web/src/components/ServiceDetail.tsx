@@ -9,6 +9,7 @@ import {
   formatRelative,
   statusColor,
 } from "../lib/utils.ts";
+import { CommitLink } from "./CommitLink.tsx";
 import { DeployConsole } from "./DeployConsole.tsx";
 import { DeployHistory } from "./DeployHistory.tsx";
 import { LogViewer } from "./LogViewer.tsx";
@@ -138,8 +139,13 @@ export function ServiceDetail({ service, deploy, onChanged, onDeployed }: Props)
               )}
               {deploy.deployed && (
                 <span className="text-ink-faint">
-                  · deployed {deploy.deployed.short} ·{" "}
-                  {formatRelative(deploy.deployed.deployed_at)}
+                  · deployed{" "}
+                  <CommitLink
+                    short={deploy.deployed.short}
+                    url={deploy.deployed.commit_url}
+                    className="text-ink-faint"
+                  />{" "}
+                  · {formatRelative(deploy.deployed.deployed_at)}
                 </span>
               )}
             </div>
