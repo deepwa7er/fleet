@@ -80,6 +80,12 @@ upstream = "127.0.0.1:8765"
 host = "slskd.internal.deepwa7er.com"
 upstream = "127.0.0.1:5030"
 
+# Drydock — the fleet ticket queue. Serves both the web view and the worker CLI's
+# API; the worker on the Mac reaches it through here over the tailnet.
+[[routes]]
+host = "drydock.internal.deepwa7er.com"
+upstream = "127.0.0.1:8093"
+
 # The fleet documentation site (pilot) — process-less static files, so breakwater
 # serves the directory directly instead of proxying an upstream. `tugboat fleet
 # docs` assembles and ships the site to this path; a path that doesn't resolve to
