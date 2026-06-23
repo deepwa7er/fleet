@@ -1,38 +1,74 @@
+/* DG-001 (U.S. Graphics school) — dark "terminal" discipline, shared with the
+ * rest of the fleet's web UIs (lighthouse, pilot). Monospace-forward, hairline
+ * rules, flat fills, sharp corners, a single amber signal accent, and a flat
+ * functional status ramp. Drydock uses plain CSS rather than the Tailwind setup
+ * the React-heavier fleet apps use, but the tokens and visual language are
+ * identical so the services read as one suite. */
 :root {
-  --bg: #0f1419;
-  --panel: #171d26;
-  --panel-2: #1d2530;
-  --border: #2a3340;
-  --text: #d7dde5;
-  --muted: #8a96a5;
-  --accent: #3b82f6;
-  --action: #f59e0b;
-  --danger: #ef4444;
-  --green: #22c55e;
+  --font-mono:
+    "Berkeley Mono", "JetBrains Mono", "IBM Plex Mono", ui-monospace,
+    SFMono-Regular, Menlo, Consolas, monospace;
+
+  --bg: #0b0c0d;
+  --surface: #121315;
+  --surface-2: #16181a;
+  --ink: #e6e4dd;
+  --ink-muted: #9a978d;
+  --ink-faint: #6a675f;
+  --rule: #2a2b2d;
+  --rule-strong: #3a3c3e;
+
+  --accent: #f08c00; /* single signal color: action / interactive */
+  --active: #37b24d; /* success / done */
+  --failed: #c92a2a; /* blocked / destructive / error */
+  --warn: #f08c00; /* needs attention */
+  --idle: #6a675f; /* neutral / terminal */
+
+  --border: 1px solid var(--rule);
+  --border-strong: 1px solid var(--rule-strong);
+
+  /* Modular spacing scale (4 / 8 / 12 / 16 / 24 / 32). */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
-  color: var(--text);
-  font: 14px/1.5 system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  font: 14px/1.45 var(--font-mono);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
 }
 
 .app {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 0 16px 48px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
 }
 
+/* Header — full-bleed instrument bar with documentation furniture. */
 header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 0;
+  align-items: baseline;
+  gap: var(--s3);
+  padding: var(--s4) var(--s5);
+  border-bottom: var(--border-strong);
   position: sticky;
   top: 0;
   background: var(--bg);
@@ -41,20 +77,51 @@ header {
 
 header h1 {
   margin: 0;
-  font-size: 20px;
-  letter-spacing: 0.5px;
+  font-size: 18px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+header .subtitle {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+}
+
+header .header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+}
+
+header .docstamp {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
 }
 
 .layout {
   display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 16px;
+  grid-template-columns: 320px 1fr;
+  gap: var(--s4);
   align-items: start;
+  padding: var(--s4) var(--s5) var(--s6);
 }
 
 @media (max-width: 720px) {
+  header {
+    padding: var(--s3) var(--s4);
+  }
+  header .docstamp {
+    display: none;
+  }
   .layout {
     grid-template-columns: 1fr;
+    padding: var(--s4);
   }
 }
 
@@ -62,41 +129,48 @@ header h1 {
 .board {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--s4);
 }
 
 .group h2 {
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 11px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--muted);
-  margin: 0 0 6px;
+  letter-spacing: 0.15em;
+  color: var(--ink-muted);
+  margin: 0 0 var(--s2);
+  padding-bottom: var(--s1);
+  border-bottom: var(--border);
 }
 
 .group.action h2 {
-  color: var(--action);
+  color: var(--accent);
 }
 
 .count {
-  background: var(--panel-2);
-  border-radius: 10px;
-  padding: 0 7px;
+  background: var(--surface-2);
+  border: var(--border);
+  padding: 0 var(--s2);
   font-size: 11px;
+  color: var(--ink-muted);
 }
 
 .card {
   display: grid;
   grid-template-columns: auto 1fr;
   grid-template-areas: "pri title" "pri target";
-  gap: 0 8px;
+  gap: 0 var(--s2);
   width: 100%;
   text-align: left;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
-  margin-bottom: 6px;
-  color: var(--text);
+  background: var(--surface);
+  border: var(--border);
+  border-radius: 0;
+  padding: var(--s2) var(--s3);
+  margin-bottom: var(--s1);
+  color: var(--ink);
   cursor: pointer;
 }
 
@@ -106,119 +180,130 @@ header h1 {
 
 .card.active {
   border-color: var(--accent);
-  background: var(--panel-2);
+  background: var(--surface-2);
 }
 
 .card-title {
   grid-area: title;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .card-target {
   grid-area: target;
-  color: var(--muted);
+  color: var(--ink-muted);
   font-size: 12px;
 }
 
+/* Priority — flat bordered labels, not soft pills. */
 .pri {
   grid-area: pri;
   align-self: center;
   font-size: 10px;
   text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: 4px;
+  letter-spacing: 0.06em;
+  padding: 1px var(--s2);
+  border: 1px solid currentColor;
   font-weight: 700;
 }
 
 .pri-high {
-  background: rgba(239, 68, 68, 0.15);
-  color: #fca5a5;
+  color: var(--failed);
 }
 .pri-med {
-  background: rgba(245, 158, 11, 0.15);
-  color: #fcd34d;
+  color: var(--warn);
 }
 .pri-low {
-  background: rgba(138, 150, 165, 0.15);
-  color: var(--muted);
+  color: var(--ink-faint);
 }
 
 /* Detail */
 .detail-pane {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  background: var(--surface);
+  border: var(--border);
   min-height: 300px;
-  padding: 18px 20px;
+  padding: var(--s5);
 }
 
 .empty {
-  color: var(--muted);
+  color: var(--ink-muted);
 }
 
 .detail-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--s3);
 }
 
 .detail-head h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 17px;
+  font-weight: 700;
 }
 
 .meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin: 10px 0 4px;
+  gap: var(--s2);
+  margin: var(--s3) 0 var(--s1);
 }
 
 .meta code {
-  background: var(--panel-2);
-  padding: 2px 6px;
-  border-radius: 4px;
+  background: var(--surface-2);
+  border: var(--border);
+  padding: 1px var(--s2);
   font-size: 12px;
 }
 
 .meta .target {
-  color: var(--muted);
+  color: var(--ink-muted);
 }
 
+.meta a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.meta a:hover {
+  text-decoration: underline;
+}
+
+/* Status badges — flat bordered labels on the functional ramp. The state text
+ * is always present, so color reinforces rather than carries the meaning. */
 .badge {
   font-size: 11px;
-  padding: 3px 8px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
+  padding: 2px var(--s2);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-muted);
   text-transform: uppercase;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.08em;
 }
 
 .state-needs-input {
-  color: var(--action);
-  border-color: var(--action);
+  color: var(--warn);
+  border-color: var(--warn);
 }
 .state-blocked {
-  color: var(--danger);
-  border-color: var(--danger);
+  color: var(--failed);
+  border-color: var(--failed);
 }
 .state-in-review {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--active);
+  border-color: var(--active);
 }
 .state-done {
-  color: var(--green);
-  border-color: var(--green);
+  color: var(--idle);
+  border-color: var(--idle);
 }
 
 .detail h3 {
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--muted);
-  margin: 18px 0 6px;
+  letter-spacing: 0.15em;
+  color: var(--ink-muted);
+  margin: var(--s5) 0 var(--s2);
 }
 
 .prose {
@@ -228,27 +313,27 @@ header h1 {
 }
 
 pre.prose {
-  background: var(--panel-2);
-  padding: 10px;
-  border-radius: 6px;
+  background: var(--surface-2);
+  border: var(--border);
+  padding: var(--s3);
   overflow-x: auto;
 }
 
-/* Action box */
+/* Action box — the human's primary affordance, framed like a form field. */
 .action-box {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 14px;
-  margin: 18px 0;
+  background: var(--surface-2);
+  border: var(--border-strong);
+  border-left: 2px solid var(--accent);
+  padding: var(--s4);
+  margin: var(--s5) 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--s2);
 }
 
 .action-box h3 {
   margin: 0;
-  color: var(--text);
+  color: var(--ink);
 }
 
 /* Thread */
@@ -258,79 +343,105 @@ pre.prose {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--s2);
 }
 
 .msg {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: var(--panel-2);
+  border: var(--border);
+  border-left: 2px solid var(--rule-strong);
+  padding: var(--s2) var(--s3);
+  background: var(--surface-2);
 }
 
 .msg.human {
-  border-left: 3px solid var(--accent);
+  border-left-color: var(--accent);
 }
 .msg.worker {
-  border-left: 3px solid var(--muted);
+  border-left-color: var(--ink-faint);
 }
 .msg.question {
-  border-left-color: var(--action);
+  border-left-color: var(--warn);
 }
 .msg.answer {
-  border-left-color: var(--green);
+  border-left-color: var(--active);
 }
 
 .msg-head {
   display: flex;
-  gap: 8px;
+  gap: var(--s2);
   align-items: center;
-  margin-bottom: 4px;
+  margin-bottom: var(--s1);
   font-size: 12px;
-  color: var(--muted);
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .msg-head .kind {
-  background: var(--panel);
-  padding: 1px 6px;
-  border-radius: 4px;
+  background: var(--surface);
+  border: var(--border);
+  padding: 0 var(--s2);
 }
 
 .audit {
-  margin-top: 20px;
-  color: var(--muted);
+  margin-top: var(--s5);
+  color: var(--ink-muted);
   font-size: 12px;
 }
 
+.audit summary {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+
 .audit ul {
-  padding-left: 16px;
+  padding-left: var(--s4);
 }
 
 /* Forms & buttons */
 button {
   font: inherit;
   cursor: pointer;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-  color: var(--text);
-  padding: 7px 12px;
+  border: var(--border-strong);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink-muted);
+  padding: var(--s2) var(--s3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 12px;
+}
+
+button:hover {
+  border-color: var(--accent);
+  color: var(--ink);
 }
 
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: white;
-  font-weight: 600;
+  color: var(--bg); /* dark ink on amber — WCAG AA, unlike white-on-amber */
+  font-weight: 700;
+}
+
+button.primary:hover {
+  color: var(--bg);
 }
 
 button.primary:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
 button.ghost {
   background: transparent;
+  border-color: transparent;
+}
+
+button.ghost:hover {
+  border-color: var(--rule-strong);
+  background: var(--surface);
 }
 
 input,
@@ -339,10 +450,18 @@ select {
   font: inherit;
   width: 100%;
   background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px;
+  color: var(--ink);
+  border: var(--border-strong);
+  border-radius: 0;
+  padding: var(--s2);
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 textarea {
@@ -350,56 +469,61 @@ textarea {
 }
 
 .banner {
-  padding: 8px 12px;
-  border-radius: 6px;
-  margin: 8px 0;
+  padding: var(--s2) var(--s3);
+  margin: var(--s2) 0;
+  border: var(--border);
 }
 
 .banner.error {
-  background: rgba(239, 68, 68, 0.15);
-  color: #fca5a5;
-  border: 1px solid var(--danger);
+  background: var(--surface-2);
+  color: var(--failed);
+  border-color: var(--failed);
 }
 
 /* Modal */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.7);
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 40px 16px;
+  padding: var(--s6) var(--s4);
   z-index: 10;
   overflow-y: auto;
 }
 
 .modal {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 20px;
+  background: var(--surface);
+  border: var(--border-strong);
+  padding: var(--s5);
   width: 100%;
   max-width: 480px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--s3);
 }
 
 .modal h2 {
   margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
 }
 
 .modal label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--s1);
   font-size: 12px;
-  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
 }
 
 .modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--s2);
 }
