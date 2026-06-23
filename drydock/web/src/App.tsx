@@ -40,9 +40,13 @@ export function App() {
     <div className="app">
       <header>
         <h1>Drydock</h1>
-        <button className="primary" onClick={() => setCreating(true)}>
-          New ticket
-        </button>
+        <span className="subtitle">Fleet ticket queue · deepwa7er</span>
+        <div className="header-right">
+          <span className="docstamp">DOC. DD-001 · REV 0.1.0</span>
+          <button className="primary" onClick={() => setCreating(true)}>
+            New ticket
+          </button>
+        </div>
       </header>
       {error && <div className="banner error">{error}</div>}
       <div className="layout">
