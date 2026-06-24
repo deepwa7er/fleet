@@ -79,7 +79,7 @@ export function DeployHistory({ unit }: Props) {
                 onClick={hasLog ? () => setSelected(entry) : undefined}
                 title={hasLog ? "View deploy log" : undefined}
                 className={cn(
-                  "flex items-center gap-3 border-b border-rule py-1.5 last:border-0",
+                  "flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule py-1.5 last:border-0",
                   hasLog && "cursor-pointer hover:bg-surface",
                 )}
               >

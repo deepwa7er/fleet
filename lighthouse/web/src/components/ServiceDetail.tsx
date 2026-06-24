@@ -99,7 +99,7 @@ export function ServiceDetail({ service, deploy, onChanged, onDeployed }: Props)
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-4 border-b border-rule-strong px-6 py-4">
+      <div className="flex flex-col gap-3 border-b border-rule-strong px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-6">
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 items-center gap-3">
             <span className={cn("h-2 w-2 shrink-0", color.dot)} />
@@ -111,7 +111,7 @@ export function ServiceDetail({ service, deploy, onChanged, onDeployed }: Props)
             </span>
           </div>
           {deploy && deployStyle && (
-            <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide">
+            <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-wide">
               <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", deployStyle.dot)} />
               {deploy.changes_url ? (
                 <a
@@ -151,7 +151,7 @@ export function ServiceDetail({ service, deploy, onChanged, onDeployed }: Props)
             </div>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
           {canDeploy && (
             <button
               type="button"
@@ -201,7 +201,7 @@ export function ServiceDetail({ service, deploy, onChanged, onDeployed }: Props)
         </div>
       </div>
       {error && (
-        <div className="border-l-2 border-failed bg-failed/10 px-6 py-2 text-xs text-failed">
+        <div className="border-l-2 border-failed bg-failed/10 px-4 py-2 text-xs text-failed sm:px-6">
           {error}
         </div>
       )}
