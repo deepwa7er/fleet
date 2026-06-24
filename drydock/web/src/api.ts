@@ -51,6 +51,23 @@ export interface TicketDetail extends Ticket {
 
 export type TicketType = "feature" | "investigate";
 
+export interface Pulse {
+  id: number;
+  ticket_id: number | null;
+  message: string;
+  created_at: string;
+}
+
+export type WorkerStatus = "working" | "idle" | "stuck" | "offline" | "unknown";
+
+export interface WorkerView {
+  status: WorkerStatus;
+  last_seen: string | null;
+  seconds_since: number | null;
+  active_ticket: Ticket | null;
+  recent: Pulse[];
+}
+
 export interface NewTicket {
   title: string;
   type: TicketType;
@@ -93,4 +110,5 @@ export const api = {
   done: (id: number) => req<Ticket>("POST", `/api/tickets/${id}/done`),
   close: (id: number, note: string) =>
     req<Ticket>("POST", `/api/tickets/${id}/close`, { note }),
+  worker: () => req<WorkerView>("GET", "/api/worker"),
 };

@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api } from "./api";
-import type { Priority, State, Ticket, TicketDetail, TicketType } from "./api";
+import type {
+  Priority,
+  State,
+  Ticket,
+  TicketDetail,
+  TicketType,
+  WorkerView,
+} from "./api";
 
 const POLL_MS = 4000;
 
@@ -50,6 +57,7 @@ export function App() {
         </div>
       </header>
       {error && <div className="banner error">{error}</div>}
+      <WorkerPanel />
       <div className="layout">
         <aside className="board">
           {GROUPS.map((g) => {
@@ -460,6 +468,79 @@ function CreateForm({
       </form>
     </div>
   );
+}
+
+/** Worker liveness strip — is the Claude Desktop worker progressing or stuck? */
+function WorkerPanel() {
+  const [w, setW] = useState<WorkerView | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const v = await api.worker();
+        if (alive) setW(v);
+      } catch {
+        /* keep the previous view on a transient error */
+      }
+    };
+    load();
+    const t = setInterval(load, POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+
+  if (!w) return null;
+
+  const t = w.active_ticket;
+  const line =
+    (w.status === "working" || w.status === "stuck") && t
+      ? `${w.status === "stuck" ? "possibly stuck on" : "working"} #${t.id} ${t.title}`
+      : w.status === "idle"
+        ? "idle"
+        : w.status === "offline"
+          ? "offline — not running?"
+          : "no activity recorded yet";
+
+  const time =
+    w.seconds_since == null
+      ? ""
+      : `${w.status === "working" ? "active" : "last seen"} ${ago(w.seconds_since)}`;
+
+  return (
+    <div className={`worker worker-${w.status}`}>
+      <button className="worker-head" onClick={() => setOpen((o) => !o)}>
+        <span className="worker-dot" />
+        <span className="worker-label">Worker — {line}</span>
+        <span className="worker-time">{time}</span>
+        <span className="worker-toggle">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <ul className="worker-feed">
+          {w.recent.length === 0 && <li className="empty">No activity recorded.</li>}
+          {w.recent.map((p) => (
+            <li key={p.id}>
+              <time>{fmt(p.created_at)}</time>
+              {p.ticket_id != null && <span className="feed-ticket">#{p.ticket_id}</span>}
+              <span className="feed-msg">{p.message}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ago(seconds: number): string {
+  if (seconds < 60) return `${seconds}s ago`;
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
 
 function fmt(iso: string): string {

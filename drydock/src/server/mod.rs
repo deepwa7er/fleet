@@ -11,12 +11,13 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{any, get, post};
 use axum::{Json, Router};
-use serde::Deserialize;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
-use crate::core::model::{Priority, State as TicketState, Ticket, TicketDetail, TicketType};
+use crate::core::model::{Priority, Pulse, State as TicketState, Ticket, TicketDetail, TicketType};
 use crate::core::{NewTicket, Store};
 use crate::error::{Error, Result};
 
@@ -54,6 +55,8 @@ pub async fn run(store: Arc<Store>, config: ServerConfig) -> std::io::Result<()>
         .route("/api/tickets/{id}/unblock", post(unblock))
         .route("/api/tickets/{id}/done", post(done))
         .route("/api/tickets/{id}/close", post(close))
+        .route("/api/worker", get(worker))
+        .route("/api/worker/heartbeat", post(heartbeat))
         // Unknown /api paths must 404 as JSON, not fall through to the SPA shell.
         .route("/api/{*rest}", any(api_not_found))
         .fallback_service(static_files)
@@ -152,8 +155,21 @@ async fn create(
     Ok((StatusCode::CREATED, Json(ticket)))
 }
 
+/// Record a worker pulse without letting a liveness hiccup fail the action.
+fn pulse(st: &AppState, ticket_id: Option<i64>, message: String) {
+    if let Err(e) = st.store.pulse(ticket_id, &message) {
+        tracing::warn!("worker pulse failed: {e}");
+    }
+}
+
 async fn next(State(st): State<AppState>) -> Result<Json<Option<Ticket>>> {
-    Ok(Json(st.store.next(st.stale_hours)?))
+    let ticket = st.store.next(st.stale_hours)?;
+    let msg = match &ticket {
+        Some(t) => format!("picked up #{}", t.id),
+        None => "checked — no open tickets".to_string(),
+    };
+    pulse(&st, ticket.as_ref().map(|t| t.id), msg);
+    Ok(Json(ticket))
 }
 
 async fn detail(
@@ -169,7 +185,9 @@ async fn claim(
     Json(req): Json<ClaimReq>,
 ) -> Result<Json<Ticket>> {
     let branch = req.branch.as_deref().filter(|s| !s.trim().is_empty());
-    Ok(Json(st.store.claim(id, branch)?))
+    let ticket = st.store.claim(id, branch)?;
+    pulse(&st, Some(id), format!("claimed #{id}"));
+    Ok(Json(ticket))
 }
 
 async fn needs_input(
@@ -178,7 +196,9 @@ async fn needs_input(
     Json(req): Json<BodyReq>,
 ) -> Result<Json<Ticket>> {
     require("body", &req.body)?;
-    Ok(Json(st.store.needs_input(id, &req.body)?))
+    let ticket = st.store.needs_input(id, &req.body)?;
+    pulse(&st, Some(id), format!("asked for input on #{id}"));
+    Ok(Json(ticket))
 }
 
 async fn block(
@@ -187,7 +207,9 @@ async fn block(
     Json(req): Json<BodyReq>,
 ) -> Result<Json<Ticket>> {
     require("body", &req.body)?;
-    Ok(Json(st.store.block(id, &req.body)?))
+    let ticket = st.store.block(id, &req.body)?;
+    pulse(&st, Some(id), format!("blocked #{id}"));
+    Ok(Json(ticket))
 }
 
 async fn resolve(
@@ -196,7 +218,9 @@ async fn resolve(
     Json(req): Json<ResolveReq>,
 ) -> Result<Json<Ticket>> {
     require("pr_url", &req.pr_url)?;
-    Ok(Json(st.store.resolve(id, &req.pr_url)?))
+    let ticket = st.store.resolve(id, &req.pr_url)?;
+    pulse(&st, Some(id), format!("opened PR for #{id}"));
+    Ok(Json(ticket))
 }
 
 async fn report(
@@ -205,7 +229,9 @@ async fn report(
     Json(req): Json<BodyReq>,
 ) -> Result<Json<Ticket>> {
     require("body", &req.body)?;
-    Ok(Json(st.store.report(id, &req.body)?))
+    let ticket = st.store.report(id, &req.body)?;
+    pulse(&st, Some(id), format!("posted report for #{id}"));
+    Ok(Json(ticket))
 }
 
 async fn answer(
@@ -235,4 +261,67 @@ async fn close(
     Json(req): Json<UnblockReq>,
 ) -> Result<Json<Ticket>> {
     Ok(Json(st.store.close(id, req.note.as_deref())?))
+}
+
+// ---- worker liveness ------------------------------------------------------
+
+#[derive(Deserialize)]
+struct HeartbeatReq {
+    #[serde(default)]
+    ticket: Option<i64>,
+    message: String,
+}
+
+#[derive(Serialize)]
+struct WorkerView {
+    /// "working" | "idle" | "stuck" | "offline" | "unknown".
+    status: &'static str,
+    last_seen: Option<String>,
+    seconds_since: Option<i64>,
+    active_ticket: Option<Ticket>,
+    recent: Vec<Pulse>,
+}
+
+/// An in-progress ticket with no pulse for this long is probably hung.
+const STUCK_AFTER_SECS: i64 = 20 * 60;
+/// No pulse at all for this long means the worker isn't running (the worker
+/// pulses on every `next`, so a healthy idle worker checks in each run).
+const OFFLINE_AFTER_SECS: i64 = 90 * 60;
+
+fn worker_status(active: bool, seconds_since: Option<i64>) -> &'static str {
+    match seconds_since {
+        None => "unknown",
+        Some(age) if age >= OFFLINE_AFTER_SECS => "offline",
+        Some(age) if active && age >= STUCK_AFTER_SECS => "stuck",
+        Some(_) if active => "working",
+        Some(_) => "idle",
+    }
+}
+
+/// Whole seconds between an RFC-3339 timestamp and now (clamped at 0).
+fn seconds_since_now(ts: &str) -> Option<i64> {
+    let then = chrono::DateTime::parse_from_rfc3339(ts).ok()?;
+    Some((Utc::now() - then.with_timezone(&Utc)).num_seconds().max(0))
+}
+
+async fn worker(State(st): State<AppState>) -> Result<Json<WorkerView>> {
+    let (last_seen, active_ticket, recent) = st.store.worker_view(20)?;
+    let seconds_since = last_seen.as_deref().and_then(seconds_since_now);
+    let status = worker_status(active_ticket.is_some(), seconds_since);
+    Ok(Json(WorkerView {
+        status,
+        last_seen,
+        seconds_since,
+        active_ticket,
+        recent,
+    }))
+}
+
+async fn heartbeat(
+    State(st): State<AppState>,
+    Json(req): Json<HeartbeatReq>,
+) -> Result<Json<serde_json::Value>> {
+    require("message", &req.message)?;
+    st.store.pulse(req.ticket, &req.message)?;
+    Ok(Json(json!({ "ok": true })))
 }

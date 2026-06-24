@@ -564,3 +564,96 @@ textarea {
   justify-content: flex-end;
   gap: var(--s2);
 }
+
+/* ── Worker liveness strip ──────────────────────────────────────────────── */
+.worker {
+  margin: 0 var(--s5) var(--s4);
+  background: var(--surface);
+  border: var(--border);
+  border-left: 3px solid var(--idle);
+}
+
+@media (max-width: 720px) {
+  .worker {
+    margin: 0 var(--s4) var(--s3);
+  }
+}
+
+.worker-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: var(--s2) var(--s3);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.worker-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--idle);
+  flex: none;
+}
+
+.worker-label {
+  font-weight: 700;
+}
+
+.worker-time {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.worker-toggle {
+  margin-left: auto;
+  color: var(--ink-muted);
+}
+
+.worker-working {
+  border-left-color: var(--active);
+}
+.worker-working .worker-dot {
+  background: var(--active);
+}
+.worker-stuck {
+  border-left-color: var(--warn);
+}
+.worker-stuck .worker-dot {
+  background: var(--warn);
+}
+.worker-offline {
+  border-left-color: var(--failed);
+}
+.worker-offline .worker-dot {
+  background: var(--failed);
+}
+
+.worker-feed {
+  list-style: none;
+  margin: 0;
+  padding: var(--s1) var(--s3) var(--s2);
+  border-top: var(--border);
+}
+
+.worker-feed li {
+  display: flex;
+  gap: var(--s2);
+  align-items: baseline;
+  padding: var(--s1) 0;
+  font-size: 12px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.worker-feed time {
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.worker-feed .feed-ticket {
+  color: var(--accent);
+  font-weight: 700;
+}

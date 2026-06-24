@@ -97,6 +97,13 @@ steps below call out where. You learn the type from step 1's output.
    INVESTIGATE: dig into the question using the repo and the fleet's tools. Reach
      well-supported conclusions; separate what you CONFIRMED from what you SUSPECT.
 
+   PROGRESS — as you work, post a short heartbeat at each major step so progress is
+   visible remotely (the human can't see this Desktop window):
+     drydock heartbeat "what you're doing now"
+   e.g. "reading the repo", "writing the rate-limiter", "running tests", "opening PR".
+   Heartbeat right BEFORE and AFTER long operations (builds, test runs) so a slow
+   step doesn't look like a hang.
+
 6. RESOLVE to EXACTLY ONE outcome, then STOP:
    a. NEEDS INPUT — you can't proceed without a decision only the human can make.
       (Feature: commit any WIP to the branch and push first.)

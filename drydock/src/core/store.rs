@@ -82,6 +82,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/001_init.sql"),
     include_str!("../../migrations/002_closed_state.sql"),
     include_str!("../../migrations/003_investigate_type.sql"),
+    include_str!("../../migrations/004_worker_pulse.sql"),
 ];
 
 /// Apply every migration whose index is at or beyond the DB's recorded
@@ -455,6 +456,60 @@ impl Store {
         tx.commit()?;
         Ok(ticket)
     }
+
+    // ---- worker liveness --------------------------------------------------
+
+    /// Record a worker pulse (a heartbeat or an action). Best-effort liveness, so
+    /// callers ignore failures rather than failing the underlying request.
+    pub fn pulse(&self, ticket_id: Option<i64>, message: &str) -> Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO worker_pulse (ticket_id, message, created_at) VALUES (?1, ?2, ?3)",
+            params![ticket_id, message, now()],
+        )?;
+        Ok(())
+    }
+
+    /// The worker view: the newest pulse time (liveness), the ticket currently
+    /// being worked (if any), and the most recent pulses (the progress feed).
+    pub fn worker_view(&self, recent: usize) -> Result<(Option<String>, Option<Ticket>, Vec<Pulse>)> {
+        let conn = self.lock();
+
+        let last_seen: Option<String> = conn.query_row(
+            "SELECT MAX(created_at) FROM worker_pulse",
+            [],
+            |r| r.get::<_, Option<String>>(0),
+        )?;
+
+        // One ticket per run, so at most one in-progress; newest wins if ever not.
+        let active = conn
+            .query_row(
+                &format!(
+                    "SELECT {TICKET_COLS} FROM tickets WHERE state = 'in-progress'
+                     ORDER BY updated_at DESC LIMIT 1"
+                ),
+                [],
+                ticket_from_row,
+            )
+            .optional()?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, ticket_id, message, created_at
+             FROM worker_pulse ORDER BY id DESC LIMIT ?1",
+        )?;
+        let recent_pulses = stmt
+            .query_map([recent as i64], |r| {
+                Ok(Pulse {
+                    id: r.get(0)?,
+                    ticket_id: r.get(1)?,
+                    message: r.get(2)?,
+                    created_at: r.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        Ok((last_seen, active, recent_pulses))
+    }
 }
 
 #[cfg(test)]
@@ -665,6 +720,26 @@ mod tests {
 
         // The human reads it and marks done.
         assert_eq!(s.mark_done(t.id).unwrap().state, State::Done);
+    }
+
+    #[test]
+    fn worker_pulse_and_view() {
+        let s = store();
+        // Nothing yet.
+        let (last, active, recent) = s.worker_view(10).unwrap();
+        assert!(last.is_none() && active.is_none() && recent.is_empty());
+
+        // A claimed ticket + a heartbeat.
+        let t = mk(&s, "x", Priority::Med);
+        s.claim(t.id, Some("b")).unwrap();
+        s.pulse(Some(t.id), "running tests").unwrap();
+
+        let (last, active, recent) = s.worker_view(10).unwrap();
+        assert!(last.is_some());
+        assert_eq!(active.unwrap().id, t.id, "in-progress ticket is the active one");
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].message, "running tests");
+        assert_eq!(recent[0].ticket_id, Some(t.id));
     }
 
     #[test]

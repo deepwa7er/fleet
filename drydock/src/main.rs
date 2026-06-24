@@ -62,6 +62,13 @@ enum Command {
     /// Post an investigate ticket's findings as a report (-> in-review).
     Report { id: i64, findings: String },
 
+    /// Post a progress heartbeat (shown live on the dashboard, viewable from phone).
+    Heartbeat {
+        message: String,
+        #[arg(long)]
+        ticket: Option<i64>,
+    },
+
     /// Create a ticket (normally done from the web view).
     Create {
         #[arg(long)]
@@ -149,6 +156,9 @@ fn run_client(command: Command) -> i32 {
         Command::Report { id, findings } => client
             .post(&format!("/api/tickets/{id}/report"), json!({ "body": findings }))
             .map(|v| cli::print_one(&v, "reported")),
+        Command::Heartbeat { message, ticket } => client
+            .post("/api/worker/heartbeat", json!({ "message": message, "ticket": ticket }))
+            .map(|_| println!("heartbeat recorded")),
         Command::Create {
             title,
             target,

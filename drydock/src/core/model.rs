@@ -114,6 +114,17 @@ pub struct Event {
     pub created_at: String,
 }
 
+/// One worker-liveness pulse — a heartbeat or a recorded worker action. The feed
+/// of these (plus the time of the newest) is how the web view shows whether the
+/// Claude Desktop worker is progressing or stuck.
+#[derive(Debug, Clone, Serialize)]
+pub struct Pulse {
+    pub id: i64,
+    pub ticket_id: Option<i64>,
+    pub message: String,
+    pub created_at: String,
+}
+
 /// A ticket with its full thread and audit trail — the detail view.
 #[derive(Debug, Clone, Serialize)]
 pub struct TicketDetail {
