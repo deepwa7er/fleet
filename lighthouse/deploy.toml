@@ -25,4 +25,9 @@ dest = "/opt/lighthouse/web"
 # lighthouse binds the tailnet IP (no loopback), so health is the unit's active
 # state. (default health = `systemctl is-active lighthouse`)
 
-# Not enrolled: lighthouse is the monitor, not a member of its own target.
+[lighthouse]
+# Monitor lighthouse on its own dashboard — enroll it in lighthouse.target like
+# any other service, so the dashboard shows its own status/logs/deploy alongside
+# the fleet. (tugboat re-asserts this add-wants on every deploy; a from-scratch
+# reprovision relies on this flag to re-enroll.)
+enroll = true
