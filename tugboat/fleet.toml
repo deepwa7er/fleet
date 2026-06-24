@@ -52,6 +52,11 @@ repo = "git@github.com:deepwa7er/lagoon.git"
 path = "driftword"
 repo = "git@github.com:deepwa7er/driftword.git"
 
+[[members]]
+# Ticket queue for autonomous fleet work — the worker's own home.
+path = "drydock"
+repo = "git@github.com:deepwa7er/drydock.git"
+
 # ── part of the fleet, deployed some other way (clone/pull/status only) ──────
 
 [[members]]
