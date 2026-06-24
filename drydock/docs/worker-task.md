@@ -103,10 +103,20 @@ TOOLS
       flags anything fragile, uncertain, or any breaking change/redesign for review).
       Run: drydock resolve <id> --pr <pr-url>
 
+7. CLEAN UP — always, whatever the outcome above.
+   Return the repo to its default branch so the working tree is left clean and
+   not parked on the ticket branch:
+     git checkout <default-branch>   (e.g. main)
+   The ticket branch is already committed and pushed, so nothing is lost — a
+   resumed ticket re-checks it out in step 4. This matters because tugboat
+   deploys the working tree: leaving repos on their default branch keeps deploys
+   shipping merged main, not an in-flight ticket branch.
+
 HARD RULES
 - One ticket per run.
 - NEVER merge a PR. NEVER deploy (no tugboat deploy, no ssh to ships). Your
   terminal state is in-review — the human merges and deploys.
+- End every run on the repo's default branch — never leave it on the ticket branch.
 - NEVER commit to a service repo's default branch. Work branch only. No force-push.
 - NEVER introduce a hack to reach 'done'. Use `drydock block` instead.
 - Do ONLY what the ticket asks. Note unrelated problems in the thread (a follow-up
