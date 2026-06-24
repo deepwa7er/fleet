@@ -198,6 +198,93 @@ pub fn load(path: &Path) -> Result<Fleet> {
     Ok(fleet)
 }
 
+/// Outcome of trying to record a just-deployed service as a fleet member.
+#[derive(Debug, PartialEq)]
+pub enum Registration {
+    /// Already listed in `fleet.toml` — nothing to do.
+    AlreadyMember,
+    /// Appended a new `[[members]]` entry to the fleet manifest.
+    Registered { fleet_path: PathBuf, member_path: String, repo: String },
+    /// Not registered, with a human-readable reason. Best-effort: a registration
+    /// hiccup must never undo a deploy that already succeeded, so anything that
+    /// prevents expressing the service as a member yields this rather than an error.
+    Skipped(String),
+}
+
+/// Ensure a service that `tugboat deploy` just shipped is recorded as a fleet
+/// member, appending it to `fleet.toml` if absent. Located via the same
+/// `resolve_manifest` rules as every other fleet op (explicit path, then
+/// `TUGBOAT_FLEET`, then an upward search). Best-effort — see [`Registration`].
+pub fn ensure_member(project_dir: &Path, service_name: &str) -> Result<Registration> {
+    let fleet_path = match resolve_manifest(None) {
+        Ok(p) => p,
+        Err(_) => {
+            return Ok(Registration::Skipped(
+                "no fleet.toml found (set TUGBOAT_FLEET)".into(),
+            ))
+        }
+    };
+    let fleet = load(&fleet_path)?;
+
+    // Where would this repo sit, relative to the fleet root?
+    let (Ok(root), Ok(proj)) = (fleet.root_dir().canonicalize(), project_dir.canonicalize())
+    else {
+        return Ok(Registration::Skipped("could not resolve repo path".into()));
+    };
+    let Ok(rel) = proj.strip_prefix(&root) else {
+        return Ok(Registration::Skipped(format!(
+            "repo is outside the fleet root {}",
+            root.display()
+        )));
+    };
+    let member_path = rel.to_string_lossy().into_owned();
+
+    // Already a member, by path or by deploy label? Then there's nothing to do.
+    if fleet
+        .members
+        .iter()
+        .any(|m| m.path == member_path || m.label() == service_name)
+    {
+        return Ok(Registration::AlreadyMember);
+    }
+
+    // The git remote is what `fleet clone` needs.
+    let Some(repo) = git::out(project_dir, &["remote", "get-url", "origin"])?
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(Registration::Skipped("repo has no `origin` remote".into()));
+    };
+
+    let text = fs::read_to_string(&fleet_path)
+        .with_context(|| format!("reading {}", fleet_path.display()))?;
+    let updated = append_member_toml(&text, &member_path, &repo)?;
+    fs::write(&fleet_path, updated)
+        .with_context(|| format!("writing {}", fleet_path.display()))?;
+
+    Ok(Registration::Registered {
+        fleet_path,
+        member_path,
+        repo,
+    })
+}
+
+/// Append a `[[members]]` entry to `fleet.toml` text, preserving the file's
+/// existing comments and layout (a format-preserving edit, not a re-serialize).
+fn append_member_toml(text: &str, member_path: &str, repo: &str) -> Result<String> {
+    use toml_edit::{value, DocumentMut, Table};
+    let mut doc: DocumentMut = text.parse().context("parsing fleet.toml")?;
+    let members = doc["members"]
+        .as_array_of_tables_mut()
+        .context("fleet.toml `members` is not an array of tables")?;
+    let mut t = Table::new();
+    t.decor_mut()
+        .set_prefix("\n# Registered automatically by `tugboat deploy`.\n");
+    t["path"] = value(member_path);
+    t["repo"] = value(repo);
+    members.push(t);
+    Ok(doc.to_string())
+}
+
 /// Filter members to an optional comma-separated `--only` set (matched against
 /// the member label). Errors if a requested name matches no member.
 fn select<'a>(fleet: &'a Fleet, only: Option<&str>) -> Result<Vec<&'a Member>> {
@@ -376,5 +463,97 @@ fn fmt_list(items: &[String]) -> String {
         "(none)".into()
     } else {
         items.join(", ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_member_preserves_comments_and_adds_entry() {
+        let src = r#"# fleet header comment
+root = "~/code"
+
+[[members]]
+# lighthouse comment
+path = "lighthouse"
+repo = "git@github.com:deepwa7er/lighthouse.git"
+
+[docs]
+repo = "pilot"
+build = "x"
+dist = "d"
+host = "h"
+dest = "/opt/p"
+"#;
+        let out = append_member_toml(
+            src,
+            "drydock",
+            "git@github.com:deepwa7er/drydock.git",
+        )
+        .unwrap();
+
+        // Hand-written comments and the [docs] table survive the edit.
+        assert!(out.contains("# fleet header comment"));
+        assert!(out.contains("# lighthouse comment"));
+        assert!(out.contains("[docs]"));
+        assert!(out.contains("Registered automatically"));
+
+        // Re-parses, with the new member appended and deploy defaulting to true.
+        let fleet: Fleet = toml::from_str(&out).unwrap();
+        assert_eq!(fleet.members.len(), 2);
+        assert_eq!(fleet.members[0].path, "lighthouse");
+        assert_eq!(fleet.members[1].path, "drydock");
+        assert_eq!(fleet.members[1].repo, "git@github.com:deepwa7er/drydock.git");
+        assert!(fleet.members[1].deploy);
+    }
+
+    #[test]
+    fn ensure_member_registers_then_is_idempotent() {
+        // Hermetic fleet root with one existing member plus a service repo to add.
+        let tmp = std::env::temp_dir().join(format!("tugboat-fleettest-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let root = tmp.join("code");
+        let svc = root.join("newsvc");
+        fs::create_dir_all(&svc).unwrap();
+
+        // A git repo with an origin remote (the URL is never fetched).
+        let git = |args: &[&str]| {
+            assert!(Command::new("git")
+                .arg("-C")
+                .arg(&svc)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        };
+        git(&["init", "-q"]);
+        git(&["remote", "add", "origin", "git@github.com:deepwa7er/newsvc.git"]);
+
+        let fleet_path = tmp.join("fleet.toml");
+        fs::write(
+            &fleet_path,
+            format!(
+                "root = \"{}\"\n\n[[members]]\npath = \"existing\"\nrepo = \"git@github.com:deepwa7er/existing.git\"\n",
+                root.display()
+            ),
+        )
+        .unwrap();
+        std::env::set_var("TUGBOAT_FLEET", &fleet_path);
+
+        // First deploy registers the service…
+        let first = ensure_member(&svc, "newsvc").unwrap();
+        assert!(matches!(first, Registration::Registered { .. }), "got {first:?}");
+        let reloaded = load(&fleet_path).unwrap();
+        assert!(reloaded.members.iter().any(|m| m.path == "newsvc"));
+        assert_eq!(reloaded.members.len(), 2);
+
+        // …a second deploy is a no-op (no duplicate entry).
+        assert_eq!(ensure_member(&svc, "newsvc").unwrap(), Registration::AlreadyMember);
+        assert_eq!(load(&fleet_path).unwrap().members.len(), 2);
+
+        std::env::remove_var("TUGBOAT_FLEET");
+        let _ = fs::remove_dir_all(&tmp);
     }
 }
