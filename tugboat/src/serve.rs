@@ -17,7 +17,7 @@ use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
@@ -116,7 +116,12 @@ impl LogSink for ChannelSink {
 }
 
 struct ServeState {
-    fleet: Fleet,
+    /// The fleet, reloaded from disk per request via [`ServeState::fleet`] so
+    /// edits to `fleet.toml` (e.g. `tugboat deploy` auto-registering a new
+    /// member) take effect without restarting the daemon.
+    fleet: RwLock<Fleet>,
+    /// Path to `fleet.toml`, the source for the reloads above.
+    manifest_path: PathBuf,
     token: String,
     jobs: Mutex<HashMap<String, Arc<Job>>>,
     /// Service labels with a deploy currently in flight (one at a time each).
@@ -132,6 +137,22 @@ struct ServeState {
     docs_notify: Arc<Notify>,
     /// The docs auto-refresh state (last build outcome, whether one is running).
     docs: Mutex<DocsStatus>,
+}
+
+impl ServeState {
+    /// A read view of the fleet, reloaded from `fleet.toml` first so changes to
+    /// the manifest take effect without a daemon restart. If the reload fails
+    /// (a partial write, or a malformed file), the last good copy is kept so a
+    /// transient bad read can't blank out the fleet.
+    fn fleet(&self) -> RwLockReadGuard<'_, Fleet> {
+        match fleet::load(&self.manifest_path) {
+            Ok(fresh) => *self.fleet.write().unwrap() = fresh,
+            Err(err) => {
+                eprintln!("tugboat serve: keeping last-good fleet.toml (reload failed: {err:#})")
+            }
+        }
+        self.fleet.read().unwrap()
+    }
 }
 
 /// The state of the docs auto-refresh, surfaced at `GET /docs`.
@@ -196,7 +217,8 @@ pub fn run(args: ServeArgs) -> Result<()> {
         .unwrap_or(0);
 
     let state = Arc::new(ServeState {
-        fleet,
+        fleet: RwLock::new(fleet),
+        manifest_path,
         token,
         jobs: Mutex::new(HashMap::new()),
         in_flight: Mutex::new(HashSet::new()),
@@ -215,7 +237,7 @@ pub fn run(args: ServeArgs) -> Result<()> {
         // The docs auto-refresh runs only when the fleet actually has a docs site
         // configured. The keeper does the (debounced, one-at-a-time) builds; the
         // catch-up pulses it on a timer as the backstop.
-        if state.fleet.docs.is_some() {
+        if state.fleet().docs.is_some() {
             tokio::spawn(docs_keeper(state.clone()));
             tokio::spawn(docs_catchup(state.clone()));
         }
@@ -291,14 +313,14 @@ async fn health(State(state): State<Arc<ServeState>>) -> Json<HealthInfo> {
 
 /// `GET /services` — the deployable fleet members.
 async fn list_services(State(state): State<Arc<ServeState>>) -> Json<Vec<ServiceInfo>> {
-    let services = state
-        .fleet
+    let fleet = state.fleet();
+    let services = fleet
         .members
         .iter()
         .filter(|m| m.deploy)
         .map(|m| ServiceInfo {
             name: m.label().to_owned(),
-            manifest_present: state.fleet.manifest_path(m).is_file(),
+            manifest_present: fleet.manifest_path(m).is_file(),
         })
         .collect();
     Json(services)
@@ -359,14 +381,14 @@ async fn list_status(
     Query(query): Query<StatusQuery>,
 ) -> Json<Vec<StatusInfo>> {
     let deployed = parse_deployed(&query.deployed);
-    let infos = state
-        .fleet
+    let fleet = state.fleet();
+    let infos = fleet
         .members
         .iter()
         .filter(|m| m.deploy)
         .map(|m| {
             let name = m.label().to_owned();
-            let dir = state.fleet.dir(m);
+            let dir = fleet.dir(m);
             let st = git::state(&dir);
             let head_short = st.head_sha.as_deref().map(|s| git::short(s).to_owned());
 
@@ -408,18 +430,21 @@ async fn deploy_service(
     Path(name): Path<String>,
 ) -> Result<Json<DeployStarted>, (StatusCode, String)> {
     // Validate fully before reserving the in-flight slot, so a rejected request
-    // never leaves a service marked busy.
-    let member = state
-        .fleet
-        .find(&name)
-        .ok_or((StatusCode::NOT_FOUND, format!("no fleet member named `{name}`")))?;
-    if !member.deploy {
-        return Err((
-            StatusCode::FORBIDDEN,
-            format!("`{name}` is configured with deploy = false"),
-        ));
-    }
-    let manifest_path = state.fleet.manifest_path(member);
+    // never leaves a service marked busy. The fleet read guard is scoped to this
+    // block — only the owned `manifest_path` escapes into the spawned job.
+    let manifest_path = {
+        let fleet = state.fleet();
+        let member = fleet
+            .find(&name)
+            .ok_or((StatusCode::NOT_FOUND, format!("no fleet member named `{name}`")))?;
+        if !member.deploy {
+            return Err((
+                StatusCode::FORBIDDEN,
+                format!("`{name}` is configured with deploy = false"),
+            ));
+        }
+        fleet.manifest_path(member)
+    };
     if !manifest_path.is_file() {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -603,7 +628,7 @@ async fn docs_keeper(state: Arc<ServeState>) {
         // next `notified()` returns at once — nothing is lost, just coalesced.
         tokio::time::sleep(DOCS_DEBOUNCE).await;
 
-        let fingerprint = docs::fleet_fingerprint(&state.fleet);
+        let fingerprint = docs::fleet_fingerprint(&state.fleet());
         if docs::read_stored_fingerprint().as_deref() == Some(fingerprint.as_str()) {
             continue; // nothing changed (e.g. a periodic backstop tick)
         }
@@ -611,10 +636,11 @@ async fn docs_keeper(state: Arc<ServeState>) {
         state.docs.lock().unwrap().building = true;
         println!("tugboat: fleet changed — rebuilding docs");
 
-        let build_state = state.clone();
+        // Snapshot the fleet so the long build doesn't hold the read lock.
+        let snapshot = state.fleet().clone();
         let outcome = tokio::task::spawn_blocking(move || {
             docs::generate(
-                &build_state.fleet,
+                &snapshot,
                 &docs::Options {
                     out: None,
                     skip_build: false,

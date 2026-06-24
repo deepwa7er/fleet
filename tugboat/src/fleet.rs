@@ -16,7 +16,7 @@ use serde::Deserialize;
 use crate::{deploy, git, manifest};
 
 /// The fleet manifest, `fleet.toml`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Fleet {
     /// Base directory the member `path`s are relative to. A leading `~/`
     /// expands to the home directory. Defaults to `~/code`.
@@ -37,7 +37,7 @@ fn default_root() -> String {
 /// documentation site. The site is process-less static files (built from the
 /// `repo` frontend plus the harvested model and per-repo rustdoc) served by
 /// breakwater, so this records only the frontend build and the ship target.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct DocsConfig {
     /// Member path (relative to the fleet `root`) of the frontend repo, e.g.
     /// `pilot`.
@@ -62,7 +62,7 @@ pub struct DocsConfig {
     pub extra_loc: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Member {
     /// Repo directory, relative to the fleet `root` (also the `clone` target).
     pub path: String,
