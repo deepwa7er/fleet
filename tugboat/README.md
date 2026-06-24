@@ -30,36 +30,49 @@ tugboat deploy --manifest path/to/deploy.toml
 
 ## The fleet
 
-`tugboat fleet …` operates on the whole suite at once, driven by a `fleet.toml`
-that lists the member repos (shipped in this repo). The manifest is found via
-`--manifest`, else `TUGBOAT_FLEET`, else the nearest `fleet.toml` searching
-upward from the current directory.
+There are two distinct ideas here — keep them separate:
+
+- **Deployability is discovered, not declared.** A repo is a deployable service
+  **iff it contains a `deploy.toml`**. `tugboat serve`, `fleet deploy`, and
+  lighthouse all find deployable services by scanning the fleet `root` for
+  `*/deploy.toml`. So **a new service is deployable and fleet-visible the moment
+  it has a `deploy.toml`** — no roster entry, no commit, no daemon restart.
+- **`fleet.toml` is the git working set.** It lists the member repos tugboat
+  manages together for whole-fleet *git* operations (`clone`/`pull`/`status`).
+  Listing a repo here is only about having it checked out across machines; it is
+  **not** what makes something deployable.
+
+> **Adding a new service:** give it a `deploy.toml` (and a `provision.sh` for
+> first-time infra) — that alone makes it deployable, discoverable by the daemon,
+> and visible in lighthouse. Add it to `fleet.toml` *only* if you also want it
+> cloned/pulled on your other machines (optional, and decoupled from deploying).
+
+The `fleet.toml` manifest is found via `--manifest`, else `TUGBOAT_FLEET`, else
+the nearest `fleet.toml` searching upward from the current directory.
 
 ```sh
-tugboat fleet list      # show members and whether each is tugboat-deployed
+tugboat fleet list      # show members and whether each is deployable (has deploy.toml)
 tugboat fleet clone     # clone any members not yet checked out (new machine)
 tugboat fleet pull      # fast-forward-only pull every clean member checkout
 tugboat fleet status    # git summary (branch / clean / ahead-behind) per member
-tugboat fleet deploy    # deploy each `deploy = true` member, in listed order
-tugboat fleet deploy --only lighthouse,buoy   # a subset
-tugboat fleet deploy --dry-run                # print every member's plan
+tugboat fleet deploy    # deploy every discovered deployable service
+tugboat fleet deploy --only lighthouse,buoy   # a subset (by service name)
+tugboat fleet deploy --dry-run                # print every service's plan
 tugboat fleet deploy --continue-on-error      # don't stop at the first failure
 tugboat fleet docs           # build + ship the docs site (see "Fleet documentation")
 tugboat fleet hooks install  # auto-refresh the docs on every commit
 ```
 
-`fleet deploy` reuses the single-service engine per member, so each member gets
-its own atomic install + health-check + rollback. It stops at the first failure
-unless `--continue-on-error`. Members without a `deploy.toml` set `deploy =
-false`; they still participate in `clone`/`pull`/`status`.
+`fleet deploy` reuses the single-service engine per service, so each gets its own
+atomic install + health-check + rollback. It stops at the first failure unless
+`--continue-on-error`.
 
 A `fleet.toml` member records only `path` (relative to `root`, a leading `~/`
 expands to `$HOME`) and its `repo` remote — deploy details stay in each repo's
-own `deploy.toml`, so there is one source of truth per service.
-
-A member's `path` is relative to `root` and must resolve the same on every
-machine, so fleet members are checked out at a consistent location (`~/code/<name>`)
-everywhere — not tucked under per-machine grouping folders.
+own `deploy.toml`, so there is one source of truth per service. A member's `path`
+must resolve the same on every machine, so fleet members are checked out at a
+consistent location (`~/code/<name>`) everywhere — not tucked under per-machine
+grouping folders.
 
 ## Serving deploys (trigger from anywhere on the tailnet)
 

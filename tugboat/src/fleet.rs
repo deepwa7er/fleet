@@ -68,19 +68,6 @@ pub struct Member {
     pub path: String,
     /// Git remote, used by `fleet clone`.
     pub repo: String,
-    /// Whether `fleet deploy` deploys this member. Members that ship some other
-    /// way (e.g. a multi-unit backend) set this false but still clone/pull.
-    #[serde(default = "default_true")]
-    pub deploy: bool,
-    /// Deploy manifest within the repo. Defaults to `deploy.toml`.
-    #[serde(default = "default_manifest")]
-    pub manifest: String,
-}
-fn default_true() -> bool {
-    true
-}
-fn default_manifest() -> String {
-    "deploy.toml".into()
 }
 
 impl Member {
@@ -93,6 +80,58 @@ impl Member {
     }
 }
 
+/// A deployable service discovered on disk: a directory under the fleet root
+/// that contains a `deploy.toml`. Deployability is a fact of the filesystem —
+/// the presence of a deploy manifest — not a roster entry, so a newly-built
+/// service is deployable (and visible to the daemon and lighthouse) the moment
+/// it has one, with no `fleet.toml` edit.
+#[derive(Debug, Clone)]
+pub struct Deployable {
+    /// Service name — the repo directory's final component (matches the deploy
+    /// label and the systemd unit stem).
+    pub name: String,
+    /// The repo directory.
+    pub dir: PathBuf,
+    /// The deploy manifest within it (`<dir>/deploy.toml`).
+    pub manifest_path: PathBuf,
+}
+
+/// Discover deployable services by scanning the fleet `root` for immediate
+/// subdirectories that contain a `deploy.toml`. Sorted by name for stable output.
+pub fn discover_deployables(root: &Path) -> Result<Vec<Deployable>> {
+    let mut found = Vec::new();
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        // A missing root is simply an empty fleet (e.g. a fresh machine).
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(found),
+        Err(e) => {
+            return Err(e).with_context(|| format!("scanning fleet root {}", root.display()))
+        }
+    };
+    for entry in entries {
+        let dir = entry
+            .with_context(|| format!("reading {}", root.display()))?
+            .path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let manifest_path = dir.join("deploy.toml");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let Some(name) = dir.file_name().and_then(|s| s.to_str()).map(str::to_owned) else {
+            continue;
+        };
+        found.push(Deployable {
+            name,
+            dir,
+            manifest_path,
+        });
+    }
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(found)
+}
+
 impl Fleet {
     /// The fleet root as an absolute path (a leading `~/` expanded).
     pub fn root_dir(&self) -> PathBuf {
@@ -102,11 +141,6 @@ impl Fleet {
     /// Absolute path to a member's checkout.
     pub fn dir(&self, member: &Member) -> PathBuf {
         expand_tilde(&self.root).join(&member.path)
-    }
-
-    /// Absolute path to a member's deploy manifest within its checkout.
-    pub fn manifest_path(&self, member: &Member) -> PathBuf {
-        self.dir(member).join(&member.manifest)
     }
 
     /// Find a member by its label (the repo directory's final component).
@@ -198,116 +232,17 @@ pub fn load(path: &Path) -> Result<Fleet> {
     Ok(fleet)
 }
 
-/// Outcome of trying to record a just-deployed service as a fleet member.
-#[derive(Debug, PartialEq)]
-pub enum Registration {
-    /// Already listed in `fleet.toml` — nothing to do.
-    AlreadyMember,
-    /// Appended a new `[[members]]` entry to the fleet manifest.
-    Registered { fleet_path: PathBuf, member_path: String, repo: String },
-    /// Not registered, with a human-readable reason. Best-effort: a registration
-    /// hiccup must never undo a deploy that already succeeded, so anything that
-    /// prevents expressing the service as a member yields this rather than an error.
-    Skipped(String),
-}
-
-/// Ensure a service that `tugboat deploy` just shipped is recorded as a fleet
-/// member, appending it to `fleet.toml` if absent. Located via the same
-/// `resolve_manifest` rules as every other fleet op (explicit path, then
-/// `TUGBOAT_FLEET`, then an upward search). Best-effort — see [`Registration`].
-pub fn ensure_member(project_dir: &Path, service_name: &str) -> Result<Registration> {
-    let fleet_path = match resolve_manifest(None) {
-        Ok(p) => p,
-        Err(_) => {
-            return Ok(Registration::Skipped(
-                "no fleet.toml found (set TUGBOAT_FLEET)".into(),
-            ))
-        }
-    };
-    let fleet = load(&fleet_path)?;
-
-    // Where would this repo sit, relative to the fleet root?
-    let (Ok(root), Ok(proj)) = (fleet.root_dir().canonicalize(), project_dir.canonicalize())
-    else {
-        return Ok(Registration::Skipped("could not resolve repo path".into()));
-    };
-    let Ok(rel) = proj.strip_prefix(&root) else {
-        return Ok(Registration::Skipped(format!(
-            "repo is outside the fleet root {}",
-            root.display()
-        )));
-    };
-    let member_path = rel.to_string_lossy().into_owned();
-
-    // Already a member, by path or by deploy label? Then there's nothing to do.
-    if fleet
-        .members
-        .iter()
-        .any(|m| m.path == member_path || m.label() == service_name)
-    {
-        return Ok(Registration::AlreadyMember);
-    }
-
-    // The git remote is what `fleet clone` needs.
-    let Some(repo) = git::out(project_dir, &["remote", "get-url", "origin"])?
-        .filter(|s| !s.is_empty())
-    else {
-        return Ok(Registration::Skipped("repo has no `origin` remote".into()));
-    };
-
-    let text = fs::read_to_string(&fleet_path)
-        .with_context(|| format!("reading {}", fleet_path.display()))?;
-    let updated = append_member_toml(&text, &member_path, &repo)?;
-    fs::write(&fleet_path, updated)
-        .with_context(|| format!("writing {}", fleet_path.display()))?;
-
-    Ok(Registration::Registered {
-        fleet_path,
-        member_path,
-        repo,
-    })
-}
-
-/// Append a `[[members]]` entry to `fleet.toml` text, preserving the file's
-/// existing comments and layout (a format-preserving edit, not a re-serialize).
-fn append_member_toml(text: &str, member_path: &str, repo: &str) -> Result<String> {
-    use toml_edit::{value, DocumentMut, Table};
-    let mut doc: DocumentMut = text.parse().context("parsing fleet.toml")?;
-    let members = doc["members"]
-        .as_array_of_tables_mut()
-        .context("fleet.toml `members` is not an array of tables")?;
-    let mut t = Table::new();
-    t.decor_mut()
-        .set_prefix("\n# Registered automatically by `tugboat deploy`.\n");
-    t["path"] = value(member_path);
-    t["repo"] = value(repo);
-    members.push(t);
-    Ok(doc.to_string())
-}
-
-/// Filter members to an optional comma-separated `--only` set (matched against
-/// the member label). Errors if a requested name matches no member.
-fn select<'a>(fleet: &'a Fleet, only: Option<&str>) -> Result<Vec<&'a Member>> {
-    let Some(only) = only else {
-        return Ok(fleet.members.iter().collect());
-    };
-    let wanted: Vec<&str> = only.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
-    let mut chosen = Vec::new();
-    for name in &wanted {
-        match fleet.members.iter().find(|m| m.label() == *name) {
-            Some(m) => chosen.push(m),
-            None => bail!("--only: no fleet member named `{name}`"),
-        }
-    }
-    Ok(chosen)
-}
-
-/// `fleet list` — show the configured members.
+/// `fleet list` — show the configured members and whether each is a deployable
+/// service (has a `deploy.toml`) or clone-only.
 pub fn list(fleet: &Fleet) {
     println!("Fleet ({} members, root {}):\n", fleet.members.len(), fleet.root);
     for m in &fleet.members {
-        let tag = if m.deploy { "deploy" } else { "no-deploy" };
-        println!("  {:<14} [{:>9}]  {}", m.label(), tag, m.repo);
+        let tag = if fleet.dir(m).join("deploy.toml").is_file() {
+            "deploy"
+        } else {
+            "clone-only"
+        };
+        println!("  {:<14} [{:>10}]  {}", m.label(), tag, m.repo);
     }
 }
 
@@ -393,8 +328,10 @@ pub fn status(fleet: &Fleet) -> Result<()> {
     Ok(())
 }
 
-/// `fleet deploy` — deploy each deployable member in listed order, reusing the
-/// per-service deploy engine. Fail-fast unless `continue_on_error`.
+/// `fleet deploy` — deploy every discovered deployable service (any repo under
+/// the fleet root with a `deploy.toml`), reusing the per-service deploy engine.
+/// Fail-fast unless `continue_on_error`. An optional comma-separated `--only`
+/// set restricts to named services.
 pub fn deploy(
     fleet: &Fleet,
     only: Option<&str>,
@@ -402,58 +339,51 @@ pub fn deploy(
     dry_run: bool,
     continue_on_error: bool,
 ) -> Result<()> {
-    let members = select(fleet, only)?;
+    let root = fleet.root_dir();
+    let mut deployables = discover_deployables(&root)?;
+
+    if let Some(only) = only {
+        let wanted: Vec<&str> = only.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+        for name in &wanted {
+            if !deployables.iter().any(|d| d.name == *name) {
+                bail!("--only: no deployable service named `{name}` (needs a deploy.toml under {})", root.display());
+            }
+        }
+        deployables.retain(|d| wanted.contains(&d.name.as_str()));
+    }
+
+    if deployables.is_empty() {
+        println!("No deployable services found under {}", root.display());
+        return Ok(());
+    }
+
     let mut deployed = Vec::new();
-    let mut skipped = Vec::new();
     let mut failed = Vec::new();
 
-    for m in members {
-        let label = m.label();
-        if !m.deploy {
-            println!("\n— skipping {label} (deploy = false)");
-            skipped.push(label.to_string());
-            continue;
-        }
-        let manifest_path = fleet.dir(m).join(&m.manifest);
-        if !manifest_path.is_file() {
-            // deploy = true but no manifest is a configuration error, surfaced
-            // loudly rather than silently skipped.
-            let msg = format!("{label}: manifest not found at {}", manifest_path.display());
-            if continue_on_error {
-                eprintln!("\n!! {msg}");
-                failed.push(label.to_string());
-                continue;
-            }
-            bail!(msg);
-        }
-
-        println!("\n════ {label} ════");
+    for d in &deployables {
+        println!("\n════ {} ════", d.name);
         let result = (|| -> Result<()> {
-            let project_dir = manifest_path.parent().context("manifest has no parent")?;
-            let m = manifest::load(&manifest_path, None)?;
-            deploy::run(&m, project_dir, skip_build, dry_run, &deploy::StdoutSink)
+            let manifest = manifest::load(&d.manifest_path, None)?;
+            deploy::run(&manifest, &d.dir, skip_build, dry_run, &deploy::StdoutSink)
         })();
 
         match result {
-            Ok(()) => deployed.push(label.to_string()),
+            Ok(()) => deployed.push(d.name.clone()),
             Err(err) if continue_on_error => {
-                eprintln!("!! {label} failed: {err:#}");
-                failed.push(label.to_string());
+                eprintln!("!! {} failed: {err:#}", d.name);
+                failed.push(d.name.clone());
             }
             Err(err) => {
-                return Err(err.context(format!("fleet deploy aborted at {label}")));
+                return Err(err.context(format!("fleet deploy aborted at {}", d.name)));
             }
         }
     }
 
     println!("\n──── fleet deploy summary ────");
     println!("  deployed: {}", fmt_list(&deployed));
-    if !skipped.is_empty() {
-        println!("  skipped:  {}", fmt_list(&skipped));
-    }
     if !failed.is_empty() {
         println!("  failed:   {}", fmt_list(&failed));
-        bail!("{} member(s) failed to deploy", failed.len());
+        bail!("{} service(s) failed to deploy", failed.len());
     }
     Ok(())
 }
@@ -471,89 +401,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn append_member_preserves_comments_and_adds_entry() {
-        let src = r#"# fleet header comment
-root = "~/code"
+    fn discovers_only_dirs_with_a_deploy_toml() {
+        let tmp = std::env::temp_dir().join(format!("tugboat-discover-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
 
-[[members]]
-# lighthouse comment
-path = "lighthouse"
-repo = "git@github.com:deepwa7er/lighthouse.git"
+        // Two deployable services, one clone-only repo, one loose file.
+        for name in ["bravo", "alpha"] {
+            let d = tmp.join(name);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("deploy.toml"), "name = \"x\"\n").unwrap();
+        }
+        fs::create_dir_all(tmp.join("charlie")).unwrap(); // no deploy.toml
+        fs::write(tmp.join("loose.txt"), "x").unwrap();
 
-[docs]
-repo = "pilot"
-build = "x"
-dist = "d"
-host = "h"
-dest = "/opt/p"
-"#;
-        let out = append_member_toml(
-            src,
-            "drydock",
-            "git@github.com:deepwa7er/drydock.git",
-        )
-        .unwrap();
+        let found = discover_deployables(&tmp).unwrap();
+        let names: Vec<_> = found.iter().map(|d| d.name.as_str()).collect();
+        // Only the deploy.toml dirs, sorted.
+        assert_eq!(names, vec!["alpha", "bravo"]);
+        assert!(found[0].manifest_path.ends_with("alpha/deploy.toml"));
 
-        // Hand-written comments and the [docs] table survive the edit.
-        assert!(out.contains("# fleet header comment"));
-        assert!(out.contains("# lighthouse comment"));
-        assert!(out.contains("[docs]"));
-        assert!(out.contains("Registered automatically"));
-
-        // Re-parses, with the new member appended and deploy defaulting to true.
-        let fleet: Fleet = toml::from_str(&out).unwrap();
-        assert_eq!(fleet.members.len(), 2);
-        assert_eq!(fleet.members[0].path, "lighthouse");
-        assert_eq!(fleet.members[1].path, "drydock");
-        assert_eq!(fleet.members[1].repo, "git@github.com:deepwa7er/drydock.git");
-        assert!(fleet.members[1].deploy);
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
-    fn ensure_member_registers_then_is_idempotent() {
-        // Hermetic fleet root with one existing member plus a service repo to add.
-        let tmp = std::env::temp_dir().join(format!("tugboat-fleettest-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&tmp);
-        let root = tmp.join("code");
-        let svc = root.join("newsvc");
-        fs::create_dir_all(&svc).unwrap();
-
-        // A git repo with an origin remote (the URL is never fetched).
-        let git = |args: &[&str]| {
-            assert!(Command::new("git")
-                .arg("-C")
-                .arg(&svc)
-                .args(args)
-                .status()
-                .unwrap()
-                .success());
-        };
-        git(&["init", "-q"]);
-        git(&["remote", "add", "origin", "git@github.com:deepwa7er/newsvc.git"]);
-
-        let fleet_path = tmp.join("fleet.toml");
-        fs::write(
-            &fleet_path,
-            format!(
-                "root = \"{}\"\n\n[[members]]\npath = \"existing\"\nrepo = \"git@github.com:deepwa7er/existing.git\"\n",
-                root.display()
-            ),
-        )
-        .unwrap();
-        std::env::set_var("TUGBOAT_FLEET", &fleet_path);
-
-        // First deploy registers the service…
-        let first = ensure_member(&svc, "newsvc").unwrap();
-        assert!(matches!(first, Registration::Registered { .. }), "got {first:?}");
-        let reloaded = load(&fleet_path).unwrap();
-        assert!(reloaded.members.iter().any(|m| m.path == "newsvc"));
-        assert_eq!(reloaded.members.len(), 2);
-
-        // …a second deploy is a no-op (no duplicate entry).
-        assert_eq!(ensure_member(&svc, "newsvc").unwrap(), Registration::AlreadyMember);
-        assert_eq!(load(&fleet_path).unwrap().members.len(), 2);
-
-        std::env::remove_var("TUGBOAT_FLEET");
-        let _ = fs::remove_dir_all(&tmp);
+    fn discover_on_missing_root_is_empty() {
+        let p = std::env::temp_dir().join("tugboat-does-not-exist-zzz");
+        assert!(discover_deployables(&p).unwrap().is_empty());
     }
 }

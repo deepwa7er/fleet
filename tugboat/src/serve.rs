@@ -313,14 +313,13 @@ async fn health(State(state): State<Arc<ServeState>>) -> Json<HealthInfo> {
 
 /// `GET /services` — the deployable fleet members.
 async fn list_services(State(state): State<Arc<ServeState>>) -> Json<Vec<ServiceInfo>> {
-    let fleet = state.fleet();
-    let services = fleet
-        .members
-        .iter()
-        .filter(|m| m.deploy)
-        .map(|m| ServiceInfo {
-            name: m.label().to_owned(),
-            manifest_present: fleet.manifest_path(m).is_file(),
+    let root = state.fleet().root_dir();
+    let services = fleet::discover_deployables(&root)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|d| ServiceInfo {
+            name: d.name,
+            manifest_present: true,
         })
         .collect();
     Json(services)
@@ -381,16 +380,19 @@ async fn list_status(
     Query(query): Query<StatusQuery>,
 ) -> Json<Vec<StatusInfo>> {
     let deployed = parse_deployed(&query.deployed);
-    let fleet = state.fleet();
-    let infos = fleet
-        .members
-        .iter()
-        .filter(|m| m.deploy)
-        .map(|m| {
-            let name = m.label().to_owned();
-            let dir = fleet.dir(m);
+    let root = state.fleet().root_dir();
+    let infos = fleet::discover_deployables(&root)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|d| {
+            let name = d.name;
+            let dir = d.dir;
             let st = git::state(&dir);
             let head_short = st.head_sha.as_deref().map(|s| git::short(s).to_owned());
+            let repo_url = git::out(&dir, &["remote", "get-url", "origin"])
+                .ok()
+                .flatten()
+                .and_then(|r| git::github_web_url(&r));
 
             let (undeployed_commits, deployed_is_ancestor) =
                 match (deployed.get(&name), st.head_sha.as_deref()) {
@@ -408,7 +410,7 @@ async fn list_status(
 
             StatusInfo {
                 name,
-                repo_url: git::github_web_url(&m.repo),
+                repo_url,
                 branch: st.branch,
                 head_sha: st.head_sha,
                 head_short,
@@ -430,27 +432,21 @@ async fn deploy_service(
     Path(name): Path<String>,
 ) -> Result<Json<DeployStarted>, (StatusCode, String)> {
     // Validate fully before reserving the in-flight slot, so a rejected request
-    // never leaves a service marked busy. The fleet read guard is scoped to this
-    // block — only the owned `manifest_path` escapes into the spawned job.
-    let manifest_path = {
-        let fleet = state.fleet();
-        let member = fleet
-            .find(&name)
-            .ok_or((StatusCode::NOT_FOUND, format!("no fleet member named `{name}`")))?;
-        if !member.deploy {
-            return Err((
-                StatusCode::FORBIDDEN,
-                format!("`{name}` is configured with deploy = false"),
-            ));
-        }
-        fleet.manifest_path(member)
-    };
-    if !manifest_path.is_file() {
-        return Err((
-            StatusCode::UNPROCESSABLE_ENTITY,
-            format!("deploy manifest not found at {}", manifest_path.display()),
-        ));
-    }
+    // never leaves a service marked busy. Discovery guarantees the manifest
+    // exists, so finding the service by name yields a ready-to-use manifest path.
+    let root = state.fleet().root_dir();
+    let manifest_path = fleet::discover_deployables(&root)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?
+        .into_iter()
+        .find(|d| d.name == name)
+        .map(|d| d.manifest_path)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            format!(
+                "no deployable service named `{name}` (needs a deploy.toml under {})",
+                root.display()
+            ),
+        ))?;
 
     {
         let mut in_flight = state.in_flight.lock().unwrap();

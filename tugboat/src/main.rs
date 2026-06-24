@@ -282,28 +282,9 @@ fn run_deploy(args: DeployArgs) -> Result<()> {
         .to_path_buf();
 
     let manifest = manifest::load(&manifest_path, args.host.as_deref())?;
-    deploy::run(&manifest, &project_dir, args.skip_build, args.dry_run, &deploy::StdoutSink)?;
-
-    // A real deploy also enrolls the service in the fleet roster if it isn't
-    // already there, so it shows up in `fleet` ops and lighthouse's deploy view.
-    // Best-effort: never fail a successful deploy over registration.
-    if !args.dry_run {
-        match fleet::ensure_member(&project_dir, &manifest.name) {
-            Ok(fleet::Registration::Registered { fleet_path, .. }) => println!(
-                "\n==> registered {} in the fleet ({})\n    commit & push tugboat to persist it.",
-                manifest.name,
-                fleet_path.display()
-            ),
-            Ok(fleet::Registration::AlreadyMember) => {}
-            Ok(fleet::Registration::Skipped(why)) => {
-                eprintln!("\n   note: did not auto-register {} in the fleet — {why}", manifest.name)
-            }
-            Err(err) => {
-                eprintln!("\n   note: fleet registration check failed: {err:#}")
-            }
-        }
-    }
-    Ok(())
+    // The daemon discovers deployables from their deploy.toml, so a new service
+    // is fleet-visible the moment it has one — nothing to register here.
+    deploy::run(&manifest, &project_dir, args.skip_build, args.dry_run, &deploy::StdoutSink)
 }
 
 fn run_fleet(args: FleetArgs) -> Result<()> {

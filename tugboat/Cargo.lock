@@ -969,7 +969,6 @@ dependencies = [
  "syntect",
  "tokio",
  "toml",
- "toml_edit",
 ]
 
 [[package]]

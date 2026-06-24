@@ -9,9 +9,6 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
-# Format-preserving TOML edits — appending a fleet member to fleet.toml on deploy
-# without flattening its hand-written comments/layout.
-toml_edit = "0.22"
 anyhow = "1"
 
 # Render the Markdown that `gomarkdoc` emits for Go services into HTML for the

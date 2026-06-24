@@ -485,7 +485,7 @@ fn build_service_doc(
     crates: Vec<CrateDoc>,
 ) -> Result<ServiceDoc> {
     let label = member.label().to_string();
-    let manifest_path = fleet.manifest_path(member);
+    let manifest_path = fleet.dir(member).join("deploy.toml");
     let manifest = if manifest_path.is_file() {
         Some(manifest::parse(&manifest_path)?)
     } else {
@@ -512,7 +512,8 @@ fn build_service_doc(
     let url = route.map(|r| r.url.clone());
     let port = route.and_then(|r| r.port);
 
-    let deployed = member.deploy && manifest.is_some();
+    // A member is a deployable service iff it has a deploy.toml.
+    let deployed = manifest.is_some();
     let unit = manifest.as_ref().map(|_| format!("{name}.service"));
     let health = manifest
         .as_ref()
