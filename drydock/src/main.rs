@@ -32,10 +32,11 @@ enum Command {
     },
 
     /// Claim a ticket for work (open -> in-progress). Exit code 2 if already claimed.
+    /// `--branch` is for feature work; omit it for an investigate ticket.
     Claim {
         id: i64,
         #[arg(long)]
-        branch: String,
+        branch: Option<String>,
     },
 
     /// Show a ticket with its full thread.
@@ -57,6 +58,9 @@ enum Command {
         #[arg(long)]
         pr: String,
     },
+
+    /// Post an investigate ticket's findings as a report (-> in-review).
+    Report { id: i64, findings: String },
 
     /// Create a ticket (normally done from the web view).
     Create {
@@ -142,6 +146,9 @@ fn run_client(command: Command) -> i32 {
         Command::Resolve { id, pr } => client
             .post(&format!("/api/tickets/{id}/resolve"), json!({ "pr_url": pr }))
             .map(|v| cli::print_one(&v, "resolved")),
+        Command::Report { id, findings } => client
+            .post(&format!("/api/tickets/{id}/report"), json!({ "body": findings }))
+            .map(|v| cli::print_one(&v, "reported")),
         Command::Create {
             title,
             target,

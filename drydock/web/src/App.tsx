@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api } from "./api";
-import type { Priority, State, Ticket, TicketDetail } from "./api";
+import type { Priority, State, Ticket, TicketDetail, TicketType } from "./api";
 
 const POLL_MS = 4000;
 
@@ -162,6 +162,9 @@ function Detail({
       </div>
       <div className="meta">
         <span className={`badge state-${ticket.state}`}>{ticket.state}</span>
+        {ticket.type === "investigate" && (
+          <span className="badge type-investigate">investigate</span>
+        )}
         <span className={`pri pri-${ticket.priority}`}>{ticket.priority}</span>
         <span className="target">{ticket.target}</span>
         {ticket.branch && <code>{ticket.branch}</code>}
@@ -296,7 +299,11 @@ function Actions({
       {ticket.state === "in-review" && (
         <div className="action-box">
           <h3>Review</h3>
-          <p>Merge and deploy the PR yourself, then mark it done.</p>
+          <p>
+            {ticket.type === "investigate"
+              ? "Read the worker's report below, then mark it done."
+              : "Merge and deploy the PR yourself, then mark it done."}
+          </p>
           <button
             className="primary"
             disabled={busy}
@@ -340,6 +347,7 @@ function CreateForm({
   onCreated: () => void;
 }) {
   const [title, setTitle] = useState("");
+  const [type, setType] = useState<TicketType>("feature");
   const [target, setTarget] = useState("");
   const [goal, setGoal] = useState("");
   const [priority, setPriority] = useState<Priority>("med");
@@ -348,12 +356,15 @@ function CreateForm({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const investigate = type === "investigate";
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     try {
       await api.create({
         title,
+        type,
         target,
         goal,
         priority,
@@ -377,11 +388,20 @@ function CreateForm({
           <input value={title} onChange={(e) => setTitle(e.target.value)} required />
         </label>
         <label>
+          Type
+          <select value={type} onChange={(e) => setType(e.target.value as TicketType)}>
+            <option value="feature">feature — build it &amp; open a PR</option>
+            <option value="investigate">
+              investigate — look into it &amp; report findings
+            </option>
+          </select>
+        </label>
+        <label>
           Service
           <input
             value={target}
             onChange={(e) => setTarget(e.target.value)}
-            placeholder="existing service name"
+            placeholder={investigate ? "service / area to investigate" : "existing service name"}
             required
           />
         </label>
@@ -397,16 +417,28 @@ function CreateForm({
           </select>
         </label>
         <label>
-          Goal
-          <textarea value={goal} onChange={(e) => setGoal(e.target.value)} rows={3} required />
+          {investigate ? "What to investigate" : "Goal"}
+          <textarea
+            value={goal}
+            onChange={(e) => setGoal(e.target.value)}
+            rows={3}
+            required
+            placeholder={
+              investigate ? "Describe the issue or question to look into." : undefined
+            }
+          />
         </label>
         <label>
-          Acceptance criteria
+          {investigate ? "Where to look (optional)" : "Acceptance criteria"}
           <textarea
             value={acceptance}
             onChange={(e) => setAcceptance(e.target.value)}
             rows={4}
-            placeholder="- [ ] one criterion per line"
+            placeholder={
+              investigate
+                ? "Hints: files, logs, the suspected area."
+                : "- [ ] one criterion per line"
+            }
           />
         </label>
         <label>

@@ -66,58 +66,67 @@ STANDARDS — NON-NEGOTIABLE (these govern everything below)
 TOOLS
 - `drydock` CLI talks to the ticket server (DRYDOCK_URL).
 
+A ticket has a `type`: "feature" (build it, open a PR) or "investigate" (look
+into something, report findings — no code change). The two paths differ; the
+steps below call out where. You learn the type from step 1's output.
+
 1. SELECT
    Run: drydock next --json
-   If it prints null, report "no open tickets" and STOP.
+   If it prints null, report "no open tickets" and STOP. Note the ticket's `type`.
 
 2. CLAIM
-   Run: drydock claim <id> --branch ticket/<id>-<slug>
-   (slug = kebab-case of the title.)
+   FEATURE:     drydock claim <id> --branch ticket/<id>-<slug>  (slug = kebab title)
+   INVESTIGATE: drydock claim <id>          (no branch — there is no code change)
    If claim exits non-zero, another run took it — STOP.
 
 3. CONTEXT
    Run: drydock show <id> --json
-   Read the goal, acceptance criteria, constraints, AND the whole thread —
-   including any answers you previously asked for. This is how a resumed ticket
-   carries its history.
+   Read the goal, criteria/constraints, AND the whole thread — including any
+   answers you previously asked for. This is how a resumed ticket carries history.
 
-4. PREPARE
-   Locate the target service repo via PORTFOLIO.md. Pull its default branch.
-   If branch ticket/<id>-<slug> already EXISTS, check it out and CONTINUE from
-   its current state (resumed ticket). Otherwise create it from the default branch.
-   Read the service repo's own CLAUDE.md / conventions BEFORE writing any code.
+4. PREPARE — locate the target repo via PORTFOLIO.md.
+   FEATURE: pull its default branch. If branch ticket/<id>-<slug> already EXISTS,
+     check it out and CONTINUE (resumed ticket); else create it from the default
+     branch. Read the repo's CLAUDE.md / conventions BEFORE writing any code.
+   INVESTIGATE: read the repo — and logs / ssh / the lighthouse dashboard as
+     needed. Do NOT create a branch or modify anything: investigation is READ-ONLY.
 
-5. WORK toward the acceptance criteria. Match existing conventions. Run the
-   build and tests. Hold to the STANDARDS above.
+5. WORK.
+   FEATURE: build toward the acceptance criteria, matching conventions; run the
+     build and tests. Hold to the STANDARDS above.
+   INVESTIGATE: dig into the question using the repo and the fleet's tools. Reach
+     well-supported conclusions; separate what you CONFIRMED from what you SUSPECT.
 
 6. RESOLVE to EXACTLY ONE outcome, then STOP:
-   a. NEEDS INPUT — you cannot proceed without a decision only the human can make.
-      Commit any WIP to the branch and push.
+   a. NEEDS INPUT — you can't proceed without a decision only the human can make.
+      (Feature: commit any WIP to the branch and push first.)
       Run: drydock needs-input <id> "your specific question"
-   b. BLOCKED — the ticket cannot be completed without a hack/workaround, needs a
-      capability the repo lacks, or depends on another unfinished ticket. DO NOT
-      introduce a hack. Commit WIP and push.
+   b. BLOCKED — can't finish without a hack, a missing capability, or another
+      unfinished ticket. DO NOT hack. (Feature: commit WIP and push.)
       Run: drydock block <id> "exactly what is missing and what robust change unblocks it"
-   c. DONE — acceptance criteria met AND build/tests green. Push the branch and
-      open a PR: gh pr create (body links ticket #<id>, summarizes the change, and
-      flags anything fragile, uncertain, or any breaking change/redesign for review).
+   c. DONE (FEATURE only) — criteria met AND build/tests green. Push the branch and
+      open a PR: gh pr create (body links ticket #<id>, summarizes the change, flags
+      anything fragile/uncertain or any breaking change for review).
       Run: drydock resolve <id> --pr <pr-url>
+   d. REPORT (INVESTIGATE only) — investigation complete. Write a clear report:
+      what you found, the evidence, the root cause if known, and your
+      recommendation. Pass the whole report as one quoted argument.
+      Run: drydock report <id> "<your findings>"
 
-7. CLEAN UP — always, whatever the outcome above.
-   Return the repo to its default branch so the working tree is left clean and
-   not parked on the ticket branch:
+7. CLEAN UP — FEATURE only: return the repo to its default branch so the working
+   tree isn't parked on the ticket branch (tugboat deploys the working tree):
      git checkout <default-branch>   (e.g. main)
-   The ticket branch is already committed and pushed, so nothing is lost — a
-   resumed ticket re-checks it out in step 4. This matters because tugboat
-   deploys the working tree: leaving repos on their default branch keeps deploys
-   shipping merged main, not an in-flight ticket branch.
+   The branch is already pushed, so nothing is lost; a resumed ticket re-checks it
+   out in step 4. INVESTIGATE created no branch — nothing to clean up.
 
 HARD RULES
 - One ticket per run.
-- NEVER merge a PR. NEVER deploy (no tugboat deploy, no ssh to ships). Your
-  terminal state is in-review — the human merges and deploys.
-- End every run on the repo's default branch — never leave it on the ticket branch.
-- NEVER commit to a service repo's default branch. Work branch only. No force-push.
+- NEVER merge a PR. NEVER deploy or CHANGE anything on a ship (no tugboat deploy,
+  no mutating ssh) — read-only inspection during an investigation is fine. Your
+  terminal state is in-review; the human acts on it.
+- INVESTIGATE is READ-ONLY: never modify a repo or the fleet while investigating.
+- FEATURE: never commit to a repo's default branch (work branch only, no
+  force-push); end the run on the default branch.
 - NEVER introduce a hack to reach 'done'. Use `drydock block` instead.
 - Do ONLY what the ticket asks. Note unrelated problems in the thread (a follow-up
   ticket), don't fix them.

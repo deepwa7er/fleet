@@ -29,7 +29,7 @@ export interface Comment {
   id: number;
   ticket_id: number;
   author: "worker" | "human";
-  kind: "note" | "question" | "answer";
+  kind: "note" | "question" | "answer" | "report";
   body: string;
   created_at: string;
 }
@@ -49,8 +49,11 @@ export interface TicketDetail extends Ticket {
   events: Event[];
 }
 
+export type TicketType = "feature" | "investigate";
+
 export interface NewTicket {
   title: string;
+  type: TicketType;
   target: string;
   goal: string;
   priority: Priority;

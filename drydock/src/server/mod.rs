@@ -16,7 +16,7 @@ use serde_json::json;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
-use crate::core::model::{Priority, State as TicketState, Ticket, TicketDetail};
+use crate::core::model::{Priority, State as TicketState, Ticket, TicketDetail, TicketType};
 use crate::core::{NewTicket, Store};
 use crate::error::{Error, Result};
 
@@ -49,6 +49,7 @@ pub async fn run(store: Arc<Store>, config: ServerConfig) -> std::io::Result<()>
         .route("/api/tickets/{id}/needs-input", post(needs_input))
         .route("/api/tickets/{id}/block", post(block))
         .route("/api/tickets/{id}/resolve", post(resolve))
+        .route("/api/tickets/{id}/report", post(report))
         .route("/api/tickets/{id}/answer", post(answer))
         .route("/api/tickets/{id}/unblock", post(unblock))
         .route("/api/tickets/{id}/done", post(done))
@@ -74,6 +75,8 @@ struct ListQuery {
 #[derive(Deserialize)]
 struct CreateReq {
     title: String,
+    #[serde(rename = "type", default)]
+    ticket_type: Option<TicketType>,
     target: String,
     priority: Priority,
     goal: String,
@@ -85,7 +88,9 @@ struct CreateReq {
 
 #[derive(Deserialize)]
 struct ClaimReq {
-    branch: String,
+    /// Present for feature work; absent for an investigate ticket (no branch).
+    #[serde(default)]
+    branch: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -137,6 +142,7 @@ async fn create(
     require("goal", &req.goal)?;
     let ticket = st.store.create(NewTicket {
         title: req.title,
+        ticket_type: req.ticket_type.unwrap_or_default(),
         target: req.target,
         priority: req.priority,
         goal: req.goal,
@@ -162,8 +168,8 @@ async fn claim(
     Path(id): Path<i64>,
     Json(req): Json<ClaimReq>,
 ) -> Result<Json<Ticket>> {
-    require("branch", &req.branch)?;
-    Ok(Json(st.store.claim(id, &req.branch)?))
+    let branch = req.branch.as_deref().filter(|s| !s.trim().is_empty());
+    Ok(Json(st.store.claim(id, branch)?))
 }
 
 async fn needs_input(
@@ -191,6 +197,15 @@ async fn resolve(
 ) -> Result<Json<Ticket>> {
     require("pr_url", &req.pr_url)?;
     Ok(Json(st.store.resolve(id, &req.pr_url)?))
+}
+
+async fn report(
+    State(st): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<BodyReq>,
+) -> Result<Json<Ticket>> {
+    require("body", &req.body)?;
+    Ok(Json(st.store.report(id, &req.body)?))
 }
 
 async fn answer(

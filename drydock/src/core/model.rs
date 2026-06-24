@@ -56,7 +56,15 @@ str_enum! {
 }
 
 str_enum! {
-    TicketType { Feature => "feature" }
+    /// `Feature` → the worker builds it and opens a PR. `Investigate` → the
+    /// worker looks into something and reports findings (no code change).
+    TicketType { Feature => "feature", Investigate => "investigate" }
+}
+
+impl Default for TicketType {
+    fn default() -> Self {
+        TicketType::Feature
+    }
 }
 
 str_enum! {
@@ -64,7 +72,7 @@ str_enum! {
 }
 
 str_enum! {
-    CommentKind { Note => "note", Question => "question", Answer => "answer" }
+    CommentKind { Note => "note", Question => "question", Answer => "answer", Report => "report" }
 }
 
 #[derive(Debug, Clone, Serialize)]

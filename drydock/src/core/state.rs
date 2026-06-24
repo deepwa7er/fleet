@@ -30,6 +30,8 @@ transition!(CLAIM, "claim", Open => InProgress);
 transition!(NEEDS_INPUT, "ask for input", InProgress => NeedsInput);
 transition!(BLOCK, "block", InProgress => Blocked);
 transition!(RESOLVE, "resolve", InProgress => InReview);
+// An investigate ticket's deliverable is its report, not a PR; same review gate.
+transition!(REPORT, "report", InProgress => InReview);
 
 // System-driven edge: a crashed run leaves a ticket stuck in-progress.
 transition!(RECLAIM, "reclaim", InProgress => Open);

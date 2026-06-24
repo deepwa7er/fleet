@@ -300,6 +300,10 @@ header .docstamp {
   color: var(--ink-faint);
   border-color: var(--rule-strong);
 }
+.badge.type-investigate {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 
 .detail h3 {
   font-size: 12px;
@@ -368,6 +372,13 @@ pre.prose {
 }
 .msg.answer {
   border-left-color: var(--active);
+}
+/* The findings of an investigate ticket — the deliverable, so make it stand out. */
+.msg.report {
+  border-left-width: 3px;
+  border-left-color: var(--accent);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--rule);
 }
 
 .msg-head {

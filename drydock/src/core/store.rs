@@ -24,6 +24,7 @@ pub struct Store {
 /// Fields supplied by a human creating a ticket.
 pub struct NewTicket {
     pub title: String,
+    pub ticket_type: TicketType,
     pub target: String,
     pub priority: Priority,
     pub goal: String,
@@ -80,6 +81,7 @@ fn load_ticket(conn: &Connection, id: i64) -> Result<Ticket> {
 const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/001_init.sql"),
     include_str!("../../migrations/002_closed_state.sql"),
+    include_str!("../../migrations/003_investigate_type.sql"),
 ];
 
 /// Apply every migration whose index is at or beyond the DB's recorded
@@ -124,9 +126,10 @@ impl Store {
         tx.execute(
             "INSERT INTO tickets
                (title, type, target, state, priority, goal, acceptance, constraints, created_at, updated_at)
-             VALUES (?1, 'feature', ?2, 'open', ?3, ?4, ?5, ?6, ?7, ?7)",
+             VALUES (?1, ?2, ?3, 'open', ?4, ?5, ?6, ?7, ?8, ?8)",
             params![
                 input.title,
+                input.ticket_type.as_str(),
                 input.target,
                 input.priority.as_str(),
                 input.goal,
@@ -322,8 +325,10 @@ impl Store {
 
     // Worker actions.
 
-    pub fn claim(&self, id: i64, branch: &str) -> Result<Ticket> {
-        match self.transition(id, &state::CLAIM, Author::Worker, None, Some(branch), None, None) {
+    /// Claim a ticket. `branch` is set for feature work; an investigate ticket
+    /// produces no branch, so it may be `None`.
+    pub fn claim(&self, id: i64, branch: Option<&str>) -> Result<Ticket> {
+        match self.transition(id, &state::CLAIM, Author::Worker, None, branch, None, None) {
             // A ticket already in-progress means someone else grabbed it first.
             Err(Error::InvalidTransition {
                 actual: State::InProgress,
@@ -366,6 +371,20 @@ impl Store {
             Some((CommentKind::Note, &note)),
             None,
             Some(pr_url),
+            None,
+        )
+    }
+
+    /// An investigate ticket's deliverable: post the findings and move to
+    /// in-review for the human to read (the report-type analogue of `resolve`).
+    pub fn report(&self, id: i64, findings: &str) -> Result<Ticket> {
+        self.transition(
+            id,
+            &state::REPORT,
+            Author::Worker,
+            Some((CommentKind::Report, findings)),
+            None,
+            None,
             None,
         )
     }
@@ -450,6 +469,7 @@ mod tests {
     fn mk(s: &Store, title: &str, priority: Priority) -> Ticket {
         s.create(NewTicket {
             title: title.into(),
+            ticket_type: TicketType::Feature,
             target: "svc".into(),
             priority,
             goal: "goal".into(),
@@ -491,7 +511,7 @@ mod tests {
         assert_eq!(s.next(3).unwrap().unwrap().id, high.id);
         // With the high one claimed, the older of the two med tickets is next
         // (low priority loses; id tiebreaker makes age deterministic).
-        s.claim(high.id, "b").unwrap();
+        s.claim(high.id, Some("b")).unwrap();
         assert_eq!(s.next(3).unwrap().unwrap().id, med1.id);
     }
 
@@ -500,7 +520,7 @@ mod tests {
         let s = store();
         assert!(s.next(3).unwrap().is_none());
         let t = mk(&s, "a", Priority::Med);
-        s.claim(t.id, "b").unwrap();
+        s.claim(t.id, Some("b")).unwrap();
         // Only ticket is in-progress and not stale → nothing to hand out.
         assert!(s.next(3).unwrap().is_none());
     }
@@ -510,21 +530,21 @@ mod tests {
         let s = store();
         let t = mk(&s, "a", Priority::Med);
 
-        let claimed = s.claim(t.id, "ticket/1-a").unwrap();
+        let claimed = s.claim(t.id, Some("ticket/1-a")).unwrap();
         assert_eq!(claimed.state, State::InProgress);
         assert_eq!(claimed.branch.as_deref(), Some("ticket/1-a"));
 
         // Second claim loses the race.
-        assert!(matches!(s.claim(t.id, "x"), Err(Error::Conflict(_))));
+        assert!(matches!(s.claim(t.id, Some("x")), Err(Error::Conflict(_))));
         // Claiming a non-existent ticket is NotFound, not Conflict.
-        assert!(matches!(s.claim(404, "x"), Err(Error::NotFound(404))));
+        assert!(matches!(s.claim(404, Some("x")), Err(Error::NotFound(404))));
     }
 
     #[test]
     fn happy_path_to_done() {
         let s = store();
         let t = mk(&s, "a", Priority::High);
-        s.claim(t.id, "ticket/1-a").unwrap();
+        s.claim(t.id, Some("ticket/1-a")).unwrap();
         let resolved = s.resolve(t.id, "https://example/pr/1").unwrap();
         assert_eq!(resolved.state, State::InReview);
         assert_eq!(resolved.pr_url.as_deref(), Some("https://example/pr/1"));
@@ -557,7 +577,7 @@ mod tests {
     fn answer_resurfaces_parked_ticket() {
         let s = store();
         let t = mk(&s, "a", Priority::Med);
-        s.claim(t.id, "b").unwrap();
+        s.claim(t.id, Some("b")).unwrap();
         let parked = s.needs_input(t.id, "Global or per-route?").unwrap();
         assert_eq!(parked.state, State::NeedsInput);
         // While parked it is not handed out as the next ticket.
@@ -578,7 +598,7 @@ mod tests {
     fn block_then_unblock() {
         let s = store();
         let t = mk(&s, "a", Priority::Med);
-        s.claim(t.id, "b").unwrap();
+        s.claim(t.id, Some("b")).unwrap();
         assert_eq!(s.block(t.id, "needs a new API").unwrap().state, State::Blocked);
         assert!(s.next(3).unwrap().is_none());
         assert_eq!(s.unblock(t.id, Some("added the API")).unwrap().state, State::Open);
@@ -589,7 +609,7 @@ mod tests {
         let s = store();
         // Close from blocked (the motivating case).
         let blocked = mk(&s, "junk", Priority::Low);
-        s.claim(blocked.id, "b").unwrap();
+        s.claim(blocked.id, Some("b")).unwrap();
         s.block(blocked.id, "nonsense ticket").unwrap();
         let closed = s.close(blocked.id, Some("abandoning")).unwrap();
         assert_eq!(closed.state, State::Closed);
@@ -603,7 +623,7 @@ mod tests {
 
         // A done ticket can't be closed; a missing ticket is NotFound.
         let done = mk(&s, "real", Priority::High);
-        s.claim(done.id, "b2").unwrap();
+        s.claim(done.id, Some("b2")).unwrap();
         s.resolve(done.id, "pr").unwrap();
         s.mark_done(done.id).unwrap();
         assert!(matches!(s.close(done.id, None), Err(Error::BadRequest(_))));
@@ -614,6 +634,37 @@ mod tests {
         let last = d.events.last().unwrap();
         assert_eq!(last.from_state, Some(State::Blocked));
         assert_eq!(last.to_state, State::Closed);
+    }
+
+    #[test]
+    fn investigate_ticket_claims_without_branch_and_reports() {
+        let s = store();
+        let t = s
+            .create(NewTicket {
+                title: "look into X".into(),
+                ticket_type: TicketType::Investigate,
+                target: "svc".into(),
+                priority: Priority::Med,
+                goal: "why is X happening".into(),
+                acceptance: None,
+                constraints: None,
+            })
+            .unwrap();
+        assert_eq!(t.ticket_type, TicketType::Investigate);
+
+        // An investigate ticket claims with no branch…
+        let claimed = s.claim(t.id, None).unwrap();
+        assert_eq!(claimed.state, State::InProgress);
+        assert!(claimed.branch.is_none());
+
+        // …and its deliverable is a report comment, moving it to in-review.
+        let reported = s.report(t.id, "Found the cause: a stale cache.").unwrap();
+        assert_eq!(reported.state, State::InReview);
+        let d = s.detail(t.id).unwrap();
+        assert_eq!(d.comments.last().unwrap().kind, CommentKind::Report);
+
+        // The human reads it and marks done.
+        assert_eq!(s.mark_done(t.id).unwrap().state, State::Done);
     }
 
     #[test]
@@ -652,7 +703,7 @@ mod tests {
     fn stale_in_progress_is_reclaimed() {
         let s = store();
         let t = mk(&s, "a", Priority::Med);
-        s.claim(t.id, "b").unwrap();
+        s.claim(t.id, Some("b")).unwrap();
 
         // A negative threshold puts the cutoff in the future, so any in-progress
         // ticket counts as stale — deterministic stand-in for "claimed long ago".
@@ -675,7 +726,7 @@ mod tests {
         let s = store();
         let a = mk(&s, "a", Priority::Med);
         let _b = mk(&s, "b", Priority::Med);
-        s.claim(a.id, "br").unwrap();
+        s.claim(a.id, Some("br")).unwrap();
 
         assert_eq!(s.list(None).unwrap().len(), 2);
         assert_eq!(s.list(Some(State::Open)).unwrap().len(), 1);
