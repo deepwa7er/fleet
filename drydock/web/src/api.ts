@@ -4,7 +4,8 @@ export type State =
   | "needs-input"
   | "in-review"
   | "blocked"
-  | "done";
+  | "done"
+  | "closed";
 
 export type Priority = "high" | "med" | "low";
 
@@ -87,4 +88,6 @@ export const api = {
   unblock: (id: number, note: string) =>
     req<Ticket>("POST", `/api/tickets/${id}/unblock`, { note }),
   done: (id: number) => req<Ticket>("POST", `/api/tickets/${id}/done`),
+  close: (id: number, note: string) =>
+    req<Ticket>("POST", `/api/tickets/${id}/close`, { note }),
 };

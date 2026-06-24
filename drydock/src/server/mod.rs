@@ -52,6 +52,7 @@ pub async fn run(store: Arc<Store>, config: ServerConfig) -> std::io::Result<()>
         .route("/api/tickets/{id}/answer", post(answer))
         .route("/api/tickets/{id}/unblock", post(unblock))
         .route("/api/tickets/{id}/done", post(done))
+        .route("/api/tickets/{id}/close", post(close))
         // Unknown /api paths must 404 as JSON, not fall through to the SPA shell.
         .route("/api/{*rest}", any(api_not_found))
         .fallback_service(static_files)
@@ -211,4 +212,12 @@ async fn unblock(
 
 async fn done(State(st): State<AppState>, Path(id): Path<i64>) -> Result<Json<Ticket>> {
     Ok(Json(st.store.mark_done(id)?))
+}
+
+async fn close(
+    State(st): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<UnblockReq>,
+) -> Result<Json<Ticket>> {
+    Ok(Json(st.store.close(id, req.note.as_deref())?))
 }

@@ -38,7 +38,8 @@ macro_rules! str_enum {
 }
 
 str_enum! {
-    /// Lifecycle state. Transitions are governed by `core::state`.
+    /// Lifecycle state. Transitions are governed by `core::state`. `Done` (merged
+    /// + deployed) and `Closed` (abandoned by the human) are both terminal.
     State {
         Open => "open",
         InProgress => "in-progress",
@@ -46,6 +47,7 @@ str_enum! {
         InReview => "in-review",
         Blocked => "blocked",
         Done => "done",
+        Closed => "closed",
     }
 }
 

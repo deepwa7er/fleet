@@ -75,13 +75,37 @@ fn load_ticket(conn: &Connection, id: i64) -> Result<Ticket> {
     .ok_or(Error::NotFound(id))
 }
 
+/// Ordered schema migrations. Append-only — never edit a past entry; add a new
+/// file and a new line here. The DB's `user_version` records how many have run.
+const MIGRATIONS: &[&str] = &[
+    include_str!("../../migrations/001_init.sql"),
+    include_str!("../../migrations/002_closed_state.sql"),
+];
+
+/// Apply every migration whose index is at or beyond the DB's recorded
+/// `user_version`, bumping it after each. A new DB starts at version 0 and gets
+/// them all; an existing DB only runs the ones it hasn't seen.
+fn migrate(conn: &Connection) -> Result<()> {
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    for (i, sql) in MIGRATIONS.iter().enumerate() {
+        if (i as i64) < version {
+            continue;
+        }
+        conn.execute_batch(sql)?;
+        // PRAGMA values can't be bound; `i + 1` is a controlled integer.
+        conn.execute_batch(&format!("PRAGMA user_version = {};", i + 1))?;
+    }
+    Ok(())
+}
+
 impl Store {
-    /// Open (creating if needed) the database at `path` and apply the schema.
+    /// Open (creating if needed) the database at `path` and apply any pending
+    /// schema migrations.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.execute_batch(include_str!("../../migrations/001_init.sql"))?;
+        migrate(&conn)?;
         Ok(Store {
             conn: Mutex::new(conn),
         })
@@ -368,6 +392,50 @@ impl Store {
     pub fn mark_done(&self, id: i64) -> Result<Ticket> {
         self.transition(id, &state::MARK_DONE, Author::Human, None, None, None, None)
     }
+
+    /// Human action: abandon a ticket (won't-do). Allowed from any non-terminal
+    /// state — unlike the single-source transitions, close has many valid
+    /// sources — so it guards on "not already terminal" rather than one `from`.
+    /// Records the originating state in the event for the audit trail.
+    pub fn close(&self, id: i64, note: Option<&str>) -> Result<Ticket> {
+        let mut conn = self.lock();
+        let now = now();
+        let tx = conn.transaction()?;
+
+        let current: Option<String> = tx
+            .query_row("SELECT state FROM tickets WHERE id = ?1", [id], |r| r.get(0))
+            .optional()?;
+        let current = match current {
+            None => return Err(Error::NotFound(id)),
+            Some(s) => State::from_str(&s).unwrap_or(State::Closed),
+        };
+        if matches!(current, State::Done | State::Closed) {
+            return Err(Error::BadRequest(format!(
+                "ticket #{id} is already {current}; nothing to close"
+            )));
+        }
+
+        tx.execute(
+            "UPDATE tickets SET state = 'closed', updated_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        if let Some(body) = note.filter(|s| !s.trim().is_empty()) {
+            tx.execute(
+                "INSERT INTO comments (ticket_id, author, kind, body, created_at)
+                 VALUES (?1, 'human', 'note', ?2, ?3)",
+                params![id, body, now],
+            )?;
+        }
+        tx.execute(
+            "INSERT INTO events (ticket_id, from_state, to_state, actor, detail, created_at)
+             VALUES (?1, ?2, 'closed', 'human', 'closed', ?3)",
+            params![id, current.as_str(), now],
+        )?;
+
+        let ticket = load_ticket(&tx, id)?;
+        tx.commit()?;
+        Ok(ticket)
+    }
 }
 
 #[cfg(test)]
@@ -514,6 +582,70 @@ mod tests {
         assert_eq!(s.block(t.id, "needs a new API").unwrap().state, State::Blocked);
         assert!(s.next(3).unwrap().is_none());
         assert_eq!(s.unblock(t.id, Some("added the API")).unwrap().state, State::Open);
+    }
+
+    #[test]
+    fn close_from_any_nonterminal_then_rejects_terminal() {
+        let s = store();
+        // Close from blocked (the motivating case).
+        let blocked = mk(&s, "junk", Priority::Low);
+        s.claim(blocked.id, "b").unwrap();
+        s.block(blocked.id, "nonsense ticket").unwrap();
+        let closed = s.close(blocked.id, Some("abandoning")).unwrap();
+        assert_eq!(closed.state, State::Closed);
+        // Closed tickets aren't handed out and can't be closed again.
+        assert!(s.next(3).unwrap().is_none());
+        assert!(matches!(s.close(blocked.id, None), Err(Error::BadRequest(_))));
+
+        // Close straight from open, too.
+        let open = mk(&s, "also junk", Priority::Low);
+        assert_eq!(s.close(open.id, None).unwrap().state, State::Closed);
+
+        // A done ticket can't be closed; a missing ticket is NotFound.
+        let done = mk(&s, "real", Priority::High);
+        s.claim(done.id, "b2").unwrap();
+        s.resolve(done.id, "pr").unwrap();
+        s.mark_done(done.id).unwrap();
+        assert!(matches!(s.close(done.id, None), Err(Error::BadRequest(_))));
+        assert!(matches!(s.close(9999, None), Err(Error::NotFound(9999))));
+
+        // The originating state is recorded in the audit trail.
+        let d = s.detail(blocked.id).unwrap();
+        let last = d.events.last().unwrap();
+        assert_eq!(last.from_state, Some(State::Blocked));
+        assert_eq!(last.to_state, State::Closed);
+    }
+
+    #[test]
+    fn migration_upgrades_an_existing_v0_db() {
+        let tmp = std::env::temp_dir().join(format!("drydock-migtest-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+
+        // Simulate a DB written by the old code: only migration 001 applied, and
+        // user_version never set (0) — and a row in a state the old CHECK allowed.
+        {
+            let conn = rusqlite::Connection::open(&tmp).unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            let n = now();
+            conn.execute(
+                "INSERT INTO tickets (title, type, target, state, priority, goal, created_at, updated_at)
+                 VALUES ('legacy', 'feature', 'svc', 'blocked', 'low', 'g', ?1, ?1)",
+                rusqlite::params![n],
+            )
+            .unwrap();
+            let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+            assert_eq!(v, 0, "old code leaves user_version at 0");
+        }
+
+        // Reopening via Store runs the pending migration, preserving the row…
+        let s = Store::open(&tmp).unwrap();
+        let tickets = s.list(None).unwrap();
+        assert_eq!(tickets.len(), 1);
+        assert_eq!(tickets[0].state, State::Blocked);
+        // …and 'closed' is now accepted — the whole point.
+        assert_eq!(s.close(tickets[0].id, None).unwrap().state, State::Closed);
+
+        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]

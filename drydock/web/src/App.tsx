@@ -13,6 +13,7 @@ const GROUPS: { state: State; label: string; action: boolean }[] = [
   { state: "open", label: "Open", action: false },
   { state: "in-progress", label: "In progress", action: false },
   { state: "done", label: "Done", action: false },
+  { state: "closed", label: "Closed", action: false },
 ];
 
 export function App() {
@@ -245,69 +246,90 @@ function Actions({
     }
   };
 
-  if (ticket.state === "needs-input") {
-    return (
-      <form
-        className="action-box"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (text.trim()) run(() => api.answer(ticket.id, text));
-        }}
-      >
-        <h3>Answer the worker</h3>
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Your answer — the worker reads this on its next run."
-          rows={3}
-        />
-        <button className="primary" disabled={busy || !text.trim()}>
-          Send answer
-        </button>
-      </form>
-    );
-  }
+  // done + closed are terminal: no actions remain.
+  const terminal = ticket.state === "done" || ticket.state === "closed";
 
-  if (ticket.state === "blocked") {
-    return (
-      <form
-        className="action-box"
-        onSubmit={(e) => {
-          e.preventDefault();
-          run(() => api.unblock(ticket.id, text));
-        }}
-      >
-        <h3>Unblock</h3>
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Optional note on what you changed to unblock this."
-          rows={3}
-        />
-        <button className="primary" disabled={busy}>
-          Unblock (→ open)
-        </button>
-      </form>
-    );
-  }
-
-  if (ticket.state === "in-review") {
-    return (
-      <div className="action-box">
-        <h3>Review</h3>
-        <p>Merge and deploy the PR yourself, then close this ticket.</p>
-        <button
-          className="primary"
-          disabled={busy}
-          onClick={() => run(() => api.done(ticket.id))}
+  return (
+    <>
+      {ticket.state === "needs-input" && (
+        <form
+          className="action-box"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (text.trim()) run(() => api.answer(ticket.id, text));
+          }}
         >
-          Mark done
-        </button>
-      </div>
-    );
-  }
+          <h3>Answer the worker</h3>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Your answer — the worker reads this on its next run."
+            rows={3}
+          />
+          <button className="primary" disabled={busy || !text.trim()}>
+            Send answer
+          </button>
+        </form>
+      )}
 
-  return null;
+      {ticket.state === "blocked" && (
+        <form
+          className="action-box"
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(() => api.unblock(ticket.id, text));
+          }}
+        >
+          <h3>Unblock</h3>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Optional note on what you changed to unblock this."
+            rows={3}
+          />
+          <button className="primary" disabled={busy}>
+            Unblock (→ open)
+          </button>
+        </form>
+      )}
+
+      {ticket.state === "in-review" && (
+        <div className="action-box">
+          <h3>Review</h3>
+          <p>Merge and deploy the PR yourself, then mark it done.</p>
+          <button
+            className="primary"
+            disabled={busy}
+            onClick={() => run(() => api.done(ticket.id))}
+          >
+            Mark done
+          </button>
+        </div>
+      )}
+
+      {!terminal && (
+        <div className="action-box danger-box">
+          <h3>Abandon</h3>
+          <p>Close this ticket without doing it — for junk or won't-do work.</p>
+          <button
+            className="danger"
+            disabled={busy}
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Close (abandon) this ticket? It won't be worked. This is different from Done.",
+                )
+              ) {
+                run(() => api.close(ticket.id, ""));
+              }
+            }}
+          >
+            Close ticket
+          </button>
+        </div>
+      )}
+    </>
+  );
 }
 
 function CreateForm({

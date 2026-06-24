@@ -296,6 +296,10 @@ header .docstamp {
   color: var(--idle);
   border-color: var(--idle);
 }
+.state-closed {
+  color: var(--ink-faint);
+  border-color: var(--rule-strong);
+}
 
 .detail h3 {
   font-size: 12px;
@@ -437,6 +441,28 @@ button.primary:disabled {
 button.ghost {
   background: transparent;
   border-color: transparent;
+}
+
+button.danger {
+  background: transparent;
+  border-color: var(--failed);
+  color: var(--failed);
+  align-self: flex-start;
+}
+
+button.danger:hover {
+  background: var(--failed);
+  color: var(--bg);
+}
+
+button.danger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* The abandon affordance reads as secondary/destructive, not a primary path. */
+.action-box.danger-box {
+  border-left-color: var(--failed);
 }
 
 button.ghost:hover {
