@@ -335,7 +335,6 @@ pub fn status(fleet: &Fleet) -> Result<()> {
 pub fn deploy(
     fleet: &Fleet,
     only: Option<&str>,
-    skip_build: bool,
     dry_run: bool,
     continue_on_error: bool,
 ) -> Result<()> {
@@ -364,7 +363,7 @@ pub fn deploy(
         println!("\n════ {} ════", d.name);
         let result = (|| -> Result<()> {
             let manifest = manifest::load(&d.manifest_path, None)?;
-            deploy::run(&manifest, &d.dir, skip_build, dry_run, &deploy::StdoutSink)
+            deploy::run(&manifest, &d.dir, deploy::Source::DefaultBranch, dry_run, &deploy::StdoutSink)
         })();
 
         match result {

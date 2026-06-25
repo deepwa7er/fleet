@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 /// A snapshot of a checkout's state, as far as git can report it.
 #[derive(Debug, Default, Clone)]
@@ -105,6 +105,85 @@ pub fn count_commits(dir: &Path, from: &str, to: &str) -> Option<u32> {
         .ok()
         .flatten()
         .and_then(|s| s.parse().ok())
+}
+
+/// Resolve a committish (branch, tag, sha, …) to its full sha, or `None` when it
+/// doesn't resolve in this repo.
+pub fn rev_parse(dir: &Path, committish: &str) -> Result<Option<String>> {
+    out(dir, &["rev-parse", "--verify", "--quiet", committish])
+}
+
+/// Origin's default branch (e.g. `main`) — what a deploy ships and what the
+/// dashboard reports, regardless of which branch the working tree is parked on.
+///
+/// Reads the local `refs/remotes/origin/HEAD` symref (set at clone time), so it
+/// needs no network in the common case. If that ref is missing it asks the remote
+/// once — `git remote set-head origin --auto`, which also persists the ref so the
+/// next call is local again — then falls back to a conventional `main`/`master`
+/// that exists as a remote-tracking ref.
+pub fn default_branch(dir: &Path) -> Result<String> {
+    if let Some(branch) = origin_head_branch(dir)? {
+        return Ok(branch);
+    }
+    let _ = run(dir, &["remote", "set-head", "origin", "--auto"]);
+    if let Some(branch) = origin_head_branch(dir)? {
+        return Ok(branch);
+    }
+    for candidate in ["main", "master"] {
+        if rev_parse(dir, &format!("origin/{candidate}"))?.is_some() {
+            return Ok(candidate.to_owned());
+        }
+    }
+    bail!("could not determine origin's default branch for {}", dir.display())
+}
+
+/// The branch that `refs/remotes/origin/HEAD` points at, from local refs only
+/// (no network). `None` when the symref isn't set.
+fn origin_head_branch(dir: &Path) -> Result<Option<String>> {
+    let Some(full) = out(dir, &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])? else {
+        return Ok(None);
+    };
+    Ok(full
+        .strip_prefix("refs/remotes/origin/")
+        .map(str::to_owned)
+        .filter(|b| !b.is_empty()))
+}
+
+/// Fetch `origin`, updating remote-tracking refs and objects. It never touches
+/// the working tree or the current branch, so it is safe to run while other work
+/// (e.g. the drydock worker) has a checkout of the same repo open.
+pub fn fetch(dir: &Path) -> Result<()> {
+    if !run(dir, &["fetch", "--quiet", "origin"])? {
+        bail!("git fetch origin failed in {}", dir.display());
+    }
+    Ok(())
+}
+
+/// Create a detached worktree of the repo at `dir`, checked out at `committish`.
+/// The worktree shares the repo's object store, so creating it is cheap. Pair it
+/// with [`remove_worktree`].
+pub fn add_worktree(dir: &Path, worktree: &Path, committish: &str) -> Result<()> {
+    let path = worktree.to_string_lossy();
+    if !run(dir, &["worktree", "add", "--quiet", "--detach", &path, committish])? {
+        bail!("git worktree add {path} @ {committish} failed");
+    }
+    Ok(())
+}
+
+/// Remove a worktree created by [`add_worktree`], pruning git's admin metadata.
+/// Best-effort and idempotent: used both to clean up on drop and to clear a stale
+/// worktree an interrupted deploy may have left before creating a fresh one. Runs
+/// silently (via [`out`], which captures output) so the common "nothing to clean"
+/// case doesn't print a scary `fatal: … is not a working tree`.
+pub fn remove_worktree(dir: &Path, worktree: &Path) {
+    let path = worktree.to_string_lossy();
+    let _ = out(dir, &["worktree", "remove", "--force", &path]);
+    // If the directory survived (it was never a worktree, or the remove failed),
+    // delete it and prune the dangling admin entry so a re-add can reuse the path.
+    if worktree.exists() {
+        let _ = std::fs::remove_dir_all(worktree);
+    }
+    let _ = out(dir, &["worktree", "prune"]);
 }
 
 /// Run a git command in `dir`, inheriting stdio, returning whether it succeeded.

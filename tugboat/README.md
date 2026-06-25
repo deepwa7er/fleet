@@ -23,10 +23,28 @@ From a service repo that has a `deploy.toml`:
 ```sh
 tugboat deploy                 # build, ship, install, restart, health-check, enroll
 tugboat deploy --dry-run       # print the plan, change nothing
-tugboat deploy --skip-build    # reuse the last build
 tugboat deploy --host other    # override the SSH host
 tugboat deploy --manifest path/to/deploy.toml
+tugboat deploy --working-tree  # deploy the current checkout as-is (see below)
+tugboat deploy --working-tree --skip-build   # …and reuse its existing build
 ```
+
+### What gets deployed
+
+By default `tugboat deploy` ships **origin's default branch**: it fetches
+`origin`, checks the default branch (`main`/…) out into a fresh **detached
+worktree**, and builds *that*. The deploy is therefore reproducible from committed
+history and **independent of whatever branch the working tree happens to be on** —
+so a stray `git checkout`, or the drydock worker leaving a repo parked on a feature
+branch, can never change what ships. The worktree is removed when the deploy ends.
+
+For local iteration or to smoke-test a branch on the VPS before merging, pass
+`--working-tree`: it builds the current checkout exactly as it is (current branch,
+uncommitted changes included). `--skip-build` (reuse the existing artifacts) only
+applies in this mode — a default-branch deploy always builds its clean checkout.
+
+`tugboat serve` (the dashboard's Deploy button) and `tugboat fleet deploy` always
+use the default-branch path; `--working-tree` is a `tugboat deploy` CLI opt-in.
 
 ## The fleet
 
@@ -79,8 +97,11 @@ grouping folders.
 `tugboat serve` runs the deploy pipeline behind an HTTP API so a deploy can be
 triggered from another device — e.g. the lighthouse dashboard on the VPS, opened
 from any machine on the tailnet. The build still happens **here**, on the dev
-machine, against the member's **current working tree**: a request runs the exact
-same engine as `tugboat deploy`, and the transcript is streamed back live.
+machine: a request runs the exact same engine as `tugboat deploy`, building
+**origin's default branch** in a clean worktree (see [What gets
+deployed](#what-gets-deployed)), and the transcript is streamed back live. The
+daemon also fetches each deployable's `origin` periodically, so the dashboard's
+"undeployed commits" reflects freshly-merged work without a manual pull.
 
 ```sh
 TUGBOAT_SERVE_TOKEN=$(openssl rand -hex 32) \
@@ -197,8 +218,10 @@ Each line is one JSON object; append-only; newest last:
   failed its health check and tugboat restored the previous version. The
   **currently-running** version is therefore the last entry with `result =
   "deployed"` — a trailing `rolled_back` means the prior good version is live.
-- `dirty` — whether the working tree had uncommitted changes at deploy time (so
-  `sha` doesn't fully describe what shipped).
+- `dirty` — whether the build tree had uncommitted changes at deploy time (so
+  `sha` doesn't fully describe what shipped). Always `false` for a default-branch
+  deploy (it builds a clean checkout); only a `--working-tree` deploy can record
+  `true`.
 - `at` — Unix epoch seconds (stamped at deploy *start*; shared with `id`).
 
 The write is a single short line to an `O_APPEND` file and is best-effort

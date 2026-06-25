@@ -48,6 +48,11 @@ const DOCS_DEBOUNCE: Duration = Duration::from_secs(20);
 /// repo lacks the hook, or a commit landed on another machine and was pulled).
 const DOCS_CATCHUP_INTERVAL: Duration = Duration::from_secs(300);
 
+/// How often the daemon fetches every deployable's `origin`, so the dashboard's
+/// "undeployed commits" reflects freshly-merged work without waiting for a deploy
+/// or a manual pull. Fetch only updates refs/objects — never the working tree.
+const FETCH_INTERVAL: Duration = Duration::from_secs(180);
+
 /// CLI arguments for `tugboat serve`.
 pub struct ServeArgs {
     pub bind: IpAddr,
@@ -234,6 +239,10 @@ pub fn run(args: ServeArgs) -> Result<()> {
         .context("building tokio runtime")?;
 
     runtime.block_on(async move {
+        // Keep each deployable's origin refs current so /status (and the dashboard
+        // it feeds) reflects merged-but-undeployed commits without a manual pull.
+        tokio::spawn(fetch_keeper(state.clone()));
+
         // The docs auto-refresh runs only when the fleet actually has a docs site
         // configured. The keeper does the (debounced, one-at-a-time) builds; the
         // catch-up pulses it on a timer as the backstop.
@@ -325,8 +334,9 @@ async fn list_services(State(state): State<Arc<ServeState>>) -> Json<Vec<Service
     Json(services)
 }
 
-/// Local repo state for one deployable member, plus (when the caller supplied
-/// the currently-deployed sha) how the working tree relates to it.
+/// One deployable member's deploy-relevant git state: origin's default branch —
+/// the code a deploy ships — plus (when the caller supplied the currently-deployed
+/// sha) how that branch relates to what's running.
 #[derive(Serialize)]
 struct StatusInfo {
     name: String,
@@ -334,19 +344,22 @@ struct StatusInfo {
     /// remote, so a reader can build commit/compare links. `None` off GitHub.
     #[serde(skip_serializing_if = "Option::is_none")]
     repo_url: Option<String>,
+    /// Origin's default branch — what a deploy ships.
     branch: Option<String>,
+    /// Head of `origin/<default-branch>` (the sha a deploy would ship).
     head_sha: Option<String>,
     head_short: Option<String>,
+    /// Always `false`: a deploy ships a clean checkout of the default branch, so
+    /// the shipped tree is never dirty. Retained for the dashboard's status
+    /// contract (its freshness verdict still reads this field).
     dirty: bool,
-    dirty_files: u32,
-    upstream_ahead: u32,
-    upstream_behind: u32,
-    /// Commits on local HEAD not yet in the deployed sha (only when the deployed
-    /// sha was supplied and is an ancestor of HEAD).
+    /// Commits on `origin/<default-branch>` not yet in the deployed sha (only when
+    /// the deployed sha was supplied and is an ancestor of that branch head).
     #[serde(skip_serializing_if = "Option::is_none")]
     undeployed_commits: Option<u32>,
-    /// Whether the deployed sha is an ancestor of HEAD — i.e. local is strictly
-    /// ahead (`true`) vs diverged (`false`). Absent when no deployed sha given.
+    /// Whether the deployed sha is an ancestor of `origin/<default-branch>` — i.e.
+    /// the branch is strictly ahead (`true`) vs diverged (`false`). Absent when no
+    /// deployed sha was given.
     #[serde(skip_serializing_if = "Option::is_none")]
     deployed_is_ancestor: Option<bool>,
 }
@@ -373,8 +386,10 @@ fn parse_deployed(raw: &Option<String>) -> HashMap<String, String> {
     map
 }
 
-/// `GET /status[?deployed=name:sha,…]` — per-member local git state, plus the
-/// relationship to the deployed sha when one is provided.
+/// `GET /status[?deployed=name:sha,…]` — each member's `origin/<default-branch>`
+/// state (the code a deploy ships), plus its relationship to the deployed sha when
+/// one is provided. Reads local remote-tracking refs (no network per request);
+/// the background fetch keeps them current.
 async fn list_status(
     State(state): State<Arc<ServeState>>,
     Query(query): Query<StatusQuery>,
@@ -387,15 +402,21 @@ async fn list_status(
         .map(|d| {
             let name = d.name;
             let dir = d.dir;
-            let st = git::state(&dir);
-            let head_short = st.head_sha.as_deref().map(|s| git::short(s).to_owned());
             let repo_url = git::out(&dir, &["remote", "get-url", "origin"])
                 .ok()
                 .flatten()
                 .and_then(|r| git::github_web_url(&r));
 
+            // Report origin's default branch — what a deploy ships — not whatever
+            // branch the shared checkout is parked on.
+            let branch = git::default_branch(&dir).ok();
+            let head_sha = branch
+                .as_deref()
+                .and_then(|b| git::rev_parse(&dir, &format!("origin/{b}")).ok().flatten());
+            let head_short = head_sha.as_deref().map(|s| git::short(s).to_owned());
+
             let (undeployed_commits, deployed_is_ancestor) =
-                match (deployed.get(&name), st.head_sha.as_deref()) {
+                match (deployed.get(&name), head_sha.as_deref()) {
                     (Some(dep), Some(head)) => {
                         let ancestor = git::is_ancestor(&dir, dep, head);
                         let commits = if ancestor {
@@ -411,13 +432,10 @@ async fn list_status(
             StatusInfo {
                 name,
                 repo_url,
-                branch: st.branch,
-                head_sha: st.head_sha,
+                branch,
+                head_sha,
                 head_short,
-                dirty: st.dirty,
-                dirty_files: st.dirty_files,
-                upstream_ahead: st.upstream_ahead,
-                upstream_behind: st.upstream_behind,
+                dirty: false,
                 undeployed_commits,
                 deployed_is_ancestor,
             }
@@ -483,7 +501,7 @@ async fn deploy_service(
                 .parent()
                 .context("manifest has no parent directory")?;
             let manifest = manifest::load(&manifest_path, None)?;
-            deploy::run(&manifest, project_dir, false, false, &sink)
+            deploy::run(&manifest, project_dir, deploy::Source::DefaultBranch, false, &sink)
         })();
         finish(&job, result);
         state_for_task.in_flight.lock().unwrap().remove(&name);
@@ -596,6 +614,35 @@ async fn docs_status(State(state): State<Arc<ServeState>>) -> Json<DocsStatus> {
 async fn docs_refresh(State(state): State<Arc<ServeState>>) -> StatusCode {
     state.docs_notify.notify_one();
     StatusCode::ACCEPTED
+}
+
+/// Fetch every deployable's `origin` on a timer, so the dashboard's
+/// "undeployed commits" reflects merged-but-undeployed work without waiting for a
+/// deploy or a manual pull. The first tick fires immediately. Fetch touches only
+/// refs/objects, so it is safe to run while another tool has a checkout open.
+async fn fetch_keeper(state: Arc<ServeState>) {
+    let mut ticker = tokio::time::interval(FETCH_INTERVAL);
+    loop {
+        ticker.tick().await;
+        let root = state.fleet().root_dir();
+        let dirs: Vec<PathBuf> = fleet::discover_deployables(&root)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|d| d.dir)
+            .collect();
+        // git is blocking; keep it off the async executor.
+        let _ = tokio::task::spawn_blocking(move || {
+            for dir in dirs {
+                if let Err(err) = git::fetch(&dir) {
+                    eprintln!(
+                        "tugboat serve: background fetch of {} failed: {err:#}",
+                        dir.display()
+                    );
+                }
+            }
+        })
+        .await;
+    }
 }
 
 /// Pulse the docs keeper on a timer — the backstop that catches changes no commit

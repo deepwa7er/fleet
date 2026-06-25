@@ -90,53 +90,149 @@ impl Drop for WorkDir {
     }
 }
 
+/// Where a deploy gets the code it builds and ships.
+pub enum Source {
+    /// Origin's default branch, fetched fresh and built in a clean, detached
+    /// worktree. Reproducible and independent of whatever is checked out in the
+    /// shared working tree — the normal path, and the only one the daemon uses.
+    DefaultBranch,
+    /// The project's working tree exactly as it is on disk (its current branch,
+    /// uncommitted changes included). An explicit opt-in for local iteration and
+    /// branch smoke-tests; `skip_build` reuses the tree's existing artifacts.
+    WorkingTree { skip_build: bool },
+}
+
+/// A git worktree removed when this guard drops, so a deploy's throwaway checkout
+/// never outlives the deploy.
+struct WorktreeGuard {
+    repo: PathBuf,
+    path: PathBuf,
+}
+impl Drop for WorktreeGuard {
+    fn drop(&mut self) {
+        git::remove_worktree(&self.repo, &self.path);
+    }
+}
+
+/// The clean checkout a default-branch deploy builds from.
+struct Prepared {
+    /// The worktree directory to build in.
+    build_dir: PathBuf,
+    /// The ledger stamp for the checked-out default-branch commit.
+    stamp: Stamp,
+    /// Removes the worktree when dropped; held for the deploy's lifetime.
+    guard: WorktreeGuard,
+}
+
+/// Fetch origin and check its default branch out into a fresh detached worktree,
+/// so the deploy builds exactly what's on the canonical branch — not whatever the
+/// shared checkout is parked on (which the drydock worker, or a stray `git
+/// checkout`, can leave on a feature branch). The worktree is removed when the
+/// returned guard drops.
+fn prepare_default_branch(project_dir: &Path, at: u64, log: &dyn LogSink) -> Result<Prepared> {
+    if !git::state(project_dir).is_repo {
+        bail!(
+            "cannot deploy the default branch: {} is not a git checkout \
+             (use `--working-tree` to deploy a non-git directory as-is)",
+            project_dir.display()
+        );
+    }
+    let branch = git::default_branch(project_dir).context("resolving origin's default branch")?;
+    step(log, "FETCH", &format!("origin ({branch})"));
+    git::fetch(project_dir)?;
+
+    let target = format!("origin/{branch}");
+    let sha = git::rev_parse(project_dir, &target)?
+        .with_context(|| format!("{target} not found after fetch"))?;
+
+    // Per-repo path (the dir's final component) so concurrent deploys of *different*
+    // services in one daemon don't collide; same-service deploys are serialized.
+    let name = project_dir.file_name().and_then(|s| s.to_str()).unwrap_or("repo");
+    let path = std::env::temp_dir().join(format!("tugboat-src-{name}-{}", std::process::id()));
+    // Clear any worktree a previous interrupted deploy may have left at this path.
+    git::remove_worktree(project_dir, &path);
+    git::add_worktree(project_dir, &path, &sha)?;
+    let guard = WorktreeGuard {
+        repo: project_dir.to_path_buf(),
+        path: path.clone(),
+    };
+    step(log, "CHECKOUT", &format!("{target} @ {}", git::short(&sha)));
+
+    let stamp = Stamp {
+        short: git::short(&sha).to_owned(),
+        sha,
+        dirty: false,
+        branch: Some(branch),
+        deployed_at: at,
+    };
+    Ok(Prepared {
+        build_dir: path,
+        stamp,
+        guard,
+    })
+}
+
 pub fn run(
     manifest: &Manifest,
     project_dir: &Path,
-    skip_build: bool,
+    source: Source,
     dry_run: bool,
     log: &dyn LogSink,
 ) -> Result<()> {
+    let host = manifest.host();
+
     let workdir = std::env::temp_dir()
         .join(format!("tugboat-{}-{}", manifest.name, std::process::id()));
     let workdir_str = workdir.to_string_lossy().into_owned();
-
     let build_cmd = subst(&manifest.build.cmd, &workdir_str);
-    // Resolve artifact sources (relative paths are relative to the manifest dir;
-    // an absolute path, e.g. one under {workdir}, is used as-is).
+
+    if dry_run {
+        print_plan(manifest, project_dir, &source, &build_cmd, &workdir_str, log);
+        return Ok(());
+    }
+
+    // Stamp the deploy at its start so the id (transcript filename), the ledger
+    // `at`, and the on-host transcript all agree on one timestamp. Tee the live
+    // sink through a capturing one so we can persist the full transcript below —
+    // set up first so the source-prep steps (fetch/checkout) are captured too.
+    let at = now_unix();
+    let cap = CapturingSink::new(log);
+    let orig = log;
+    let log: &dyn LogSink = &cap;
+
+    // Resolve where to build from. The default-branch path fetches origin and
+    // checks it out into a throwaway worktree, so the build is reproducible and
+    // can't be perturbed by whatever branch the shared checkout is parked on. The
+    // worktree guard lives to the end of this function, removing it after the ship.
+    let (build_dir, stamp, skip_build, _worktree) = match &source {
+        Source::WorkingTree { skip_build } => {
+            (project_dir.to_path_buf(), build_stamp(project_dir, at), *skip_build, None)
+        }
+        Source::DefaultBranch => {
+            let prepared = prepare_default_branch(project_dir, at, log)?;
+            (prepared.build_dir, Some(prepared.stamp), false, Some(prepared.guard))
+        }
+    };
+    let id = deploy_id(at, stamp.as_ref());
+
+    // Resolve artifact sources (relative paths are relative to the build dir; an
+    // absolute path, e.g. one under {workdir}, is used as-is).
     let artifacts: Vec<(PathBuf, &crate::manifest::Artifact)> = manifest
         .artifacts
         .iter()
-        .map(|a| (project_dir.join(subst(&a.src, &workdir_str)), a))
+        .map(|a| (build_dir.join(subst(&a.src, &workdir_str)), a))
         .collect();
-
-    if dry_run {
-        print_plan(manifest, &build_cmd, &artifacts, log);
-        return Ok(());
-    }
 
     std::fs::create_dir_all(&workdir)
         .with_context(|| format!("creating work dir {}", workdir.display()))?;
     let _guard = WorkDir(workdir.clone());
-
-    let host = manifest.host();
-
-    // Stamp the deploy at its start so the id (transcript filename), the ledger
-    // `at`, and the on-host transcript all agree on one timestamp. Tee the live
-    // sink through a capturing one so we can persist the full transcript below.
-    let at = now_unix();
-    let stamp = build_stamp(project_dir, at);
-    let id = deploy_id(at, stamp.as_ref());
-    let cap = CapturingSink::new(log);
-    let orig = log;
-    let log: &dyn LogSink = &cap;
 
     // 1. Build.
     if skip_build {
         note(log, "skipping build (--skip-build)");
     } else {
         step(log, "BUILD", &build_cmd);
-        run_local(&build_cmd, project_dir, log).context("build failed")?;
+        run_local(&build_cmd, &build_dir, log).context("build failed")?;
     }
 
     // 2. Confirm every artifact exists locally, of the right kind, before
@@ -565,15 +661,31 @@ echo "    @NAME@ is active and healthy"
 
 fn print_plan(
     manifest: &Manifest,
+    project_dir: &Path,
+    source: &Source,
     build_cmd: &str,
-    artifacts: &[(PathBuf, &crate::manifest::Artifact)],
+    workdir_str: &str,
     log: &dyn LogSink,
 ) {
     log.line(&format!("DRY RUN — plan for {} → {}\n", manifest.name, manifest.host()));
+    log.line("  source:");
+    match source {
+        Source::DefaultBranch => log.line(
+            "    origin's default branch (fetched fresh, built in a clean detached worktree)",
+        ),
+        Source::WorkingTree { skip_build } => log.line(&format!(
+            "    working tree at {} ({})",
+            project_dir.display(),
+            if *skip_build { "reusing existing artifacts" } else { "rebuilt in place" }
+        )),
+    }
     log.line("  build:");
     log.line(&format!("    {build_cmd}"));
     log.line("  ship:");
-    for (src, artifact) in artifacts {
+    // Artifact sources are shown relative to the project dir; a default-branch
+    // deploy builds the same relative paths inside its worktree.
+    for artifact in &manifest.artifacts {
+        let src = project_dir.join(subst(&artifact.src, workdir_str));
         match artifact.kind {
             ArtifactKind::File => log.line(&format!(
                 "    {} → {} (file, mode {})",

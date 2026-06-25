@@ -22,7 +22,7 @@ mod version;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 
 use crate::version::BuildInfo;
@@ -62,7 +62,13 @@ struct DeployArgs {
     /// Override the SSH host (alias) from the manifest.
     #[arg(long)]
     host: Option<String>,
-    /// Reuse existing build artifacts instead of rebuilding.
+    /// Deploy the current working tree as-is — its current branch, uncommitted
+    /// changes included — instead of origin's default branch. For local iteration
+    /// and branch smoke-tests.
+    #[arg(long)]
+    working_tree: bool,
+    /// Reuse existing build artifacts instead of rebuilding. Only valid with
+    /// `--working-tree` (a default-branch deploy always builds a clean checkout).
     #[arg(long)]
     skip_build: bool,
     /// Print the plan and exit without changing anything.
@@ -225,9 +231,6 @@ struct FleetDeployArgs {
     /// Restrict to a comma-separated set of member names.
     #[arg(long)]
     only: Option<String>,
-    /// Reuse existing build artifacts instead of rebuilding.
-    #[arg(long)]
-    skip_build: bool,
     /// Print each member's plan and exit without changing anything.
     #[arg(long)]
     dry_run: bool,
@@ -282,9 +285,22 @@ fn run_deploy(args: DeployArgs) -> Result<()> {
         .to_path_buf();
 
     let manifest = manifest::load(&manifest_path, args.host.as_deref())?;
+
+    let source = if args.working_tree {
+        deploy::Source::WorkingTree { skip_build: args.skip_build }
+    } else {
+        if args.skip_build {
+            bail!(
+                "--skip-build only applies with --working-tree \
+                 (a default-branch deploy always builds a clean checkout)"
+            );
+        }
+        deploy::Source::DefaultBranch
+    };
+
     // The daemon discovers deployables from their deploy.toml, so a new service
     // is fleet-visible the moment it has one — nothing to register here.
-    deploy::run(&manifest, &project_dir, args.skip_build, args.dry_run, &deploy::StdoutSink)
+    deploy::run(&manifest, &project_dir, source, args.dry_run, &deploy::StdoutSink)
 }
 
 fn run_fleet(args: FleetArgs) -> Result<()> {
@@ -301,7 +317,6 @@ fn run_fleet(args: FleetArgs) -> Result<()> {
         FleetAction::Deploy(d) => fleet::deploy(
             &fleet,
             d.only.as_deref(),
-            d.skip_build,
             d.dry_run,
             d.continue_on_error,
         ),
