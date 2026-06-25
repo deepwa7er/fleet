@@ -86,6 +86,12 @@ upstream = "127.0.0.1:5030"
 host = "drydock.internal.deepwa7er.com"
 upstream = "127.0.0.1:8093"
 
+# Fleet-wide settings (tide) — the shared dark/light theme. ferry's `b dark` /
+# `b light` redirect to its /set; every fleet UI reads /theme cross-origin.
+[[routes]]
+host = "tide.internal.deepwa7er.com"
+upstream = "127.0.0.1:8094"
+
 # The fleet documentation site (pilot) — process-less static files, so breakwater
 # serves the directory directly instead of proxying an upstream. `tugboat fleet
 # docs` assembles and ships the site to this path; a path that doesn't resolve to
