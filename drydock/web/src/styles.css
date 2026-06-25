@@ -36,6 +36,26 @@
   --s6: 32px;
 }
 
+/* DG-001 light — the shared fleet light palette (tide flips html[data-theme]).
+ * Same tokens, paper values; amber accent darkened for contrast on white. The
+ * derived --border / --border-strong reference --rule, so they follow. */
+html[data-theme="light"] {
+  --bg: #f4f3ee;
+  --surface: #ffffff;
+  --surface-2: #eceae3;
+  --ink: #1b1a17;
+  --ink-muted: #57544c;
+  --ink-faint: #8a8678;
+  --rule: #d8d6cd;
+  --rule-strong: #bfbcb0;
+
+  --accent: #a85d00;
+  --active: #2f9e44;
+  --failed: #c92a2a;
+  --warn: #a85d00;
+  --idle: #8a8678;
+}
+
 * {
   box-sizing: border-box;
 }
