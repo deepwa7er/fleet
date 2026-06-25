@@ -90,6 +90,10 @@ pub struct ServiceDoc {
     /// Hand-written source lines in this repo — tracked code files only (via
     /// `git ls-files`, so build output and vendored deps are excluded).
     pub loc: u64,
+    /// Primary implementation language, inferred from the repo's manifest files
+    /// (`Cargo.toml` → Rust, `go.mod` → Go, else `package.json` → TypeScript).
+    /// `None` when none apply (e.g. a process-less or config-only repo).
+    pub language: Option<String>,
     /// Relationships derived from ground truth (no hand-curated graph).
     pub relationships: Relationships,
     /// Rustdoc bundles for the repo's crates.
@@ -168,9 +172,16 @@ fn assemble(fleet: &Fleet, opts: &Options, out: &Path) -> Result<()> {
         let label = m.label().to_string();
         let member_docs = harvest_docs(&fleet.dir(m), &label)
             .with_context(|| format!("harvesting docs for {label}"))?;
-        let service =
-            build_service_doc(fleet, m, &routes, &member_docs.description, member_docs.crates.clone())
-                .with_context(|| format!("describing {label}"))?;
+        let language = detect_language(&fleet.dir(m), &member_docs);
+        let service = build_service_doc(
+            fleet,
+            m,
+            &routes,
+            &member_docs.description,
+            language,
+            member_docs.crates.clone(),
+        )
+        .with_context(|| format!("describing {label}"))?;
 
         let docs_wanted = !opts.skip_rustdoc
             && opts.only.as_ref().is_none_or(|names| names.iter().any(|n| n == &label));
@@ -482,6 +493,7 @@ fn build_service_doc(
     member: &Member,
     routes: &HashMap<String, RouteInfo>,
     description: &str,
+    language: Option<String>,
     crates: Vec<CrateDoc>,
 ) -> Result<ServiceDoc> {
     let label = member.label().to_string();
@@ -539,8 +551,26 @@ fn build_service_doc(
         build_cmd,
         lighthouse_enrolled: enrolled,
         loc: count_loc(&fleet.dir(member)),
+        language,
         crates,
     })
+}
+
+/// Infer a repo's primary language from what the doc harvest found (which locates
+/// Cargo manifests even in subdirs, e.g. harbor's `server/`): Rust if it has any
+/// Cargo root, Go if it's a Go module, else TypeScript when a `package.json` sits
+/// at the root or under `web/` (a frontend-only/static repo like pilot). `None`
+/// when none apply.
+fn detect_language(dir: &Path, docs: &MemberDocs) -> Option<String> {
+    if !docs.roots.is_empty() {
+        Some("Rust".to_string())
+    } else if docs.go_module.is_some() {
+        Some("Go".to_string())
+    } else if dir.join("package.json").is_file() || dir.join("web/package.json").is_file() {
+        Some("TypeScript".to_string())
+    } else {
+        None
+    }
 }
 
 /// Source file extensions counted as hand-written code (excludes config, data,
