@@ -1,13 +1,18 @@
-//! `tugboat agent` — deploy a per-user daemon to dev machines.
+//! `tugboat agent` — install a per-user binary on the dev machines themselves.
 //!
 //! Distinct from the VPS deploy engine (`deploy.rs`), which targets a
-//! root-owned systemd *system* service on the `deepwa7er` host. An "agent" is a
-//! small daemon that runs on the dev machines themselves — a launchd login agent
-//! on macOS, a `systemd --user` unit on Linux — like `tidepool-clipd`. Its
-//! pure-Go binary cross-compiles for each target from wherever tugboat runs; the
-//! binary is shipped (a local install, or rsync over SSH) with an atomic swap,
-//! then the agent/unit is restarted. No health-check/rollback/ledger — these are
-//! trivially restartable user daemons, not the VPS's load-bearing services.
+//! root-owned systemd *system* service on the `deepwa7er` host. An "agent" target
+//! is a binary that lives on a dev machine, installed locally or over SSH with an
+//! atomic swap. It comes in two shapes:
+//!
+//! - a **daemon** — restarted after install via a launchd login agent (macOS) or
+//!   a `systemd --user` unit (Linux), like `tidepool-clipd`;
+//! - a **CLI tool** — just a binary on `PATH` (e.g. `~/.cargo/bin/drydock`), with
+//!   no unit to restart; set neither `launchd` nor `systemd_user`.
+//!
+//! The binary is built per target (cross-compiled when `goos`/`goarch` are given,
+//! or a native build when they aren't). No health-check/rollback/ledger — these
+//! are trivially replaceable user binaries, not the VPS's load-bearing services.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -23,8 +28,11 @@ use crate::manifest::ArtifactKind;
 pub struct AgentManifest {
     /// Agent name (also the built binary's filename).
     pub name: String,
-    /// Build command, run in the manifest's directory once per target.
-    /// `{goos}`/`{goarch}` select the platform; `{out}` is the output path.
+    /// Build command, run in the manifest's directory once per target. `{out}` is
+    /// the output path the binary must end up at. `{goos}`/`{goarch}` expand to the
+    /// target platform for a cross-compiled build (e.g. Go); omit them in both the
+    /// command and the target for a native build (e.g. `cargo build` for this
+    /// machine's own CLI).
     pub build: String,
     pub targets: Vec<Target>,
 }
@@ -40,27 +48,35 @@ pub struct Target {
     /// SSH target (`user@host`) to install on. Mutually exclusive with `local`.
     #[serde(default)]
     pub ssh: Option<String>,
-    pub goos: String,
-    pub goarch: String,
+    /// Target OS for a cross-compiled build (`{goos}`). Omit for a native build.
+    #[serde(default)]
+    pub goos: Option<String>,
+    /// Target arch for a cross-compiled build (`{goarch}`). Omit for a native build.
+    #[serde(default)]
+    pub goarch: Option<String>,
     /// Absolute install path (a leading `~/` is expanded on the target).
     pub dest: String,
-    /// Restart as this launchd agent label. Mutually exclusive with `systemd_user`.
+    /// Restart as this launchd agent label (daemon). Mutually exclusive with
+    /// `systemd_user`; omit both for a CLI tool (nothing to restart).
     #[serde(default)]
     pub launchd: Option<String>,
-    /// Restart as this `systemd --user` unit. Mutually exclusive with `launchd`.
+    /// Restart as this `systemd --user` unit (daemon). Mutually exclusive with
+    /// `launchd`; omit both for a CLI tool (nothing to restart).
     #[serde(default)]
     pub systemd_user: Option<String>,
 }
 
 impl Target {
-    /// The shell command that restarts the agent on its machine.
-    fn restart_cmd(&self) -> String {
+    /// The shell command that restarts the daemon on its machine, or `None` for a
+    /// CLI tool (neither `launchd` nor `systemd_user` set — nothing to restart).
+    fn restart_cmd(&self) -> Option<String> {
         match (&self.launchd, &self.systemd_user) {
             (Some(label), None) => {
-                format!("launchctl kickstart -k gui/$(id -u)/{}", shq(label))
+                Some(format!("launchctl kickstart -k gui/$(id -u)/{}", shq(label)))
             }
-            (None, Some(unit)) => format!("systemctl --user restart {}", shq(unit)),
-            _ => unreachable!("validated: exactly one restart kind"),
+            (None, Some(unit)) => Some(format!("systemctl --user restart {}", shq(unit))),
+            (None, None) => None,
+            (Some(_), Some(_)) => unreachable!("validated: at most one restart kind"),
         }
     }
 
@@ -94,38 +110,63 @@ pub fn deploy(manifest_path: &Path, only: Option<&str>, dry_run: bool) -> Result
 fn deploy_target(dir: &Path, manifest: &AgentManifest, target: &Target, dry_run: bool) -> Result<()> {
     let workdir = WorkDir::new(&format!("tugboat-agent-{}-{}", manifest.name, target.name))?;
     let out = workdir.path().join(&manifest.name);
-    let build_cmd = manifest
-        .build
-        .replace("{goos}", &target.goos)
-        .replace("{goarch}", &target.goarch)
-        .replace("{out}", &out.to_string_lossy());
+    let mut build_cmd = manifest.build.replace("{out}", &out.to_string_lossy());
+    if let Some(goos) = &target.goos {
+        build_cmd = build_cmd.replace("{goos}", goos);
+    }
+    if let Some(goarch) = &target.goarch {
+        build_cmd = build_cmd.replace("{goarch}", goarch);
+    }
+    // A leftover placeholder means the build references a platform the target
+    // didn't set — fail clearly rather than run a command with a literal `{goos}`.
+    for placeholder in ["{goos}", "{goarch}"] {
+        if build_cmd.contains(placeholder) {
+            bail!(
+                "agent target `{}`: build references `{placeholder}` but the target doesn't set it",
+                target.name
+            );
+        }
+    }
+    let restart = target.restart_cmd();
 
     if dry_run {
-        println!("  build:   {build_cmd}");
+        let platform = match (&target.goos, &target.goarch) {
+            (Some(os), Some(arch)) => format!("{os}/{arch}"),
+            _ => "native".to_string(),
+        };
+        println!("  build:   ({platform}) {build_cmd}");
         println!("  install: {} → {}", target.location(), target.dest);
-        println!("  restart: {}", target.restart_cmd());
+        println!("  restart: {}", restart.as_deref().unwrap_or("(none — CLI)"));
         return Ok(());
     }
 
-    println!("==> BUILD ({}/{}): {build_cmd}", target.goos, target.goarch);
+    let platform = match (&target.goos, &target.goarch) {
+        (Some(os), Some(arch)) => format!("{os}/{arch}"),
+        _ => "native".to_string(),
+    };
+    println!("==> BUILD ({platform}): {build_cmd}");
     run_in(dir, &build_cmd)?;
     if !out.is_file() {
         bail!("build produced no binary at {}", out.display());
     }
 
     match &target.ssh {
-        Some(host) => install_remote(host, &out, &target.dest, &target.restart_cmd()),
-        None => install_local(&out, &target.dest, &target.restart_cmd()),
+        Some(host) => install_remote(host, &out, &target.dest, restart.as_deref()),
+        None => install_local(&out, &target.dest, restart.as_deref()),
     }
 }
 
 /// Install on this machine: atomic swap (write beside the dest, then rename, so a
-/// running binary is replaced safely), then restart.
-fn install_local(built: &Path, dest: &str, restart_cmd: &str) -> Result<()> {
+/// running binary is replaced safely), then restart the daemon if there is one.
+fn install_local(built: &Path, dest: &str, restart_cmd: Option<&str>) -> Result<()> {
     let dest = expand_tilde(dest);
     let staged = with_suffix(&dest, ".tug-new");
     println!("==> INSTALL (local): {}", dest.display());
 
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating install dir {}", parent.display()))?;
+    }
     std::fs::copy(built, &staged)
         .with_context(|| format!("copying to {}", staged.display()))?;
     set_executable(&staged)?;
@@ -138,23 +179,33 @@ fn install_local(built: &Path, dest: &str, restart_cmd: &str) -> Result<()> {
     std::fs::rename(&staged, &dest)
         .with_context(|| format!("installing {}", dest.display()))?;
 
-    println!("==> RESTART: {restart_cmd}");
-    run_local(restart_cmd)
+    match restart_cmd {
+        Some(cmd) => {
+            println!("==> RESTART: {cmd}");
+            run_local(cmd)
+        }
+        None => {
+            println!("    installed (CLI — no restart)");
+            Ok(())
+        }
+    }
 }
 
 /// Install on a remote machine over SSH: rsync the binary beside the dest, then a
-/// remote atomic swap + restart.
-fn install_remote(host: &str, built: &Path, dest: &str, restart_cmd: &str) -> Result<()> {
+/// remote atomic swap, and restart the daemon if there is one.
+fn install_remote(host: &str, built: &Path, dest: &str, restart_cmd: Option<&str>) -> Result<()> {
     let log = StdoutSink;
     let staged = format!("{dest}.tug-new");
     println!("==> SHIP: {} → {host}:{dest}", built.display());
     deploy::rsync(built, &format!("{host}:{staged}"), ArtifactKind::File, &log)?;
 
-    println!("==> INSTALL + RESTART on {host}");
+    let action = if restart_cmd.is_some() { "INSTALL + RESTART" } else { "INSTALL" };
+    println!("==> {action} on {host}");
     // `dest` may contain a leading `~`, which the remote shell expands only when
     // unquoted; agent paths have no spaces, so this is safe.
+    let restart_line = restart_cmd.map(|c| format!("{c}\n")).unwrap_or_default();
     let script = format!(
-        "set -euo pipefail\nchmod 755 {staged}\nmv {staged} {dest}\n{restart_cmd}\necho \"    installed {dest}\""
+        "set -euo pipefail\nmkdir -p \"$(dirname {dest})\"\nchmod 755 {staged}\nmv {staged} {dest}\n{restart_line}echo \"    installed {dest}\""
     );
     deploy::ssh_script(host, &script, &log)
 }
@@ -185,10 +236,9 @@ fn load(path: &Path) -> Result<AgentManifest> {
             (false, None) => bail!("agent target `{}`: set `local = true` or `ssh = \"user@host\"`", t.name),
             _ => {}
         }
-        match (&t.launchd, &t.systemd_user) {
-            (Some(_), Some(_)) => bail!("agent target `{}`: set `launchd` or `systemd_user`, not both", t.name),
-            (None, None) => bail!("agent target `{}`: set `launchd` or `systemd_user`", t.name),
-            _ => {}
+        // A daemon sets exactly one restart kind; a CLI tool sets neither.
+        if t.launchd.is_some() && t.systemd_user.is_some() {
+            bail!("agent target `{}`: set `launchd` or `systemd_user`, not both", t.name);
         }
         if !t.dest.starts_with('/') && !t.dest.starts_with("~/") {
             bail!("agent target `{}`: `dest` must be absolute or start with `~/`", t.name);

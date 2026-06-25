@@ -325,17 +325,21 @@ tugboat fleet hooks install  # wire the commit hooks to the daemon
 The daemon's catch-up runs the first build on startup, so the site comes current
 on its own once the agent is up.
 
-## Agent deploys (dev-machine daemons)
+## Agent deploys (dev-machine binaries)
 
-`tugboat agent deploy` installs a small **per-user daemon onto the dev machines
-themselves** — a launchd login agent on macOS, a `systemd --user` unit on Linux —
-rather than a root systemd service on the VPS. tidepool's clipboard daemon
-(`tidepool-clipd`) is the first user: it runs on the Mac and the Fedora desktop.
+`tugboat agent deploy` installs a **per-user binary onto the dev machines
+themselves** (built locally, or rsync'd over SSH with an atomic swap) — rather
+than a root systemd service on the VPS. Two shapes:
 
-The pure-Go binary cross-compiles for each target from wherever tugboat runs, is
-shipped (a local atomic install, or rsync over SSH), and the agent/unit is
-restarted. No health-check / rollback / ledger — these are trivially restartable
-user daemons, not the VPS's load-bearing services.
+- a **daemon**, restarted after install via a launchd login agent (macOS) or a
+  `systemd --user` unit (Linux) — e.g. tidepool's `tidepool-clipd`;
+- a **CLI tool**, just a binary on `PATH` with nothing to restart — e.g. the
+  `drydock` worker CLI in `~/.cargo/bin`. Set neither `launchd` nor
+  `systemd_user`.
+
+The binary is built per target — cross-compiled when `goos`/`goarch` are given,
+or a native build when they aren't. No health-check / rollback / ledger — these
+are trivially replaceable user binaries, not the VPS's load-bearing services.
 
 ```sh
 tugboat agent deploy                 # build + install on every target
@@ -367,9 +371,22 @@ systemd_user = "tidepool-clipd"
 ```
 
 Each target is `local = true` (built + installed here) or `ssh = "user@host"`
-(rsync'd over SSH); it restarts via `launchd = "<label>"` or
-`systemd_user = "<unit>"`. `{goos}`/`{goarch}` choose the build platform and
-`{out}` is the binary path tugboat provides.
+(rsync'd over SSH); a daemon restarts via `launchd = "<label>"` or
+`systemd_user = "<unit>"`. `{out}` is the binary path tugboat provides;
+`{goos}`/`{goarch}` choose the build platform for a cross-compiled build.
+
+A **CLI tool** omits the platform and restart fields entirely — a native build,
+installed on `PATH`, nothing to restart:
+
+```toml
+name  = "drydock"                       # one binary: `drydock serve` + worker CLI
+build = "cargo build --release && cp target/release/drydock {out}"
+
+[[targets]]
+name = "mac"
+local = true
+dest = "~/.cargo/bin/drydock"
+```
 
 ## The manifest
 
