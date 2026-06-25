@@ -1,0 +1,8 @@
+# tide service config.
+#
+# `bind` is loopback; the breakwater reverse proxy is the tailnet front door and
+# serves tide at https://tide.internal.deepwa7er.com. `data_dir` holds the
+# persisted settings (systemd's StateDirectory provides it; see tide.service).
+bind = "127.0.0.1"
+port = 8094
+data_dir = "/var/lib/tide"
