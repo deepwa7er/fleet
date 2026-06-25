@@ -63,6 +63,11 @@ repo = "git@github.com:deepwa7er/driftword.git"
 path = "drydock"
 repo = "git@github.com:deepwa7er/drydock.git"
 
+[[members]]
+# Fleet-wide settings — the shared dark/light theme every service honors.
+path = "tide"
+repo = "git@github.com:deepwa7er/tide.git"
+
 # ── clone-only repos (no deploy.toml: deployed another way, or not a service) ─
 
 [[members]]
