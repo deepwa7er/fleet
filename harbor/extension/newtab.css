@@ -38,6 +38,30 @@
   --s5: 24px; --s6: 32px; --s7: 48px;
 }
 
+/* Light variant of harbor's blue-tinted palette — the shared fleet theme (tide
+ * flips html[data-theme], applied by theme.js). --border references --rule, so
+ * it follows automatically. */
+:root[data-theme="light"] {
+  --bg:          #f5f7fa;
+  --surface:     #ffffff;
+  --surface-2:   #eef1f6;
+  --ink:         #14181f;
+  --ink-muted:   #4a5260;
+  --ink-faint:   #7a828f;
+  --rule:        #d8dde6;
+  --rule-strong: #c2c9d4;
+
+  --accent:       #1971c2;
+  --accent-muted: #5b87b0;
+  --danger:       #c92a2a;
+  --st-active:    #2f9e44;
+  --st-shipped:   #1098ad;
+  --st-idle:      #8a8678;
+  --st-idea:      #e8590c;
+  --st-learning:  #6741d9;
+  --st-archived:  #adb5bd;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 
