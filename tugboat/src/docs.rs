@@ -98,6 +98,32 @@ pub struct ServiceDoc {
     pub relationships: Relationships,
     /// Rustdoc bundles for the repo's crates.
     pub crates: Vec<CrateDoc>,
+    /// Whether a rendered README was shipped at `/readme/<name>.html` for the
+    /// service's detail page.
+    pub has_readme: bool,
+    /// Direct dependencies of the service's own crates (no transitive deps).
+    pub dependencies: Dependencies,
+}
+
+/// A service's direct dependencies, split into workspace-internal edges and
+/// external crates. Empty for non-Rust services. Harvested from `cargo metadata`
+/// (declared deps only — no transitive graph), so it stays accurate by
+/// construction.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct Dependencies {
+    /// Edges between the service's own crates (`from` depends on `to`), for a
+    /// workspace like lagoon's; empty for a single-crate service.
+    pub internal: Vec<InternalDep>,
+    /// External crate names the service depends on directly, sorted and deduped
+    /// (dev-dependencies excluded).
+    pub external: Vec<String>,
+}
+
+/// One workspace-internal dependency edge: crate `from` depends on crate `to`.
+#[derive(Debug, Clone, Serialize)]
+pub struct InternalDep {
+    pub from: String,
+    pub to: String,
 }
 
 /// How a service relates to the fleet's cross-cutting services — each derived
@@ -173,15 +199,20 @@ fn assemble(fleet: &Fleet, opts: &Options, out: &Path) -> Result<()> {
         let member_docs = harvest_docs(&fleet.dir(m), &label)
             .with_context(|| format!("harvesting docs for {label}"))?;
         let language = detect_language(&fleet.dir(m), &member_docs);
-        let service = build_service_doc(
-            fleet,
-            m,
-            &routes,
-            &member_docs.description,
-            language,
-            member_docs.crates.clone(),
-        )
-        .with_context(|| format!("describing {label}"))?;
+
+        // Render the repo's README to an HTML fragment for the service's detail
+        // page, shipped at /readme/<name>.html (fetched lazily by pilot).
+        let readme_html = read_readme(&fleet.dir(m)).map(|md| render_markdown_body(&md));
+        let service = build_service_doc(fleet, m, &routes, &member_docs, language, readme_html.is_some())
+            .with_context(|| format!("describing {label}"))?;
+        if let Some(html) = &readme_html {
+            let readme_dir = out.join("readme");
+            std::fs::create_dir_all(&readme_dir)
+                .with_context(|| format!("creating {}", readme_dir.display()))?;
+            let path = readme_dir.join(format!("{}.html", service.name));
+            std::fs::write(&path, html)
+                .with_context(|| format!("writing {}", path.display()))?;
+        }
 
         let docs_wanted = !opts.skip_rustdoc
             && opts.only.as_ref().is_none_or(|names| names.iter().any(|n| n == &label));
@@ -492,9 +523,9 @@ fn build_service_doc(
     fleet: &Fleet,
     member: &Member,
     routes: &HashMap<String, RouteInfo>,
-    description: &str,
+    docs: &MemberDocs,
     language: Option<String>,
-    crates: Vec<CrateDoc>,
+    has_readme: bool,
 ) -> Result<ServiceDoc> {
     let label = member.label().to_string();
     let manifest_path = fleet.dir(member).join("deploy.toml");
@@ -516,7 +547,7 @@ fn build_service_doc(
         .and_then(|m| m.description.as_deref())
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or(description);
+        .unwrap_or(&docs.description);
 
     // Match a route by the service name, then the repo label — breakwater's
     // route host's first DNS label is the service it fronts.
@@ -552,7 +583,9 @@ fn build_service_doc(
         lighthouse_enrolled: enrolled,
         loc: count_loc(&fleet.dir(member)),
         language,
-        crates,
+        crates: docs.crates.clone(),
+        has_readme,
+        dependencies: docs.dependencies.clone(),
     })
 }
 
@@ -675,6 +708,8 @@ struct MemberDocs {
     roots: Vec<CargoRoot>,
     /// Module directory to run `go doc` against, when this is a Go member.
     go_module: Option<PathBuf>,
+    /// Direct dependencies of the member's crates (empty for non-Rust members).
+    dependencies: Dependencies,
 }
 
 /// A Cargo package/workspace root within a member, and where its built docs land.
@@ -710,11 +745,13 @@ fn harvest_docs(member_dir: &Path, label: &str) -> Result<MemberDocs> {
                 packages.push(package);
             }
         }
+        let dependencies = harvest_dependencies(&packages);
         return Ok(MemberDocs {
             description: choose_description(&packages, label),
             crates,
             roots,
             go_module: None,
+            dependencies,
         });
     }
 
@@ -727,6 +764,7 @@ fn harvest_docs(member_dir: &Path, label: &str) -> Result<MemberDocs> {
             crates: vec![CrateDoc { name: module, doc_path: format!("/doc/{label}/") }],
             roots: Vec::new(),
             go_module: Some(member_dir.to_path_buf()),
+            dependencies: Dependencies::default(),
         });
     }
 
@@ -735,7 +773,41 @@ fn harvest_docs(member_dir: &Path, label: &str) -> Result<MemberDocs> {
         crates: Vec::new(),
         roots: Vec::new(),
         go_module: None,
+        dependencies: Dependencies::default(),
     })
+}
+
+/// Split a workspace's declared dependencies into internal edges (a member crate
+/// depending on another member crate) and external crates (everything else),
+/// from `cargo metadata`'s per-package `dependencies` — declared deps only, so no
+/// transitive noise. Dev-dependencies are excluded (they're test/build scaffolding,
+/// not the service's architecture).
+fn harvest_dependencies(packages: &[MetaPackage]) -> Dependencies {
+    let members: std::collections::HashSet<&str> =
+        packages.iter().map(|p| p.name.as_str()).collect();
+    let mut internal = Vec::new();
+    let mut external = std::collections::BTreeSet::new();
+    for package in packages {
+        for dep in &package.dependencies {
+            if dep.kind.as_deref() == Some("dev") {
+                continue;
+            }
+            if members.contains(dep.name.as_str()) {
+                internal.push(InternalDep {
+                    from: package.name.clone(),
+                    to: dep.name.clone(),
+                });
+            } else {
+                external.insert(dep.name.clone());
+            }
+        }
+    }
+    internal.sort_by(|a, b| (&a.from, &a.to).cmp(&(&b.from, &b.to)));
+    internal.dedup_by(|a, b| a.from == b.from && a.to == b.to);
+    Dependencies {
+        internal,
+        external: external.into_iter().collect(),
+    }
 }
 
 /// Find the Cargo root(s) inside a member: the repo-root `Cargo.toml` if present
@@ -770,6 +842,17 @@ struct MetaPackage {
     #[serde(default)]
     description: Option<String>,
     targets: Vec<MetaTarget>,
+    /// Declared dependencies (present even with `--no-deps`; no transitive graph).
+    #[serde(default)]
+    dependencies: Vec<MetaDep>,
+}
+
+#[derive(Deserialize)]
+struct MetaDep {
+    name: String,
+    /// `null` for a normal dependency, else `"dev"` or `"build"`.
+    #[serde(default)]
+    kind: Option<String>,
 }
 #[derive(Deserialize)]
 struct MetaTarget {
@@ -873,6 +956,14 @@ fn go_markdown(module_dir: &Path) -> Result<String> {
 /// and to sections (Index, Variables, …) via heading slugs — so we give every
 /// heading a GitHub-style slug `id` to make the section links resolve too.
 fn render_markdown_page(module: &str, markdown: &str) -> String {
+    markdown_html(module, &render_markdown_body(markdown))
+}
+
+/// Render Markdown to an HTML **fragment** (no page wrapper): heading slugs for
+/// anchor links, syntax-highlighted fenced code, and ` ```mermaid ` blocks emitted
+/// as `<pre class="mermaid">` for a client-side Mermaid renderer to draw. Shared by
+/// the Go-doc page and pilot's README detail pages.
+fn render_markdown_body(markdown: &str) -> String {
     use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd, html};
     use syntect::highlighting::ThemeSet;
     use syntect::parsing::SyntaxSet;
@@ -924,7 +1015,14 @@ fn render_markdown_page(module: &str, markdown: &str) -> String {
                     }
                     j += 1;
                 }
-                out.push(Event::Html(highlight_code(&syntaxes, theme, &lang, &code).into()));
+                // A ```mermaid block becomes a container the client-side Mermaid
+                // renderer draws; everything else is syntax-highlighted.
+                let rendered = if lang.eq_ignore_ascii_case("mermaid") {
+                    format!("<pre class=\"mermaid\">{}</pre>", html_escape(&code))
+                } else {
+                    highlight_code(&syntaxes, theme, &lang, &code)
+                };
+                out.push(Event::Html(rendered.into()));
                 i = j + 1; // skip the block's Text and End events
             }
             _ => {
@@ -936,7 +1034,19 @@ fn render_markdown_page(module: &str, markdown: &str) -> String {
 
     let mut body = String::new();
     html::push_html(&mut body, out.into_iter());
-    markdown_html(module, &body)
+    body
+}
+
+/// Read a repo's README (any common casing), or `None` when it has none.
+fn read_readme(dir: &Path) -> Option<String> {
+    for name in ["README.md", "readme.md", "README.markdown", "Readme.md"] {
+        if let Ok(text) = std::fs::read_to_string(dir.join(name)) {
+            if !text.trim().is_empty() {
+                return Some(text);
+            }
+        }
+    }
+    None
 }
 
 /// Highlight one code block to an HTML `<pre>`, with per-token color spans from
@@ -1149,7 +1259,44 @@ mod tests {
         MetaTarget { name: name.into(), kind: vec![kind.into()] }
     }
     fn package(name: &str, description: Option<&str>, targets: Vec<MetaTarget>) -> MetaPackage {
-        MetaPackage { name: name.into(), description: description.map(Into::into), targets }
+        MetaPackage {
+            name: name.into(),
+            description: description.map(Into::into),
+            targets,
+            dependencies: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn dependencies_split_internal_vs_external_and_skip_dev() {
+        let dep = |name: &str, kind: Option<&str>| MetaDep {
+            name: name.into(),
+            kind: kind.map(Into::into),
+        };
+        let packages = vec![
+            MetaPackage {
+                name: "svc-server".into(),
+                description: None,
+                targets: vec![],
+                dependencies: vec![
+                    dep("svc-core", None),       // internal edge
+                    dep("axum", None),           // external
+                    dep("tempfile", Some("dev")), // dev — excluded
+                ],
+            },
+            MetaPackage {
+                name: "svc-core".into(),
+                description: None,
+                targets: vec![],
+                dependencies: vec![dep("serde", None)],
+            },
+        ];
+        let deps = harvest_dependencies(&packages);
+        assert_eq!(deps.internal.len(), 1);
+        assert_eq!(deps.internal[0].from, "svc-server");
+        assert_eq!(deps.internal[0].to, "svc-core");
+        // External: sorted, deduped, dev-dependency excluded.
+        assert_eq!(deps.external, vec!["axum", "serde"]);
     }
 
     #[test]
