@@ -275,8 +275,11 @@ fn assemble(fleet: &Fleet, opts: &Options, out: &Path) -> Result<()> {
     std::fs::write(&json_path, json)
         .with_context(|| format!("writing {}", json_path.display()))?;
 
+    let guidance = harvest_guidance(fleet, out)?;
+
     println!("  services:   {}", model.services.len());
     println!("  fleet.json: {}", json_path.display());
+    println!("  guidance:   {guidance} document(s)");
     if opts.skip_rustdoc {
         println!("  api docs:   skipped (--skip-rustdoc)");
     } else {
@@ -1047,6 +1050,149 @@ fn read_readme(dir: &Path) -> Option<String> {
         }
     }
     None
+}
+
+// ── Claude guidance documents ─────────────────────────────────────────────────
+//
+// pilot's Guidance section: the instruction/context docs that steer Claude across
+// the fleet — each fleet member's CLAUDE.md (auto), plus the configured sources
+// ([docs] `guidance` in fleet.toml: the global ~/.claude/CLAUDE.md, the drydock
+// worker prompt, the skills dir, the memory dir). Each is rendered to an HTML
+// fragment at /guidance/<id>.html; the index is guidance.json.
+
+/// One guidance document in the index served at `guidance.json`.
+#[derive(Debug, Serialize)]
+struct GuidanceDoc {
+    /// URL-safe id; the page is `/guidance/<id>` and the fragment `<id>.html`.
+    id: String,
+    /// Human title.
+    label: String,
+    /// Grouping for the UI (e.g. `Doctrine`, `Skills`, `Memory`).
+    category: String,
+}
+
+#[derive(Debug, Serialize)]
+struct GuidanceIndex {
+    docs: Vec<GuidanceDoc>,
+}
+
+/// Harvest the guidance documents, render each to `/guidance/<id>.html`, and write
+/// the index to `guidance.json`. Returns how many were emitted (0 → nothing
+/// written). Missing/unreadable sources warn and are skipped, never fatal.
+fn harvest_guidance(fleet: &Fleet, out: &Path) -> Result<usize> {
+    // (category, label, file).
+    let mut sources: Vec<(String, String, PathBuf)> = Vec::new();
+
+    // Auto: each fleet member's CLAUDE.md.
+    for m in &fleet.members {
+        let path = fleet.dir(m).join("CLAUDE.md");
+        if path.is_file() {
+            sources.push(("Project CLAUDE.md".to_string(), m.label().to_string(), path));
+        }
+    }
+
+    // Configured sources (files and directories).
+    if let Some(docs) = &fleet.docs {
+        for src in &docs.guidance {
+            let base = resolve_guidance_path(fleet, &src.path);
+            if base.is_file() {
+                let label = src.label.clone().unwrap_or_else(|| file_stem(&base));
+                sources.push((src.category.clone(), label, base));
+            } else if base.is_dir() {
+                for (label, file) in collect_dir_markdown(&base) {
+                    sources.push((src.category.clone(), label, file));
+                }
+            } else {
+                eprintln!("    warning: guidance path not found: {}", base.display());
+            }
+        }
+    }
+
+    if sources.is_empty() {
+        return Ok(0);
+    }
+
+    let guidance_root = out.join("guidance");
+    std::fs::create_dir_all(&guidance_root)
+        .with_context(|| format!("creating {}", guidance_root.display()))?;
+
+    let mut index = Vec::new();
+    let mut used_ids = std::collections::HashSet::new();
+    for (category, label, path) in sources {
+        let markdown = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(err) => {
+                eprintln!("    warning: reading guidance {}: {err}", path.display());
+                continue;
+            }
+        };
+        let base_id = {
+            let s = slugify(&format!("{category}-{label}"));
+            if s.is_empty() { "doc".to_string() } else { s }
+        };
+        let mut id = base_id.clone();
+        let mut n = 2;
+        while !used_ids.insert(id.clone()) {
+            id = format!("{base_id}-{n}");
+            n += 1;
+        }
+        let html = render_markdown_body(&markdown);
+        let file = guidance_root.join(format!("{id}.html"));
+        std::fs::write(&file, html).with_context(|| format!("writing {}", file.display()))?;
+        index.push(GuidanceDoc { id, label, category });
+    }
+
+    let count = index.len();
+    let json = serde_json::to_string_pretty(&GuidanceIndex { docs: index })
+        .context("serializing guidance.json")?;
+    std::fs::write(out.join("guidance.json"), json).context("writing guidance.json")?;
+    Ok(count)
+}
+
+/// Resolve a guidance `path`: absolute or `~/…` is expanded as-is; anything else
+/// is relative to the fleet root.
+fn resolve_guidance_path(fleet: &Fleet, path: &str) -> PathBuf {
+    if path.starts_with('/') || path.starts_with("~/") || path == "~" {
+        crate::fleet::expand_tilde(path)
+    } else {
+        fleet.root_dir().join(path)
+    }
+}
+
+fn file_stem(path: &Path) -> String {
+    path.file_stem().and_then(|s| s.to_str()).unwrap_or("doc").to_string()
+}
+
+/// The markdown documents directly under `dir`: each immediate `*.md` file (label
+/// = stem) plus each immediate subdir containing `SKILL.md` (label = dir name).
+/// A top-level `<name>.md` is dropped when a sibling skill dir `<name>/` exists,
+/// so a skills directory and a flat memory directory both harvest cleanly.
+fn collect_dir_markdown(dir: &Path) -> Vec<(String, PathBuf)> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    let entries: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+
+    let mut skill_dirs = std::collections::HashSet::new();
+    for path in &entries {
+        if path.is_dir() && path.join("SKILL.md").is_file() {
+            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                skill_dirs.insert(name.to_string());
+                out.push((name.to_string(), path.join("SKILL.md")));
+            }
+        }
+    }
+    for path in &entries {
+        if path.extension().and_then(|s| s.to_str()) == Some("md") {
+            let stem = file_stem(path);
+            if !skill_dirs.contains(&stem) {
+                out.push((stem, path.clone()));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
 }
 
 /// Highlight one code block to an HTML `<pre>`, with per-token color spans from

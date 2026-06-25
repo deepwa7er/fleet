@@ -110,3 +110,25 @@ url = "https://docs.internal.deepwa7er.com"
 # Extra repos counted in the line-of-code total beyond the deployable members:
 # tugboat itself (the fleet's deployer) is fleet code we wrote, but not a service.
 extra_loc = ["tugboat"]
+
+# Claude guidance documents for pilot's Guidance section. Each member's CLAUDE.md
+# is auto-included; these add the global doctrine, the worker prompt, the skills,
+# and the cross-session memory notes. A `path` is a file or a directory of `.md`
+# (a dir also picks up each `*/SKILL.md`); `~/…` and absolute paths are allowed.
+[[docs.guidance]]
+category = "Doctrine"
+label = "Global CLAUDE.md"
+path = "~/.claude/CLAUDE.md"
+
+[[docs.guidance]]
+category = "Worker prompt"
+label = "Drydock worker-task"
+path = "drydock/docs/worker-task.md"
+
+[[docs.guidance]]
+category = "Skills"
+path = "~/.claude/skills"
+
+[[docs.guidance]]
+category = "Memory"
+path = "~/.claude/projects/-Users-deepwater-code/memory"

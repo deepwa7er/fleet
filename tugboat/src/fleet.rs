@@ -60,6 +60,27 @@ pub struct DocsConfig {
     /// services.
     #[serde(default)]
     pub extra_loc: Vec<String>,
+    /// Claude guidance documents to surface in pilot's Guidance section, beyond
+    /// the per-member `CLAUDE.md` (which is auto-discovered). Each source is a
+    /// file or a directory of `.md` files; see [`GuidanceSource`].
+    #[serde(default)]
+    pub guidance: Vec<GuidanceSource>,
+}
+
+/// A source of Claude guidance documents for the docs site's Guidance section.
+/// `path` may be absolute, `~/…`, or relative to the fleet `root`. A file is one
+/// document; a directory contributes each `*.md` inside it plus each
+/// `*/SKILL.md` (so a skills directory and a flat memory directory both work).
+#[derive(Debug, Clone, Deserialize)]
+pub struct GuidanceSource {
+    /// Grouping shown in the UI (e.g. `Doctrine`, `Skills`, `Memory`).
+    pub category: String,
+    /// File or directory path (absolute, `~/…`, or relative to the fleet root).
+    pub path: String,
+    /// Title for a single-file source. Ignored for a directory (each file's name
+    /// is used). Defaults to the file stem when omitted.
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
