@@ -19,6 +19,12 @@ cal = "https://calendar.google.com"
 drift = "https://driftword.internal.deepwa7er.com"
 words = "https://driftword.internal.deepwa7er.com"
 
+# Fleet-wide dark/light theme (tide). `b dark` / `b light` set the global theme
+# every fleet web UI honors; tide persists it, sets the shared cookie across
+# *.internal.deepwa7er.com, and shows a confirmation page.
+dark = "https://tide.internal.deepwa7er.com/set?theme=dark"
+light = "https://tide.internal.deepwa7er.com/set?theme=light"
+
 # Parameterized shortcuts: `b gh axum` searches GitHub for "axum".
 gh = "https://github.com/search?q={query}"
 yt = "https://www.youtube.com/results?search_query={query}"
