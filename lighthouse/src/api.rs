@@ -156,7 +156,8 @@ async fn resolve(config: &Config, unit: &str) -> Result<Monitored, StatusCode> {
         .ok_or(StatusCode::NOT_FOUND)
 }
 
-/// One member's local repo state, from the tugboat daemon's `/status`.
+/// One member's `origin/<default-branch>` state — the code a deploy ships — from
+/// the tugboat daemon's `/status`.
 #[derive(Debug, Deserialize)]
 struct DaemonStatus {
     name: String,
@@ -213,7 +214,7 @@ fn current_deployed(entries: &[LedgerEntry]) -> Option<&LedgerEntry> {
 }
 
 /// Freshness of one deployable service: how the running version compares to the
-/// dev box's local working tree.
+/// head of origin's default branch (the code a deploy would ship).
 #[derive(Debug, Serialize)]
 pub struct DeployStatus {
     unit: String,
@@ -321,7 +322,7 @@ fn verdict(deployed: Option<&LedgerEntry>, local: &DaemonStatus) -> &'static str
 }
 
 /// `GET /api/deploy-status` — freshness of every deployable service: which sha
-/// is running vs the dev box's local working tree. The set of entries is also
+/// is running vs the head of origin's default branch. The set of entries is also
 /// the set of services that show a Deploy button. Empty (no buttons, no badges)
 /// when deploy is unconfigured or the daemon is unreachable.
 pub async fn deploy_status(State(state): State<Arc<AppState>>) -> Json<Vec<DeployStatus>> {
@@ -342,7 +343,7 @@ pub async fn deploy_status(State(state): State<Arc<AppState>>) -> Json<Vec<Deplo
         .collect();
 
     // Tell the daemon the deployed shas we know, so it can compute each one's
-    // relationship (ahead vs diverged, commit count) against its working tree.
+    // relationship (ahead vs diverged, commit count) against origin's default branch.
     let deployed_param = units
         .iter()
         .filter_map(|(_, name, dep)| dep.as_ref().map(|d| format!("{name}:{}", d.sha)))
