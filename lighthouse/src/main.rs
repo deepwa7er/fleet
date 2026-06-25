@@ -12,6 +12,7 @@ use anyhow::Context;
 use axum::Router;
 use axum::routing::{get, post};
 use clap::Parser;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::config::Config;
@@ -59,6 +60,15 @@ async fn main() -> anyhow::Result<()> {
         http: reqwest::Client::new(),
     });
 
+    // The pilot docs site (a static page on another tailnet origin) reads the
+    // fleet's live status from this dashboard's API. Allow cross-origin GETs from
+    // anywhere: lighthouse is tailnet-only and unauthenticated already, so this
+    // exposes nothing new — and restricting to GET keeps the control endpoints
+    // (POST start/stop/deploy) same-origin only.
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([axum::http::Method::GET]);
+
     let app = Router::new()
         .route("/api/services", get(api::list_services))
         .route("/api/services/{unit}/logs", get(api::get_logs))
@@ -82,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
             get(api::deploy_stream),
         )
         .fallback_service(serve_dir)
+        .layer(cors)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(addr)

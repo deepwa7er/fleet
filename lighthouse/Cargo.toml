@@ -16,4 +16,4 @@ serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util"] }
 tokio-stream = "0.1"
 toml = "0.8"
-tower-http = { version = "0.6", features = ["fs"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
