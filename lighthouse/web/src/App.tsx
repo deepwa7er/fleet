@@ -149,7 +149,7 @@ export function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-baseline gap-3 border-b border-rule-strong px-4 py-4 sm:px-6">
+      <header data-app-header className="flex items-baseline gap-3 border-b border-rule-strong px-4 py-4 sm:px-6">
         <button
           type="button"
           onClick={goHome}

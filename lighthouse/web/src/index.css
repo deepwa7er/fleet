@@ -50,6 +50,13 @@ body,
   height: 100%;
 }
 
+/* Embedded in the Helm native fleet app (the head script sets data-embed): the
+ * host supplies the top bar, so hide our own branding header to avoid a double
+ * header. Detail-view nav stays — it's separate chrome. */
+html[data-embed="helm"] [data-app-header] {
+  display: none;
+}
+
 body {
   margin: 0;
   background-color: var(--color-bg);

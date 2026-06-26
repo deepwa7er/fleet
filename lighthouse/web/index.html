@@ -13,6 +13,9 @@
         var e = document.documentElement;
         e.dataset.theme = t;
         e.style.colorScheme = t;
+        // Embedded in the Helm native fleet app? Hide our own top chrome so the
+        // host's bar is the only header (the UA carries "Helm").
+        if (/\bHelm\b/.test(navigator.userAgent)) e.dataset.embed = "helm";
       } catch (_) {}
     </script>
     <title>Lighthouse</title>
