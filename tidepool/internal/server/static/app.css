@@ -21,8 +21,8 @@
   --rule:        #d2d0c8;   /* hairline borders */
   --rule-strong: #b4b1a7;
 
-  /* One signal accent — caution amber. Action / attention, not decoration. */
-  --accent:      #e8590c;
+  /* One signal accent — signal blue. Action / attention, not decoration. */
+  --accent:      #1971c2;
   --danger:      #c92a2a;
 
   /* Spacing scale — fixed, modular. */
