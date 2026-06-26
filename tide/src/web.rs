@@ -130,7 +130,7 @@ h1{{font-size:1.1rem;margin:0 0 .5rem;font-weight:400;color:{accent}}}p{{color:{
 /// the fleet's DG-001 tokens so the page matches the theme it just set.
 fn palette(theme: Theme) -> (&'static str, &'static str, &'static str, &'static str, &'static str, &'static str) {
     match theme {
-        Theme::Dark => ("#0b0c0d", "#121315", "#e6e4dd", "#9a978d", "#f08c00", "#2a2b2d"),
-        Theme::Light => ("#f4f3ee", "#ffffff", "#1b1a17", "#57544c", "#a85d00", "#d8d6cd"),
+        Theme::Dark => ("#0b0c0d", "#121315", "#e6e4dd", "#9a978d", "#4dabf7", "#2a2b2d"),
+        Theme::Light => ("#f4f3ee", "#ffffff", "#1b1a17", "#57544c", "#1971c2", "#d8d6cd"),
     }
 }
