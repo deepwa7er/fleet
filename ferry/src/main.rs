@@ -951,7 +951,7 @@ fn render_commands_page(
   :root {{
     --font-mono: "Berkeley Mono", "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     --bg: #f4f3ee; --surface: #fafaf8; --ink: #1a1a1a; --ink-muted: #5a584f; --ink-faint: #8a877c;
-    --rule: #d2d0c8; --rule-strong: #b4b1a7; --accent: #e8590c; --danger: #c92a2a;
+    --rule: #d2d0c8; --rule-strong: #b4b1a7; --accent: #1971c2; --danger: #c92a2a;
     --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
   }}
   * {{ box-sizing: border-box; }}
@@ -1076,7 +1076,7 @@ fn render_capture_page(error: Option<&str>, text: &str, open: &str) -> String {
   :root {{
     --font-mono: "Berkeley Mono", "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     --bg: #f4f3ee; --surface: #fafaf8; --ink: #1a1a1a; --ink-muted: #5a584f;
-    --rule: #d2d0c8; --rule-strong: #b4b1a7; --accent: #e8590c; --danger: #c92a2a;
+    --rule: #d2d0c8; --rule-strong: #b4b1a7; --accent: #1971c2; --danger: #c92a2a;
   }}
   * {{ box-sizing: border-box; }}
   body {{
