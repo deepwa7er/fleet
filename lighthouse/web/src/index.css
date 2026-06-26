@@ -18,7 +18,7 @@
   --color-rule: #2a2b2d;
   --color-rule-strong: #3a3c3e;
 
-  --color-accent: #f08c00;
+  --color-accent: #4dabf7;
   --color-active: #37b24d;
   --color-failed: #c92a2a;
   --color-warn: #f08c00;
@@ -37,7 +37,7 @@ html[data-theme="light"] {
   --color-rule: #d8d6cd;
   --color-rule-strong: #bfbcb0;
 
-  --color-accent: #a85d00;
+  --color-accent: #1971c2;
   --color-active: #2f9e44;
   --color-failed: #c92a2a;
   --color-warn: #a85d00;
