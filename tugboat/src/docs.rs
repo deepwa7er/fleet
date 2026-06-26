@@ -1318,7 +1318,7 @@ fn go_doc_html(module: &str, sections: &str) -> String {
     font-size:13px; line-height:1.5; }}
   .wrap {{ max-width:980px; margin:0 auto; padding:2rem 1.5rem; }}
   header {{ border-bottom:1px solid #2a2b2d; padding-bottom:1rem; margin-bottom:1.5rem; }}
-  h1 {{ font-size:1.4rem; margin:0; color:#f08c00; }}
+  h1 {{ font-size:1.4rem; margin:0; color:#4dabf7; }}
   .sub {{ color:#6a675f; font-size:12px; margin-top:.3rem; }}
   section {{ border:1px solid #2a2b2d; background:#121315; margin-bottom:1rem; }}
   h2 {{ font-size:13px; margin:0; padding:.5rem .75rem; background:#16181a;
@@ -1348,9 +1348,9 @@ fn markdown_html(module: &str, body: &str) -> String {
     font-family:"Berkeley Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
     font-size:13px; line-height:1.6; }}
   .wrap {{ max-width:920px; margin:0 auto; padding:2rem 1.5rem; }}
-  a {{ color:#f08c00; text-decoration:none; }}
+  a {{ color:#4dabf7; text-decoration:none; }}
   a:hover {{ text-decoration:underline; }}
-  h1 {{ font-size:1.5rem; color:#f08c00; margin:2rem 0 .5rem;
+  h1 {{ font-size:1.5rem; color:#4dabf7; margin:2rem 0 .5rem;
     padding-top:1rem; border-top:1px solid #2a2b2d; }}
   h1:first-of-type {{ border-top:0; padding-top:0; margin-top:0; }}
   h2 {{ font-size:1.1rem; color:#e6e4dd; margin:1.75rem 0 .5rem; }}
