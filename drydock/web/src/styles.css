@@ -18,7 +18,7 @@
   --rule: #2a2b2d;
   --rule-strong: #3a3c3e;
 
-  --accent: #f08c00; /* single signal color: action / interactive */
+  --accent: #4dabf7; /* single signal color: action / interactive */
   --active: #37b24d; /* success / done */
   --failed: #c92a2a; /* blocked / destructive / error */
   --warn: #f08c00; /* needs attention */
@@ -49,7 +49,7 @@ html[data-theme="light"] {
   --rule: #d8d6cd;
   --rule-strong: #bfbcb0;
 
-  --accent: #a85d00;
+  --accent: #1971c2;
   --active: #2f9e44;
   --failed: #c92a2a;
   --warn: #a85d00;
