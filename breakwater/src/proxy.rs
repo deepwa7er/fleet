@@ -13,6 +13,7 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use bytes::Bytes;
@@ -32,6 +33,20 @@ use crate::static_files;
 /// spawned) but need not be `Sync` — which `tower-http`'s served body is not —
 /// so this is the *unsync* boxed body, the widest type all sources satisfy.
 pub type ProxyBody = UnsyncBoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
+
+/// Time budget for establishing a fresh upstream connection — the TCP connect
+/// and the HTTP/1.1 handshake. Backends are loopback fleet services, so this
+/// only trips on a wedged or half-open backend, never normal operation; on
+/// elapse the request fails with 504 rather than hanging the connection task
+/// (and its sockets/FDs) indefinitely.
+const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Time budget for the upstream to return *response headers* (time to first
+/// byte). This bounds a backend that accepts the connection but never responds.
+/// It deliberately does NOT limit the response body, so long-lived streams (SSE
+/// log tails, deploy consoles) are unaffected — only the initial head must
+/// arrive within this window.
+const UPSTREAM_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Hop-by-hop headers (RFC 7230 §6.1): meaningful only for a single transport
 /// link, never forwarded across a proxy. `Connection` may name additional ones.
@@ -105,12 +120,22 @@ async fn proxy(
     let forwarded = forward_request_headers(req.headers(), client_ip, is_upgrade);
 
     // One fresh upstream connection per request. `.with_upgrades()` lets the
-    // connection task hand back the raw stream if the response is a 101.
-    let stream = TcpStream::connect(upstream)
-        .await
-        .with_context(|| format!("connecting to upstream {upstream}"))?;
-    let (mut sender, connection) =
-        hyper::client::conn::http1::handshake(TokioIo::new(stream)).await?;
+    // connection task hand back the raw stream if the response is a 101. Each
+    // setup stage is bounded by a timeout so a wedged backend can't pin the
+    // spawned connection task (and its socket/FDs) open forever.
+    let stream = match tokio::time::timeout(UPSTREAM_CONNECT_TIMEOUT, TcpStream::connect(upstream)).await {
+        Err(_) => return Ok(upstream_timeout(upstream, "connect")),
+        Ok(result) => result.with_context(|| format!("connecting to upstream {upstream}"))?,
+    };
+    let (mut sender, connection) = match tokio::time::timeout(
+        UPSTREAM_CONNECT_TIMEOUT,
+        hyper::client::conn::http1::handshake(TokioIo::new(stream)),
+    )
+    .await
+    {
+        Err(_) => return Ok(upstream_timeout(upstream, "handshake")),
+        Ok(result) => result.context("handshaking with upstream")?,
+    };
     tokio::spawn(async move {
         if let Err(err) = connection.with_upgrades().await {
             eprintln!("breakwater: upstream connection closed: {err}");
@@ -131,7 +156,12 @@ async fn proxy(
     *upstream_req.headers_mut().expect("fresh builder has headers") = forwarded;
     let upstream_req = upstream_req.body(body).expect("valid request parts");
 
-    let response = sender.send_request(upstream_req).await?;
+    // Bounds time-to-first-byte only; `send_request` resolves once the response
+    // head arrives, so streaming bodies (SSE) are not cut off by this.
+    let response = match tokio::time::timeout(UPSTREAM_RESPONSE_TIMEOUT, sender.send_request(upstream_req)).await {
+        Err(_) => return Ok(upstream_timeout(upstream, "response")),
+        Ok(result) => result.context("awaiting upstream response")?,
+    };
 
     if is_upgrade && response.status() == StatusCode::SWITCHING_PROTOCOLS {
         return Ok(tunnel(response, client_upgrade.expect("upgrade path sets this")));
@@ -284,7 +314,14 @@ fn empty_body() -> ProxyBody {
     Empty::<Bytes>::new().map_err(box_err).boxed_unsync()
 }
 
-/// A small plain-text status page (404 / 502).
+/// Log and build the 504 returned when an upstream setup stage exceeds its
+/// timeout. `stage` names which step elapsed (connect / handshake / response).
+fn upstream_timeout(upstream: &str, stage: &str) -> Response<ProxyBody> {
+    eprintln!("breakwater: upstream {stage} timed out after waiting: {upstream}");
+    status_page(StatusCode::GATEWAY_TIMEOUT, "upstream timeout")
+}
+
+/// A small plain-text status page (404 / 502 / 504).
 fn status_page(status: StatusCode, message: &str) -> Response<ProxyBody> {
     let body = Full::new(Bytes::from(format!("{} {}\n", status.as_u16(), message)))
         .map_err(box_err)
