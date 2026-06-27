@@ -5,10 +5,22 @@
 // cookie/default theme stands. Copied per fleet UI (shared pattern, not a
 // shared package).
 
-const TIDE_THEME_URL = "https://tide.internal.deepwa7er.com/theme";
 const POLL_MS = 5000;
 
 type Theme = "dark" | "light";
+
+// tide lives at `tide.<base_domain>` — the same base domain this app is served
+// from — so derive its URL from the current host rather than hardcoding the
+// fleet domain (which would otherwise have to change in every UI on a domain
+// move). Returns null off the fleet (local dev on localhost or an IP), where
+// there is no tide to reach and the cookie/default theme stands.
+function tideThemeUrl(): string | null {
+  const { protocol, hostname } = window.location;
+  const firstDot = hostname.indexOf(".");
+  if (protocol !== "https:" || firstDot <= 0) return null;
+  const baseDomain = hostname.slice(firstDot + 1);
+  return `https://tide.${baseDomain}/theme`;
+}
 
 function apply(theme: Theme): void {
   const el = document.documentElement;
@@ -17,9 +29,11 @@ function apply(theme: Theme): void {
 }
 
 export function startTheme(): void {
+  const url = tideThemeUrl();
+  if (url === null) return;
   const sync = async () => {
     try {
-      const res = await fetch(TIDE_THEME_URL, { cache: "no-store" });
+      const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) return;
       const { theme } = (await res.json()) as { theme: Theme };
       if (theme === "dark" || theme === "light") apply(theme);
