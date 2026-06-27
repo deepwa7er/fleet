@@ -28,6 +28,39 @@ pub struct Config {
     /// notes app instead of redirecting. Omit the section to disable it.
     #[serde(default)]
     pub capture: Option<CaptureConfig>,
+
+    /// Authenticated POST actions. Unlike a redirect (which sends the browser
+    /// to a URL), an action makes ferry perform the request itself, so a bearer
+    /// token can be attached server-side and never reaches the browser. Each
+    /// `[[action]]` block defines one keyword.
+    #[serde(default)]
+    pub action: Vec<ActionConfig>,
+}
+
+/// Turns one keyword into an authenticated POST: `b tug lighthouse` POSTs to the
+/// templated `url` (with the args substituted, exactly as a parameterized
+/// command) and shows a confirmation page. A bare keyword (no args) opens `open`
+/// when set, so it doubles as a shortcut to the service's UI.
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ActionConfig {
+    /// Address-bar keyword that triggers the POST, e.g. `tug`.
+    pub keyword: String,
+    /// URL template to POST to. `{query}` (the whole argument string) and
+    /// `{1}`..`{9}` (individual whitespace-separated args) are substituted and
+    /// percent-encoded, just like a parameterized command target.
+    pub url: String,
+    /// Optional name of an environment variable holding a bearer token. When
+    /// set, the variable must be present and non-empty at startup, and its
+    /// value is sent as `Authorization: Bearer <token>` on every request. The
+    /// secret lives in ferry's environment, never in this config file.
+    #[serde(default)]
+    pub token_env: Option<String>,
+    /// Optional page linked from the confirmation (e.g. where to watch the
+    /// result) and opened when the keyword is used with no arguments. Templated
+    /// like `url`.
+    #[serde(default)]
+    pub open: Option<String>,
 }
 
 /// Turns one keyword into a capture action: `b lg buy milk` POSTs `{"text":
@@ -111,6 +144,22 @@ impl Config {
             // `api` and `open` are absolute URLs, same rule as a command target.
             validate_command_url(&capture.api).map_err(anyhow::Error::msg)?;
             validate_command_url(&capture.open).map_err(anyhow::Error::msg)?;
+        }
+        let mut action_keywords = std::collections::HashSet::new();
+        for action in &self.action {
+            validate_command_name(&action.keyword).map_err(anyhow::Error::msg)?;
+            validate_command_url(&action.url).map_err(anyhow::Error::msg)?;
+            if let Some(open) = &action.open {
+                validate_command_url(open).map_err(anyhow::Error::msg)?;
+            }
+            if let Some(var) = &action.token_env
+                && var.trim().is_empty()
+            {
+                bail!("action `{}` has an empty `token_env`", action.keyword);
+            }
+            if !action_keywords.insert(action.keyword.as_str()) {
+                bail!("duplicate action keyword `{}`", action.keyword);
+            }
         }
         Ok(())
     }
@@ -242,6 +291,98 @@ mod tests {
                 },
             ],
         );
+    }
+
+    #[test]
+    fn parses_action_blocks() {
+        let config = Config::from_toml(
+            r#"
+            fallback = "https://search.example/?q={query}"
+            [[action]]
+            keyword = "tug"
+            url = "https://tugboat.example/deploy/{1}"
+            token_env = "FERRY_TUGBOAT_TOKEN"
+            open = "https://lighthouse.example/"
+            [[action]]
+            keyword = "ping"
+            url = "https://svc.example/ping"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.action,
+            vec![
+                ActionConfig {
+                    keyword: "tug".to_string(),
+                    url: "https://tugboat.example/deploy/{1}".to_string(),
+                    token_env: Some("FERRY_TUGBOAT_TOKEN".to_string()),
+                    open: Some("https://lighthouse.example/".to_string()),
+                },
+                ActionConfig {
+                    keyword: "ping".to_string(),
+                    url: "https://svc.example/ping".to_string(),
+                    token_env: None,
+                    open: None,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_action_keyword() {
+        let err = Config::from_toml(
+            r#"
+            fallback = "https://search.example/?q={query}"
+            [[action]]
+            keyword = "tug"
+            url = "https://a.example/{1}"
+            [[action]]
+            keyword = "tug"
+            url = "https://b.example/{1}"
+            "#,
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn rejects_relative_action_url() {
+        let err = Config::from_toml(
+            r#"
+            fallback = "https://search.example/?q={query}"
+            [[action]]
+            keyword = "tug"
+            url = "tugboat.example/deploy/{1}"
+            "#,
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn rejects_empty_action_token_env() {
+        let err = Config::from_toml(
+            r#"
+            fallback = "https://search.example/?q={query}"
+            [[action]]
+            keyword = "tug"
+            url = "https://tugboat.example/deploy/{1}"
+            token_env = "  "
+            "#,
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_action_field() {
+        let err = Config::from_toml(
+            r#"
+            fallback = "https://search.example/?q={query}"
+            [[action]]
+            keyword = "tug"
+            url = "https://tugboat.example/deploy/{1}"
+            method = "PUT"
+            "#,
+        );
+        assert!(err.is_err());
     }
 
     #[test]

@@ -31,6 +31,19 @@ pub fn suggest(config: &Config, input: &str) -> Vec<Suggestion> {
         })
         .collect();
 
+    // Action keywords are first-class triggers, so offer them too — unless a
+    // command of the same name already shadows the action (and is listed above).
+    for action in &config.action {
+        if action.keyword.to_lowercase().starts_with(&prefix)
+            && !config.commands.contains_key(&action.keyword)
+        {
+            suggestions.push(Suggestion {
+                completion: action.keyword.clone(),
+                description: format!("POST \u{2192} {}", action.url),
+            });
+        }
+    }
+
     if !config.commands.contains_key("list") && "list".starts_with(&prefix) {
         suggestions.push(Suggestion {
             completion: "list".to_string(),
@@ -53,6 +66,10 @@ mod tests {
             gh = "https://github.com/search?q={query}"
             mail = "https://mail.example/"
             maps = "https://maps.example/"
+
+            [[action]]
+            keyword = "tug"
+            url = "https://tugboat.example/deploy/{1}"
             "#,
         )
         .unwrap()
@@ -74,7 +91,26 @@ mod tests {
 
     #[test]
     fn empty_input_lists_everything() {
-        assert_eq!(completions(""), ["gh", "mail", "maps", "list"]);
+        // Commands (sorted), then action keywords, then the built-in `list`.
+        assert_eq!(completions(""), ["gh", "mail", "maps", "tug", "list"]);
+    }
+
+    #[test]
+    fn action_keyword_is_suggested() {
+        assert_eq!(completions("tu"), ["tug"]);
+        let described: Vec<_> =
+            suggest(&config(), "tug").into_iter().map(|s| s.description).collect();
+        assert_eq!(described, ["POST \u{2192} https://tugboat.example/deploy/{1}"]);
+    }
+
+    #[test]
+    fn command_shadows_action_in_suggestions() {
+        let mut config = config();
+        config.commands.insert("tug".into(), "https://override.example/".into());
+        // Only the command appears, not a duplicate action entry.
+        let described: Vec<_> =
+            suggest(&config, "tug").into_iter().map(|s| s.description).collect();
+        assert_eq!(described, ["https://override.example/"]);
     }
 
     #[test]

@@ -10,6 +10,11 @@ pub enum Resolution {
     /// confirmation page that links `open`. (The keyword with no text resolves
     /// to `Redirect(open)` instead — there's nothing to capture.)
     Capture { api: String, text: String, open: String },
+    /// Perform an authenticated POST to `url`, then show a confirmation page.
+    /// `token_env`, when set, names the environment variable holding the bearer
+    /// token to attach (read by the HTTP layer, so this stays a pure value).
+    /// `open` is linked from the confirmation page.
+    Action { url: String, token_env: Option<String>, open: Option<String> },
     /// Show the page listing all configured commands.
     ListPage,
 }
@@ -58,6 +63,20 @@ pub fn resolve(config: &Config, input: &str) -> Resolution {
             api: capture.api.clone(),
             text: args.to_string(),
             open: capture.open.clone(),
+        };
+    }
+
+    // Authenticated POST actions (after explicit commands, so a command can
+    // shadow one). A bare keyword opens `open` when set — a handy shortcut to
+    // the service's UI — otherwise it falls through to the POST.
+    if let Some(action) = config.action.iter().find(|a| a.keyword == name) {
+        if args.is_empty() && let Some(open) = &action.open {
+            return Resolution::Redirect(fill(open, args));
+        }
+        return Resolution::Action {
+            url: fill(&action.url, args),
+            token_env: action.token_env.clone(),
+            open: action.open.as_ref().map(|open| fill(open, args)),
         };
     }
 
@@ -127,6 +146,16 @@ mod tests {
             gh = "https://github.com/search?q={query}"
             list = "https://lists.example/"
             svc = "https://dash.example/services/{1}?action={2}"
+
+            [[action]]
+            keyword = "tug"
+            url = "https://tugboat.example/deploy/{1}"
+            token_env = "FERRY_TUGBOAT_TOKEN"
+            open = "https://lighthouse.example/"
+
+            [[action]]
+            keyword = "ping"
+            url = "https://svc.example/ping"
             "#,
         )
         .unwrap()
@@ -287,6 +316,65 @@ mod tests {
             Resolution::Capture { text, .. } => assert_eq!(text, "a & b?"),
             other => panic!("expected capture, got {other:?}"),
         }
+    }
+
+    fn action(url: &str, token_env: Option<&str>, open: Option<&str>) -> Resolution {
+        Resolution::Action {
+            url: url.to_string(),
+            token_env: token_env.map(str::to_string),
+            open: open.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn action_with_args_posts_to_filled_url() {
+        assert_eq!(
+            resolve(&config(), "tug lighthouse"),
+            action(
+                "https://tugboat.example/deploy/lighthouse",
+                Some("FERRY_TUGBOAT_TOKEN"),
+                Some("https://lighthouse.example/"),
+            ),
+        );
+    }
+
+    #[test]
+    fn action_arguments_are_encoded() {
+        assert_eq!(
+            resolve(&config(), "tug a/b"),
+            action(
+                "https://tugboat.example/deploy/a%2Fb",
+                Some("FERRY_TUGBOAT_TOKEN"),
+                Some("https://lighthouse.example/"),
+            ),
+        );
+    }
+
+    #[test]
+    fn bare_action_keyword_opens_its_open_url() {
+        // `b tug` with no service is a shortcut to the dashboard, not a POST to
+        // an empty path.
+        assert_eq!(resolve(&config(), "tug"), redirect("https://lighthouse.example/"));
+    }
+
+    #[test]
+    fn bare_action_without_open_posts_to_url() {
+        // `ping` has no `open`, so the bare keyword fires the (placeholder-free)
+        // POST directly.
+        assert_eq!(resolve(&config(), "ping"), action("https://svc.example/ping", None, None));
+    }
+
+    #[test]
+    fn explicit_command_shadows_action_keyword() {
+        let mut config = config();
+        config
+            .commands
+            .insert("tug".to_string(), "https://override.example/?q={query}".to_string());
+        // The explicit command wins; the action never fires.
+        assert_eq!(
+            resolve(&config, "tug lighthouse"),
+            redirect("https://override.example/?q=lighthouse"),
+        );
     }
 
     #[test]

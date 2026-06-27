@@ -30,8 +30,9 @@ struct AppState {
     /// Serializes config-file mutations so concurrent writes can't interleave
     /// into a lost update. Reads stay lock-free (the file is re-read per request).
     write_lock: Mutex<()>,
-    /// Shared client for the note-capture POST. Cheap to clone (it's an `Arc`
-    /// internally) and pools connections to the loopback notes app.
+    /// Shared client for the server-side POSTs ferry makes itself — note
+    /// capture and authenticated actions. Cheap to clone (it's an `Arc`
+    /// internally) and pools connections to the target services.
     http: reqwest::Client,
 }
 
@@ -217,6 +218,9 @@ async fn main() -> anyhow::Result<()> {
     };
     // Load once up front so a broken config fails at startup, and to learn the port.
     let config = Config::load(&config_path)?;
+    // Likewise refuse to start if an action's bearer token is missing, rather
+    // than discovering it only when the action is first used.
+    ensure_action_tokens(&config)?;
 
     let app = Router::new()
         .route("/", get(handle_query))
@@ -241,6 +245,26 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("failed to bind {addr}"))?;
     println!("ferry listening on http://{addr}");
     axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// Fail fast if any action references a bearer-token environment variable that
+/// isn't set to a non-empty value. The deploy-style endpoints these actions hit
+/// refuse to run without their token; ferry should refuse to start without the
+/// matching credential rather than serve an action that can only ever 401.
+fn ensure_action_tokens(config: &Config) -> anyhow::Result<()> {
+    for action in &config.action {
+        if let Some(var) = &action.token_env {
+            let present = std::env::var(var).is_ok_and(|value| !value.is_empty());
+            if !present {
+                anyhow::bail!(
+                    "action `{}` needs ${} set to a non-empty bearer token",
+                    action.keyword,
+                    var,
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -501,8 +525,83 @@ async fn handle_query(
         Resolution::Capture { api, text, open } => {
             capture_note(&state.http, &api, &text, &open).await
         }
+        Resolution::Action { url, token_env, open } => {
+            run_action(&state.http, &url, token_env.as_deref(), open.as_deref()).await
+        }
         Resolution::ListPage => Redirect::temporary("/commands").into_response(),
     }
+}
+
+/// Perform an authenticated POST for an action command, then return a
+/// confirmation page (or, on failure, an error page that still names the target
+/// and the reason). The bearer token, if the action declares one, is read from
+/// the environment here — so it never has to live in the config file, and the
+/// resolution layer stays a pure value with only the variable's name in it.
+async fn run_action(
+    http: &reqwest::Client,
+    url: &str,
+    token_env: Option<&str>,
+    open: Option<&str>,
+) -> Response {
+    let mut request = http.post(url);
+    if let Some(var) = token_env {
+        match std::env::var(var) {
+            Ok(token) if !token.is_empty() => request = request.bearer_auth(token),
+            _ => {
+                // Startup already checks this, so reaching here means the
+                // environment changed under a running ferry. Refuse rather than
+                // send an unauthenticated request that would just be rejected.
+                let why = format!("${var} is not set; cannot authenticate the request");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Html(render_action_page(url, Some(&why), "", open)),
+                )
+                    .into_response();
+            }
+        }
+    }
+    match request.send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let body = excerpt(body.trim());
+            if status.is_success() {
+                Html(render_action_page(url, None, &body, open)).into_response()
+            } else {
+                let why = format!("the service returned {status}");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Html(render_action_page(url, Some(&why), &body, open)),
+                )
+                    .into_response()
+            }
+        }
+        Err(err) => {
+            let why = format!("couldn't reach the service: {err}");
+            (
+                StatusCode::BAD_GATEWAY,
+                Html(render_action_page(url, Some(&why), "", open)),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Trim a service response down to something a confirmation page can show. The
+/// expected responses are tiny (a status line, a job id), so anything large is a
+/// misconfigured target; we keep a readable head and mark the truncation rather
+/// than render an unbounded page.
+fn excerpt(body: &str) -> String {
+    const LIMIT: usize = 2000;
+    if body.len() <= LIMIT {
+        return body.to_string();
+    }
+    // Cut on a char boundary at or below the limit.
+    let mut end = LIMIT;
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &body[..end])
 }
 
 /// POST the note text to the notes app's capture API, then return a confirmation
@@ -937,6 +1036,14 @@ fn render_commands_page(
         None => String::new(),
     };
 
+    // Action keywords live in the TOML, not this UI; list them in the footer
+    // alongside the capture keyword so they're discoverable.
+    let action_hint = config
+        .action
+        .iter()
+        .map(|a| format!(" &middot; Action <code>b {} &lt;args&gt;</code>", escape_html(&a.keyword)))
+        .collect::<String>();
+
     // Styled after DG-001 (U.S. Graphics school): light "paper + ink", mono,
     // hairline rules, flat fills, sharp corners, single amber signal accent.
     format!(
@@ -1041,7 +1148,7 @@ fn render_commands_page(
 <section class="panel">
 <h2 class="panel-head">Commands</h2>
 {table}</section>
-<p class="fallback">Built-in <code>:3000</code> &rarr; <code>http://localhost:3000</code> &middot; Fallback <code>{fallback}</code>{capture_hint}</p>
+<p class="fallback">Built-in <code>:3000</code> &rarr; <code>http://localhost:3000</code> &middot; Fallback <code>{fallback}</code>{capture_hint}{action_hint}</p>
 </body>
 </html>
 "#,
@@ -1052,18 +1159,51 @@ fn render_commands_page(
 
 /// A confirmation page for a note capture. `error` is `None` on success, or the
 /// reason on failure — the note text is shown either way, so a failed capture
-/// can still be copied out rather than lost. Styled to match the DG-001 commands
-/// page (paper + ink, mono, hairline rules, single amber accent).
+/// can still be copied out rather than lost.
 fn render_capture_page(error: Option<&str>, text: &str, open: &str) -> String {
-    let open = escape_html(open);
-    let text = escape_html(text);
-    let (accent_var, heading, detail) = match error {
-        None => ("--accent", "Captured", String::new()),
-        Some(why) => (
-            "--danger",
-            "Capture failed",
-            format!("<p class=\"why\">{}</p>\n", escape_html(why)),
-        ),
+    let heading = if error.is_none() { "Captured" } else { "Capture failed" };
+    render_confirmation(heading, error, text, Some((open, "View notes \u{2192}")))
+}
+
+/// A confirmation page for an authenticated action POST. The quoted block names
+/// the target and echoes the service's response, so the result is legible (e.g.
+/// tugboat's `{"job_id":"…"}`) and a failure still shows what came back. `open`,
+/// if the action declares one, becomes a call-to-action (e.g. where to watch).
+fn render_action_page(target: &str, error: Option<&str>, response: &str, open: Option<&str>) -> String {
+    let heading = if error.is_none() { "Triggered" } else { "Action failed" };
+    let body = if response.is_empty() {
+        format!("POST {target}")
+    } else {
+        format!("POST {target}\n\n{response}")
+    };
+    render_confirmation(heading, error, &body, open.map(|open| (open, "Open \u{2192}")))
+}
+
+/// The shared confirmation/result page behind capture and actions. Styled to
+/// match the DG-001 commands page (paper + ink, mono, hairline rules, a single
+/// accent that turns red on failure). `body` fills the quoted block (omitted
+/// when empty); `link` is an optional `(href, label)` call-to-action.
+fn render_confirmation(
+    heading: &str,
+    error: Option<&str>,
+    body: &str,
+    link: Option<(&str, &str)>,
+) -> String {
+    let heading = escape_html(heading);
+    let (accent_var, detail) = match error {
+        None => ("--accent", String::new()),
+        Some(why) => ("--danger", format!("<p class=\"why\">{}</p>\n", escape_html(why))),
+    };
+    let body_html = if body.is_empty() {
+        String::new()
+    } else {
+        format!("<blockquote>{}</blockquote>\n", escape_html(body))
+    };
+    let link_html = match link {
+        Some((href, label)) => {
+            format!("<a href=\"{}\">{}</a>\n", escape_html(href), escape_html(label))
+        }
+        None => String::new(),
     };
     format!(
         r#"<!DOCTYPE html>
@@ -1103,9 +1243,7 @@ fn render_capture_page(error: Option<&str>, text: &str, open: &str) -> String {
 </head>
 <body>
 <h1>{heading}</h1>
-{detail}<blockquote>{text}</blockquote>
-<a href="{open}">View notes &rarr;</a>
-</body>
+{detail}{body_html}{link_html}</body>
 </html>
 "#
     )

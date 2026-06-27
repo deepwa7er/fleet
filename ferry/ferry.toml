@@ -38,3 +38,20 @@ w = "https://en.wikipedia.org/wiki/Special:Search?search={query}"
 keyword = "lg"
 api = "http://127.0.0.1:8092/api/thoughts"
 open = "https://lagoon.internal.deepwa7er.com"
+
+# Authenticated POST actions: ferry makes the request itself (rather than
+# redirecting the browser), so it can attach a bearer token that never reaches
+# the browser. `b tug lighthouse` POSTs to tugboat serve's /deploy/{name} — the
+# same endpoint the lighthouse dashboard's Deploy button uses — and shows a
+# confirmation with tugboat's job id; `b tug` with no service opens lighthouse.
+#
+# tugboat serve runs on the dev machine (where the source + toolchain live),
+# bound to its tailnet IP — the same address lighthouse uses for its Deploy
+# button. To enable: set FERRY_TUGBOAT_TOKEN in ferry's environment to the same
+# value as tugboat serve's TUGBOAT_SERVE_TOKEN, then uncomment. ferry refuses to
+# start if token_env names a variable that isn't set, so it's never assumed.
+# [[action]]
+# keyword = "tug"
+# url = "http://100.74.202.93:7878/deploy/{1}"
+# token_env = "FERRY_TUGBOAT_TOKEN"
+# open = "https://lighthouse.internal.deepwa7er.com"

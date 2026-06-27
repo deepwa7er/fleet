@@ -84,6 +84,38 @@ copied out rather than lost). `b lg` with no text just opens `open`. An explicit
 `[commands]` entry of the same name takes precedence, so the keyword can be
 shadowed. `api` and `open` must be absolute URLs.
 
+### Trigger an authenticated action
+
+A redirect sends the *browser* to a URL, so it can only reach things the browser
+may call directly — it can't attach a secret. An `[[action]]` block instead has
+*ferry* make a `POST` on your behalf, which lets it carry a bearer token the
+browser never sees. This is what turns the address bar into a remote-control for
+authenticated tailnet endpoints — e.g. triggering a deploy:
+
+```toml
+[[action]]
+keyword = "tug"
+url = "https://tugboat.internal.example.ts.net/deploy/{1}"  # {query}/{1}..{9} like a command
+token_env = "FERRY_TUGBOAT_TOKEN"                           # bearer token, read from the env
+open = "https://lighthouse.internal.example.ts.net"         # optional: watch/landing page
+```
+
+`b tug lighthouse` POSTs to `…/deploy/lighthouse` with `Authorization: Bearer
+<value of $FERRY_TUGBOAT_TOKEN>` and shows a confirmation page echoing the
+service's response (e.g. tugboat's job id), with `open` as a follow-up link. The
+arguments fill the `url` template exactly as for a parameterized command, and are
+percent-encoded. `b tug` with no arguments opens `open` instead of POSTing, so
+the keyword doubles as a shortcut to the service's UI.
+
+The token is named, not embedded: `token_env` is the name of an environment
+variable, and the secret stays in ferry's environment (e.g. its systemd unit) —
+never in this config file, the URL, or the browser. ferry **refuses to start**
+if a referenced variable is unset or empty, so an action can't silently degrade
+to an unauthenticated request. Omit `token_env` for an endpoint that needs no
+auth. `url` and `open` must be absolute URLs, and several `[[action]]` blocks may
+be defined as long as their keywords are unique; an explicit `[commands]` entry
+shadows an action keyword.
+
 ### Jump to a localhost port
 
 A built-in shorthand turns `:<port>` into a jump to that port on your own
