@@ -87,13 +87,66 @@ impl Store {
         self.persist(theme)
     }
 
-    /// Atomically write the settings file (temp file + rename in the same dir).
+    /// Atomically and durably write the settings file: write a sibling temp file,
+    /// fsync it, rename it over the destination, then fsync the directory. A crash
+    /// leaves either the old file or the fully-written new one — never a truncated
+    /// file or a rename the directory entry lost.
     fn persist(&self, theme: Theme) -> Result<(), String> {
+        use std::io::Write;
+
         let json = serde_json::to_string_pretty(&Settings { theme })
             .map_err(|e| format!("serializing settings: {e}"))?;
+        let dir = self
+            .path
+            .parent()
+            .ok_or_else(|| "settings path has no parent directory".to_string())?;
         let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, json).map_err(|e| format!("writing {}: {e}", tmp.display()))?;
+        {
+            let mut file =
+                std::fs::File::create(&tmp).map_err(|e| format!("creating {}: {e}", tmp.display()))?;
+            file.write_all(json.as_bytes())
+                .map_err(|e| format!("writing {}: {e}", tmp.display()))?;
+            file.sync_all()
+                .map_err(|e| format!("fsync {}: {e}", tmp.display()))?;
+        }
         std::fs::rename(&tmp, &self.path)
-            .map_err(|e| format!("installing {}: {e}", self.path.display()))
+            .map_err(|e| format!("installing {}: {e}", self.path.display()))?;
+        std::fs::File::open(dir)
+            .and_then(|d| d.sync_all())
+            .map_err(|e| format!("fsync directory {}: {e}", dir.display()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tide-storetest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn set_persists_across_reopen() {
+        let dir = temp_dir();
+
+        // Fresh store defaults to dark and writes nothing until the first set.
+        let store = Store::open(&dir);
+        assert_eq!(store.get(), Theme::Dark);
+        assert!(!dir.join("settings.json").exists());
+
+        // A set is durably written and read back by a fresh store.
+        store.set(Theme::Light).unwrap();
+        assert!(dir.join("settings.json").exists());
+        assert_eq!(Store::open(&dir).get(), Theme::Light);
+
+        // A subsequent set overwrites cleanly (temp file is not left behind).
+        store.set(Theme::Dark).unwrap();
+        assert_eq!(Store::open(&dir).get(), Theme::Dark);
+        assert!(!dir.join("settings.json.tmp").exists());
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
