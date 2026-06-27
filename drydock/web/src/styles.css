@@ -1,6 +1,6 @@
 /* DG-001 (U.S. Graphics school) — dark "terminal" discipline, shared with the
  * rest of the fleet's web UIs (lighthouse, pilot). Monospace-forward, hairline
- * rules, flat fills, sharp corners, a single amber signal accent, and a flat
+ * rules, flat fills, sharp corners, a single signal-blue accent, and a flat
  * functional status ramp. Drydock uses plain CSS rather than the Tailwind setup
  * the React-heavier fleet apps use, but the tokens and visual language are
  * identical so the services read as one suite. */
@@ -456,7 +456,7 @@ button:hover {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--bg); /* dark ink on amber — WCAG AA, unlike white-on-amber */
+  color: var(--bg); /* dark ink on the accent — WCAG AA contrast */
   font-weight: 700;
 }
 

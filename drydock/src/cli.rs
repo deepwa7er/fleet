@@ -2,11 +2,13 @@
 //! server's HTTP API, so the server stays the single writer to SQLite.
 
 use std::fmt;
+use std::time::Duration;
 
 use serde_json::Value;
 
 pub struct Client {
     base: String,
+    agent: ureq::Agent,
 }
 
 pub enum CliError {
@@ -46,8 +48,16 @@ impl Client {
         // e.g. DRYDOCK_URL=https://drydock.internal.deepwa7er.com. Defaults to a
         // local server for development on the same machine.
         let base = std::env::var("DRYDOCK_URL").unwrap_or_else(|_| "http://127.0.0.1:8093".into());
+        // Bounded timeouts so a hung or wedged server can't freeze the worker's
+        // poll loop indefinitely — without them ureq waits forever on read.
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(5))
+            .timeout_read(Duration::from_secs(30))
+            .timeout_write(Duration::from_secs(30))
+            .build();
         Client {
             base: base.trim_end_matches('/').to_string(),
+            agent,
         }
     }
 
@@ -56,11 +66,11 @@ impl Client {
     }
 
     pub fn get(&self, path: &str) -> Result<Value, CliError> {
-        Self::handle(ureq::get(&self.url(path)).call())
+        Self::handle(self.agent.get(&self.url(path)).call())
     }
 
     pub fn post(&self, path: &str, body: Value) -> Result<Value, CliError> {
-        Self::handle(ureq::post(&self.url(path)).send_json(body))
+        Self::handle(self.agent.post(&self.url(path)).send_json(body))
     }
 
     fn handle(result: Result<ureq::Response, ureq::Error>) -> Result<Value, CliError> {
