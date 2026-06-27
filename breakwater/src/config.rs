@@ -42,6 +42,14 @@ pub struct Config {
     #[serde(default)]
     pub health_addr: Option<SocketAddr>,
 
+    /// The subdomain space every routed service lives under, e.g.
+    /// `internal.deepwa7er.com`. Each route's `label` is prefixed to this to form
+    /// the hostname clients use (`<label>.<base_domain>`), and — unless `[acme]
+    /// domains` is set explicitly — the ACME certificate is a wildcard over it
+    /// (`*.<base_domain>`). This field and `[acme] cloudflare_zone` are the only
+    /// two places the fleet's domain is written; change them to move the fleet.
+    pub base_domain: String,
+
     /// Static-certificate mode: serve a certificate and key from disk. Mutually
     /// exclusive with `[acme]`; exactly one of the two must be set.
     #[serde(default)]
@@ -68,7 +76,10 @@ pub struct TlsConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AcmeConfig {
-    /// Certificate subject names, e.g. `["*.internal.deepwa7er.com"]`.
+    /// Certificate subject names. Defaults to a single wildcard over the
+    /// top-level `base_domain` (`*.<base_domain>`), which covers every routed
+    /// host; set explicitly only to request additional or different names.
+    #[serde(default)]
     pub domains: Vec<String>,
     /// ACME account contact, as a full URI, e.g. `mailto:you@example.com`.
     pub contact: String,
@@ -93,8 +104,9 @@ pub struct AcmeConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Route {
-    /// The public hostname clients use, e.g. `lighthouse.internal.deepwa7er.com`.
-    pub host: String,
+    /// The service's subdomain label, e.g. `lighthouse`. The full hostname
+    /// clients use is `<label>.<base_domain>` (see [`Config::base_domain`]).
+    pub label: String,
     /// Reverse-proxy target: the local `host:port` to forward matching requests
     /// to, e.g. `127.0.0.1:8080`. Exactly one of `upstream` or `serve_dir` is set.
     #[serde(default)]
@@ -105,6 +117,13 @@ pub struct Route {
     /// one of `upstream` or `serve_dir` is set.
     #[serde(default)]
     pub serve_dir: Option<PathBuf>,
+}
+
+impl Route {
+    /// The full hostname this route matches: `<label>.<base_domain>`.
+    fn host(&self, base_domain: &str) -> String {
+        format!("{}.{}", self.label.trim(), base_domain.trim())
+    }
 }
 
 /// What a matched route does with a request, resolved from a [`Route`] once the
@@ -126,12 +145,29 @@ impl Config {
     }
 
     pub fn from_toml(text: &str) -> anyhow::Result<Config> {
-        let config: Config = toml::from_str(text).context("failed to parse config")?;
+        let mut config: Config = toml::from_str(text).context("failed to parse config")?;
+        config.resolve();
         config.validate()?;
         Ok(config)
     }
 
+    /// Fill in values derived from `base_domain` so the domain is written once.
+    /// Currently: an `[acme]` block with no explicit `domains` gets a wildcard
+    /// over the base domain, which is exactly the set of hosts breakwater routes.
+    fn resolve(&mut self) {
+        let base = self.base_domain.trim().to_string();
+        if let Some(acme) = self.acme.as_mut()
+            && acme.domains.is_empty()
+            && !base.is_empty()
+        {
+            acme.domains = vec![format!("*.{base}")];
+        }
+    }
+
     fn validate(&self) -> anyhow::Result<()> {
+        if self.base_domain.trim().is_empty() {
+            bail!("`base_domain` must be set (e.g. \"internal.example.com\")");
+        }
         match (&self.tls, &self.acme) {
             (Some(_), Some(_)) => bail!("set either [tls] or [acme], not both"),
             (None, None) => bail!("set exactly one of [tls] (static cert) or [acme] (auto cert)"),
@@ -147,10 +183,11 @@ impl Config {
         }
         let mut seen = HashMap::new();
         for route in &self.routes {
-            let host = route.host.trim();
-            if host.is_empty() {
-                bail!("a route has an empty `host`");
+            if route.label.trim().is_empty() {
+                bail!("a route has an empty `label`");
             }
+            let host = route.host(&self.base_domain);
+            let host = host.as_str();
             // Hostnames are case-insensitive; collisions that differ only in case
             // would route ambiguously, so reject them up front.
             let key = host.to_ascii_lowercase();
@@ -201,7 +238,7 @@ impl Config {
                     (None, Some(dir)) => RouteTarget::Static(dir.clone()),
                     _ => unreachable!("validate() guarantees exactly one target per route"),
                 };
-                (r.host.trim().to_ascii_lowercase(), target)
+                (r.host(&self.base_domain).to_ascii_lowercase(), target)
             })
             .collect()
     }
@@ -222,6 +259,7 @@ mod tests {
     fn rejects_empty_routes() {
         let toml = r#"
             https_port = 443
+            base_domain = "example.com"
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"
@@ -233,11 +271,12 @@ mod tests {
     fn rejects_upstream_without_port() {
         let toml = r#"
             https_port = 443
+            base_domain = "example.com"
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"
             [[routes]]
-            host = "a.example.com"
+            label = "a"
             upstream = "127.0.0.1"
         "#;
         assert!(Config::from_toml(toml).is_err());
@@ -247,14 +286,15 @@ mod tests {
     fn rejects_duplicate_hosts_differing_only_in_case() {
         let toml = r#"
             https_port = 443
+            base_domain = "example.com"
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"
             [[routes]]
-            host = "a.example.com"
+            label = "a"
             upstream = "127.0.0.1:8080"
             [[routes]]
-            host = "A.EXAMPLE.COM"
+            label = "A"
             upstream = "127.0.0.1:8081"
         "#;
         assert!(Config::from_toml(toml).is_err());
@@ -264,6 +304,7 @@ mod tests {
     fn rejects_both_tls_and_acme() {
         let toml = r#"
             https_port = 443
+            base_domain = "example.com"
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"
@@ -274,7 +315,7 @@ mod tests {
             cloudflare_token_file = "/etc/breakwater/cloudflare-token"
             cache_dir = "/etc/breakwater/acme"
             [[routes]]
-            host = "a.example.com"
+            label = "a"
             upstream = "127.0.0.1:8080"
         "#;
         assert!(Config::from_toml(toml).is_err());
@@ -284,8 +325,9 @@ mod tests {
     fn rejects_neither_tls_nor_acme() {
         let toml = r#"
             https_port = 443
+            base_domain = "example.com"
             [[routes]]
-            host = "a.example.com"
+            label = "a"
             upstream = "127.0.0.1:8080"
         "#;
         assert!(Config::from_toml(toml).is_err());
@@ -295,6 +337,7 @@ mod tests {
     fn acme_directory_defaults_to_production() {
         let toml = r#"
             https_port = 443
+            base_domain = "example.com"
             [acme]
             domains = ["*.internal.deepwa7er.com"]
             contact = "mailto:a@b.com"
@@ -302,7 +345,7 @@ mod tests {
             cloudflare_token_file = "/etc/breakwater/cloudflare-token"
             cache_dir = "/etc/breakwater/acme"
             [[routes]]
-            host = "a.example.com"
+            label = "a"
             upstream = "127.0.0.1:8080"
         "#;
         let config = Config::from_toml(toml).unwrap();
@@ -315,11 +358,12 @@ mod tests {
     fn routing_table_lowercases_hosts() {
         let toml = r#"
             https_port = 443
+            base_domain = "example.com"
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"
             [[routes]]
-            host = "Mixed.Example.COM"
+            label = "Mixed"
             upstream = "127.0.0.1:8080"
         "#;
         let config = Config::from_toml(toml).unwrap();
@@ -334,16 +378,17 @@ mod tests {
     fn accepts_static_route_and_builds_target() {
         let toml = r#"
             https_port = 443
+            base_domain = "example.com"
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"
             [[routes]]
-            host = "docs.internal.deepwa7er.com"
+            label = "docs"
             serve_dir = "/opt/pilot/web"
         "#;
         let config = Config::from_toml(toml).unwrap();
         let table = config.routing_table();
-        match table.get("docs.internal.deepwa7er.com") {
+        match table.get("docs.example.com") {
             Some(RouteTarget::Static(dir)) => assert_eq!(dir, Path::new("/opt/pilot/web")),
             other => panic!("expected a static target, got {other:?}"),
         }
@@ -353,11 +398,12 @@ mod tests {
     fn rejects_route_with_both_targets() {
         let toml = r#"
             https_port = 443
+            base_domain = "example.com"
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"
             [[routes]]
-            host = "a.example.com"
+            label = "a"
             upstream = "127.0.0.1:8080"
             serve_dir = "/opt/site"
         "#;
@@ -368,12 +414,85 @@ mod tests {
     fn rejects_route_with_neither_target() {
         let toml = r#"
             https_port = 443
+            base_domain = "example.com"
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"
             [[routes]]
-            host = "a.example.com"
+            label = "a"
         "#;
+        assert!(Config::from_toml(toml).is_err());
+    }
+
+    #[test]
+    fn composes_host_from_label_and_base_domain() {
+        let toml = r#"
+            https_port = 443
+            base_domain = "internal.example.com"
+            [tls]
+            cert = "/x/cert.pem"
+            key = "/x/key.pem"
+            [[routes]]
+            label = "lighthouse"
+            upstream = "127.0.0.1:8080"
+        "#;
+        let config = Config::from_toml(toml).unwrap();
+        assert!(config.routing_table().contains_key("lighthouse.internal.example.com"));
+    }
+
+    #[test]
+    fn acme_domains_default_to_wildcard_over_base_domain() {
+        let toml = r#"
+            https_port = 443
+            base_domain = "internal.example.com"
+            [acme]
+            contact = "mailto:a@b.com"
+            cloudflare_zone = "example.com"
+            cloudflare_token_file = "/etc/breakwater/cloudflare-token"
+            cache_dir = "/etc/breakwater/acme"
+            [[routes]]
+            label = "a"
+            upstream = "127.0.0.1:8080"
+        "#;
+        let config = Config::from_toml(toml).unwrap();
+        assert_eq!(config.acme.unwrap().domains, vec!["*.internal.example.com"]);
+    }
+
+    #[test]
+    fn explicit_acme_domains_override_the_derived_wildcard() {
+        let toml = r#"
+            https_port = 443
+            base_domain = "internal.example.com"
+            [acme]
+            domains = ["one.example.com", "two.example.com"]
+            contact = "mailto:a@b.com"
+            cloudflare_zone = "example.com"
+            cloudflare_token_file = "/etc/breakwater/cloudflare-token"
+            cache_dir = "/etc/breakwater/acme"
+            [[routes]]
+            label = "a"
+            upstream = "127.0.0.1:8080"
+        "#;
+        let config = Config::from_toml(toml).unwrap();
+        assert_eq!(
+            config.acme.unwrap().domains,
+            vec!["one.example.com", "two.example.com"]
+        );
+    }
+
+    #[test]
+    fn rejects_missing_base_domain() {
+        let toml = r#"
+            https_port = 443
+            [tls]
+            cert = "/x/cert.pem"
+            key = "/x/key.pem"
+            [[routes]]
+            label = "a"
+            upstream = "127.0.0.1:8080"
+        "#;
+        // `base_domain` is required: deny_unknown_fields means a missing required
+        // field is a parse error.
         assert!(Config::from_toml(toml).is_err());
     }
 
@@ -381,11 +500,12 @@ mod tests {
     fn rejects_relative_serve_dir() {
         let toml = r#"
             https_port = 443
+            base_domain = "example.com"
             [tls]
             cert = "/x/cert.pem"
             key = "/x/key.pem"
             [[routes]]
-            host = "a.example.com"
+            label = "a"
             serve_dir = "opt/site"
         "#;
         assert!(Config::from_toml(toml).is_err());

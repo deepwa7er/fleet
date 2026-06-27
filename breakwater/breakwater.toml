@@ -22,6 +22,12 @@ http_redirect_port = 80
 # Loopback-only health endpoint for tugboat's deploy health check.
 health_addr = "127.0.0.1:8079"
 
+# The subdomain space the whole fleet lives under. Each route below gives only
+# its `label`; the hostname is `<label>.<base_domain>`, and the ACME cert is a
+# wildcard over this domain. This line and `cloudflare_zone` (below) are the only
+# two settings that carry the fleet's domain — change them to move the fleet.
+base_domain = "internal.deepwa7er.com"
+
 # Automatic certificates via ACME DNS-01 (Cloudflare). breakwater obtains and
 # renews a wildcard cert in-process and hot-swaps it with no downtime.
 #
@@ -32,7 +38,8 @@ health_addr = "127.0.0.1:8079"
 #   key  = "/etc/breakwater/certs/privkey.pem"
 # Exactly one of [acme] or [tls] must be set.
 [acme]
-domains = ["*.internal.deepwa7er.com"]
+# Cert subject names default to a wildcard over `base_domain` (`*.<base_domain>`),
+# which covers every routed host. Set `domains = [...]` here only to override.
 contact = "mailto:hello@joemafrici.com"
 # Cloudflare DNS zone hosting the challenge records.
 cloudflare_zone = "deepwa7er.com"
@@ -49,47 +56,47 @@ cache_dir = "/var/lib/breakwater/acme"
 # point. (tidepool is the exception: not routed here at all — it's its own
 # Tailscale node and serves HTTPS itself.)
 [[routes]]
-host = "lighthouse.internal.deepwa7er.com"
+label = "lighthouse"
 upstream = "127.0.0.1:8080"
 
 [[routes]]
-host = "harbor.internal.deepwa7er.com"
+label = "harbor"
 upstream = "127.0.0.1:8090"
 
 [[routes]]
-host = "driftword.internal.deepwa7er.com"
+label = "driftword"
 upstream = "127.0.0.1:8091"
 
 [[routes]]
-host = "lagoon.internal.deepwa7er.com"
+label = "lagoon"
 upstream = "127.0.0.1:8092"
 
 [[routes]]
-host = "ferry.internal.deepwa7er.com"
+label = "ferry"
 upstream = "127.0.0.1:7777"
 
 [[routes]]
-host = "music.internal.deepwa7er.com"
+label = "music"
 upstream = "127.0.0.1:4533"
 
 [[routes]]
-host = "discovery.internal.deepwa7er.com"
+label = "discovery"
 upstream = "127.0.0.1:8765"
 
 [[routes]]
-host = "slskd.internal.deepwa7er.com"
+label = "slskd"
 upstream = "127.0.0.1:5030"
 
 # Drydock — the fleet ticket queue. Serves both the web view and the worker CLI's
 # API; the worker on the Mac reaches it through here over the tailnet.
 [[routes]]
-host = "drydock.internal.deepwa7er.com"
+label = "drydock"
 upstream = "127.0.0.1:8093"
 
 # Fleet-wide settings (tide) — the shared dark/light theme. ferry's `b dark` /
 # `b light` redirect to its /set; every fleet UI reads /theme cross-origin.
 [[routes]]
-host = "tide.internal.deepwa7er.com"
+label = "tide"
 upstream = "127.0.0.1:8094"
 
 # The fleet documentation site (pilot) — process-less static files, so breakwater
@@ -97,7 +104,7 @@ upstream = "127.0.0.1:8094"
 # docs` assembles and ships the site to this path; a path that doesn't resolve to
 # a file falls back to the SPA's index.html.
 [[routes]]
-host = "docs.internal.deepwa7er.com"
+label = "docs"
 serve_dir = "/opt/pilot/web"
 
 # Note: tidepool is intentionally NOT routed here. It runs as its own Tailscale
