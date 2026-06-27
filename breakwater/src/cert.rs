@@ -170,27 +170,38 @@ fn read_token(config: &AcmeConfig) -> anyhow::Result<String> {
     Ok(token)
 }
 
-/// Write a file atomically with the given Unix mode: write a sibling temp file
-/// (created with the target mode), then rename it over the destination.
+/// Write a file atomically *and durably* with the given Unix mode: write a
+/// sibling temp file, fsync it, rename it over the destination, then fsync the
+/// directory. A crash leaves either the old file or the fully-written new one —
+/// never a truncated/zero-length file or a rename the directory entry lost.
 fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> anyhow::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
     let dir = path.parent().context("path has no parent directory")?;
     let tmp = path.with_extension("tmp");
+    // Start from a fresh temp: `mode` only takes effect on creation, so reusing a
+    // temp left by a crashed earlier write could keep that file's old (possibly
+    // looser) permissions on a key. Remove any stale temp, then create exclusively.
+    let _ = std::fs::remove_file(&tmp);
     {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .mode(mode)
             .open(&tmp)
             .with_context(|| format!("failed to create {}", tmp.display()))?;
         file.write_all(bytes)
             .with_context(|| format!("failed to write {}", tmp.display()))?;
-        file.sync_all().ok();
+        // Flush contents to stable storage before the rename publishes the file.
+        file.sync_all()
+            .with_context(|| format!("failed to fsync {}", tmp.display()))?;
     }
     std::fs::rename(&tmp, path)
         .with_context(|| format!("failed to install {} (in {})", path.display(), dir.display()))?;
+    // Flush the rename itself so the directory entry survives a crash.
+    std::fs::File::open(dir)
+        .and_then(|d| d.sync_all())
+        .with_context(|| format!("failed to fsync directory {}", dir.display()))?;
     Ok(())
 }

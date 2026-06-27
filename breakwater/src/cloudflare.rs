@@ -7,6 +7,7 @@
 //! second HTTP/TLS dependency.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, bail};
 use bytes::Bytes;
@@ -21,6 +22,12 @@ use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::rustls::pki_types::ServerName;
 
 const API_HOST: &str = "api.cloudflare.com";
+
+/// Overall budget for one Cloudflare API call — connect, TLS, request, and
+/// response. These run only during ACME issuance/renewal, so a generous cap that
+/// just prevents a hung call from stalling the renewal task indefinitely is the
+/// right trade-off.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A DNS zone, with the authoritative nameservers that serve it.
 pub struct Zone {
@@ -93,46 +100,54 @@ impl Cloudflare {
     /// erroring if the API reports failure. A fresh connection per call is fine:
     /// these are infrequent, made only during issuance.
     async fn send(&self, method: Method, path: &str, body: Option<Value>) -> anyhow::Result<Value> {
-        let tcp = TcpStream::connect((API_HOST, 443))
-            .await
-            .context("connecting to the Cloudflare API")?;
-        let server_name = ServerName::try_from(API_HOST).context("invalid API server name")?;
-        let stream = self
-            .tls
-            .connect(server_name, tcp)
-            .await
-            .context("TLS handshake with the Cloudflare API")?;
-        let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream)).await?;
-        tokio::spawn(async move {
-            let _ = conn.await;
-        });
+        let work = async {
+            let tcp = TcpStream::connect((API_HOST, 443))
+                .await
+                .context("connecting to the Cloudflare API")?;
+            let server_name = ServerName::try_from(API_HOST).context("invalid API server name")?;
+            let stream = self
+                .tls
+                .connect(server_name, tcp)
+                .await
+                .context("TLS handshake with the Cloudflare API")?;
+            let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream)).await?;
+            tokio::spawn(async move {
+                if let Err(err) = conn.await {
+                    eprintln!("breakwater: Cloudflare API connection closed: {err}");
+                }
+            });
 
-        let payload = match &body {
-            Some(value) => Bytes::from(serde_json::to_vec(value)?),
-            None => Bytes::new(),
+            let payload = match &body {
+                Some(value) => Bytes::from(serde_json::to_vec(value)?),
+                None => Bytes::new(),
+            };
+            let mut builder = Request::builder()
+                .method(method)
+                .uri(path)
+                .header(HOST, API_HOST)
+                .header(AUTHORIZATION, format!("Bearer {}", self.token))
+                .header(ACCEPT, "application/json");
+            if body.is_some() {
+                builder = builder.header(CONTENT_TYPE, "application/json");
+            }
+            let request = builder.body(Full::new(payload)).context("building Cloudflare request")?;
+
+            let response = sender.send_request(request).await.context("Cloudflare request failed")?;
+            let status = response.status();
+            let bytes = response.into_body().collect().await?.to_bytes();
+            let json: Value = serde_json::from_slice(&bytes)
+                .with_context(|| format!("Cloudflare returned a non-JSON response (status {status})"))?;
+            if json.get("success").and_then(Value::as_bool) != Some(true) {
+                bail!(
+                    "Cloudflare API error (status {status}): {}",
+                    json.get("errors").unwrap_or(&Value::Null)
+                );
+            }
+            anyhow::Ok(json)
         };
-        let mut builder = Request::builder()
-            .method(method)
-            .uri(path)
-            .header(HOST, API_HOST)
-            .header(AUTHORIZATION, format!("Bearer {}", self.token))
-            .header(ACCEPT, "application/json");
-        if body.is_some() {
-            builder = builder.header(CONTENT_TYPE, "application/json");
-        }
-        let request = builder.body(Full::new(payload)).context("building Cloudflare request")?;
 
-        let response = sender.send_request(request).await.context("Cloudflare request failed")?;
-        let status = response.status();
-        let bytes = response.into_body().collect().await?.to_bytes();
-        let json: Value = serde_json::from_slice(&bytes)
-            .with_context(|| format!("Cloudflare returned a non-JSON response (status {status})"))?;
-        if json.get("success").and_then(Value::as_bool) != Some(true) {
-            bail!(
-                "Cloudflare API error (status {status}): {}",
-                json.get("errors").unwrap_or(&Value::Null)
-            );
-        }
-        Ok(json)
+        tokio::time::timeout(REQUEST_TIMEOUT, work)
+            .await
+            .context("Cloudflare API request timed out")?
     }
 }
