@@ -4,10 +4,10 @@
 --   * comments.kind CHECK gains 'report' — the worker's findings are posted as a
 --     first-class 'report' comment, distinct from notes/questions/answers.
 -- SQLite can't alter a CHECK in place, so both tables are rebuilt (preserving
--- every row and id), the same shape as migration 002. Foreign keys are off for
--- the swap so dropping/recreating tickets doesn't disturb comments' references.
-
-PRAGMA foreign_keys = OFF;
+-- every row and id), the same shape as migration 002. The runner applies this
+-- whole file in one transaction with foreign keys already disabled (see
+-- core/store.rs), so dropping/recreating tickets doesn't disturb comments'
+-- references and a crash mid-migration rolls the file back cleanly.
 
 -- tickets: widen the type CHECK.
 DROP TABLE IF EXISTS tickets_migrate_003;
@@ -47,8 +47,6 @@ CREATE TABLE comments_migrate_003 (
 INSERT INTO comments_migrate_003 SELECT * FROM comments;
 DROP TABLE comments;
 ALTER TABLE comments_migrate_003 RENAME TO comments;
-
-PRAGMA foreign_keys = ON;
 
 CREATE INDEX IF NOT EXISTS idx_tickets_state ON tickets(state);
 CREATE INDEX IF NOT EXISTS idx_comments_ticket ON comments(ticket_id);

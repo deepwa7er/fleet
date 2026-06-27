@@ -88,15 +88,28 @@ const MIGRATIONS: &[&str] = &[
 /// Apply every migration whose index is at or beyond the DB's recorded
 /// `user_version`, bumping it after each. A new DB starts at version 0 and gets
 /// them all; an existing DB only runs the ones it hasn't seen.
-fn migrate(conn: &Connection) -> Result<()> {
+///
+/// Each migration and its `user_version` bump commit together in one
+/// transaction, so a crash mid-migration can never leave a half-applied schema:
+/// either the whole migration lands and the version advances, or neither does
+/// and it re-runs cleanly on the next start. Foreign keys must already be OFF on
+/// `conn` (see [`Store::open`]) — the table-rebuild migrations drop and recreate
+/// `tickets`, which would otherwise cascade-delete `comments`/`events`, and
+/// `PRAGMA foreign_keys` is a no-op inside a transaction so it cannot be toggled
+/// here.
+fn migrate(conn: &mut Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     for (i, sql) in MIGRATIONS.iter().enumerate() {
         if (i as i64) < version {
             continue;
         }
-        conn.execute_batch(sql)?;
+        let tx = conn.transaction()?;
+        tx.execute_batch(sql)?;
         // PRAGMA values can't be bound; `i + 1` is a controlled integer.
-        conn.execute_batch(&format!("PRAGMA user_version = {};", i + 1))?;
+        // `user_version` is part of the DB header and is transactional, so it
+        // rolls back with the rest if the commit never lands.
+        tx.execute_batch(&format!("PRAGMA user_version = {};", i + 1))?;
+        tx.commit()?;
     }
     Ok(())
 }
@@ -105,10 +118,17 @@ impl Store {
     /// Open (creating if needed) the database at `path` and apply any pending
     /// schema migrations.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let conn = Connection::open(path)?;
-        conn.pragma_update(None, "foreign_keys", "ON")?;
+        let mut conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
-        migrate(&conn)?;
+        // Foreign keys stay OFF across migration: the table-rebuild migrations
+        // drop and recreate `tickets`, and an enabled FK would cascade that drop
+        // into `comments`/`events`. `PRAGMA foreign_keys` is ignored inside a
+        // transaction, so it must be set here — before `migrate` opens its
+        // per-migration transactions — and re-enabled for normal operation
+        // once every migration has committed.
+        conn.pragma_update(None, "foreign_keys", "OFF")?;
+        migrate(&mut conn)?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
         Ok(Store {
             conn: Mutex::new(conn),
         })
@@ -770,6 +790,55 @@ mod tests {
         assert_eq!(tickets[0].state, State::Blocked);
         // …and 'closed' is now accepted — the whole point.
         assert_eq!(s.close(tickets[0].id, None).unwrap().state, State::Closed);
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn migration_preserves_comments_and_events_across_table_rebuilds() {
+        // Migrations 002/003 DROP and recreate `tickets` (and 003 recreates
+        // `comments`). Both reference rows carry `ON DELETE CASCADE`, so if the
+        // rebuild ever ran with foreign keys enabled, dropping `tickets` would
+        // silently delete the whole thread and audit trail. This guards that the
+        // runner keeps FKs off for the rebuild and that nothing is lost.
+        let tmp = std::env::temp_dir().join(format!("drydock-migcascade-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+
+        // A v0 DB (only migration 001) with a ticket plus a comment and an event
+        // hanging off it — exactly the rows a cascade would eat.
+        {
+            let conn = rusqlite::Connection::open(&tmp).unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            let n = now();
+            conn.execute(
+                "INSERT INTO tickets (title, type, target, state, priority, goal, created_at, updated_at)
+                 VALUES ('legacy', 'feature', 'svc', 'open', 'low', 'g', ?1, ?1)",
+                rusqlite::params![n],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO comments (ticket_id, author, kind, body, created_at)
+                 VALUES (1, 'human', 'note', 'remember this', ?1)",
+                rusqlite::params![n],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO events (ticket_id, from_state, to_state, actor, detail, created_at)
+                 VALUES (1, NULL, 'open', 'human', 'created', ?1)",
+                rusqlite::params![n],
+            )
+            .unwrap();
+        }
+
+        // Reopening runs migrations 002–004, rebuilding both tables.
+        let s = Store::open(&tmp).unwrap();
+        let detail = s.detail(1).unwrap();
+        assert_eq!(detail.comments.len(), 1, "comment must survive the rebuild");
+        assert_eq!(detail.comments[0].body, "remember this");
+        assert!(
+            detail.events.iter().any(|e| e.detail.as_deref() == Some("created")),
+            "event must survive the rebuild"
+        );
 
         let _ = std::fs::remove_file(&tmp);
     }
