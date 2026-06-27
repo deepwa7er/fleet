@@ -1104,7 +1104,7 @@ fn render_commands_page(
   }}
   .btn:hover {{ border-color: var(--ink); }}
   .btn--primary {{ background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }}
-  .btn--primary:hover {{ background: #d24f08; border-color: #d24f08; }}
+  .btn--primary:hover {{ background: #1864ab; border-color: #1864ab; }}
   .btn.danger {{ color: var(--danger); }}
   .btn.danger:hover {{ border-color: var(--danger); }}
   form.add {{ display: flex; gap: var(--s3); align-items: flex-end; flex-wrap: wrap; }}
