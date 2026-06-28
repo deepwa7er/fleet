@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent for `source serve` on the dev box.
+
+  This is a TEMPLATE. Copy it to ~/Library/LaunchAgents/, replace the __…__
+  placeholders, then load it (`launchctl load -w …`). See the README.
+
+  Like tugboat's serve agent, it launches through a login fish shell so the
+  daemon inherits the same PATH/toolchain (git, rg) that interactive use has,
+  rather than launchd's bare default PATH. The config path is supplied as an
+  argument; everything else (bind IP, fleet manifest, web dir) lives in
+  source.toml.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.deepwa7er.source</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/fish</string>
+    <string>-l</string>
+    <string>-c</string>
+    <string>exec __HOME__/.cargo/bin/source serve --config __HOME__/code/source/source.toml</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/source.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/source.log</string>
+</dict>
+</plist>

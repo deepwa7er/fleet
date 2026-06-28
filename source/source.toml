@@ -1,0 +1,16 @@
+# source — runtime config.
+#
+# This is the dev-box service config. `bind` is the host's Tailscale IP so
+# breakwater (on the VPS) can reach it over the tailnet; for local development,
+# set it to 127.0.0.1 and run `cd web && bun run dev` (which proxies /api here).
+
+# The dev box's Tailscale IP. The launchd agent and breakwater's upstream both
+# reference this address.
+bind = "100.74.202.93"
+port = 7879
+
+# The fleet manifest whose members are the repos to serve.
+fleet = "~/code/tugboat/fleet.toml"
+
+# The built frontend. `cd web && bun run build` produces web/dist.
+web_dir = "~/code/source/web/dist"
