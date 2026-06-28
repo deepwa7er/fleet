@@ -96,6 +96,14 @@ repo = "git@github.com:deepwa7er/fleet-backup.git"
 # restored by cloning to /var/lib/ferry, not checked out on dev boxes.)
 path = "git-autocommit"
 repo = "git@github.com:deepwa7er/git-autocommit.git"
+
+[[members]]
+# Source-code viewer for the whole fleet. Runs on the dev box (not the VPS) as a
+# launchd agent — it reads every member's working tree to browse/search source —
+# and is fronted by breakwater at source.internal.deepwa7er.com. No deploy.toml
+# (not a VPS-deployed service), so clone/pull only.
+path = "source"
+repo = "git@github.com:deepwa7er/source.git"
 # ── the fleet documentation site ─────────────────────────────────────────────
 # `tugboat fleet docs` builds the `pilot` frontend, overlays the harvested model
 # (fleet.json) and each repo's rustdoc, and ships the assembled static site to
