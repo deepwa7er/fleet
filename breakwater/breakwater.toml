@@ -107,6 +107,14 @@ upstream = "127.0.0.1:8094"
 label = "docs"
 serve_dir = "/opt/pilot/web"
 
+# Source-code viewer (source) — the only upstream NOT on the VPS. The fleet's
+# working trees live on the dev box, so `source` runs there (a launchd agent) and
+# breakwater proxies to its Tailscale IP over the tailnet. The page is reachable
+# only while the dev box is awake, which is inherent: that's where the source is.
+[[routes]]
+label = "source"
+upstream = "100.74.202.93:7879"
+
 # Note: tidepool is intentionally NOT routed here. It runs as its own Tailscale
 # node (tsnet, `-tls`) and serves HTTPS itself at https://tidepool — there is no
 # plain-HTTP backend to proxy to.
