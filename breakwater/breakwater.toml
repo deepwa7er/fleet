@@ -99,6 +99,12 @@ upstream = "127.0.0.1:8093"
 label = "tide"
 upstream = "127.0.0.1:8094"
 
+# Federated fleet search (spyglass) — one box that fans a query out to the fleet's
+# search services (source for code, lagoon for notes) and groups the results.
+[[routes]]
+label = "spyglass"
+upstream = "127.0.0.1:8095"
+
 # The fleet documentation site (pilot) — process-less static files, so breakwater
 # serves the directory directly instead of proxying an upstream. `tugboat fleet
 # docs` assembles and ships the site to this path; a path that doesn't resolve to
