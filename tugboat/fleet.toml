@@ -98,6 +98,13 @@ path = "git-autocommit"
 repo = "git@github.com:deepwa7er/git-autocommit.git"
 
 [[members]]
+# Federated fleet search — one box that fans a query out to the fleet's search
+# services (source for code, lagoon for notes) and groups the results. A VPS
+# service (has a deploy.toml), fronted by breakwater at spyglass.intern.deepwa7er.net.
+path = "spyglass"
+repo = "git@github.com:deepwa7er/spyglass.git"
+
+[[members]]
 # Source-code viewer for the whole fleet. Runs on the dev box (not the VPS) as a
 # launchd agent — it reads every member's working tree to browse/search source —
 # and is fronted by breakwater at source.intern.deepwa7er.net. No deploy.toml
