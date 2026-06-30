@@ -104,6 +104,14 @@ repo = "git@github.com:deepwa7er/git-autocommit.git"
 # (not a VPS-deployed service), so clone/pull only.
 path = "source"
 repo = "git@github.com:deepwa7er/source.git"
+
+[[members]]
+# The fleet's deployer — the binary that runs these very commands. Fleet code we
+# wrote, but not itself a deployed service (it has no deploy.toml; it installs via
+# `tugboat self-deploy`). A member so it's cloned/pulled on every box and
+# documented like the rest of the fleet (README, rustdoc, LOC). clone/pull only.
+path = "tugboat"
+repo = "git@github.com:deepwa7er/tugboat.git"
 # ── the fleet documentation site ─────────────────────────────────────────────
 # `tugboat fleet docs` builds the `pilot` frontend, overlays the harvested model
 # (fleet.json) and each repo's rustdoc, and ships the assembled static site to
@@ -115,9 +123,6 @@ dist = "web/dist"
 host = "deepwa7er"
 dest = "/opt/pilot/web"
 url = "https://docs.intern.deepwa7er.net"
-# Extra repos counted in the line-of-code total beyond the deployable members:
-# tugboat itself (the fleet's deployer) is fleet code we wrote, but not a service.
-extra_loc = ["tugboat"]
 
 # Claude guidance documents for pilot's Guidance section. Each member's CLAUDE.md
 # is auto-included; these add the global doctrine, the worker prompt, the skills,

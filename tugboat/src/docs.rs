@@ -254,20 +254,12 @@ fn assemble(fleet: &Fleet, opts: &Options, out: &Path) -> Result<()> {
         services.push(service);
     }
 
-    // The fleet total counts the deployable members plus any extra repos the
-    // [docs] config names (e.g. the deployer itself), which aren't services.
-    let members_loc: u64 = services.iter().map(|s| s.loc).sum();
-    let extra_loc: u64 = match &fleet.docs {
-        Some(docs) => docs
-            .extra_loc
-            .iter()
-            .map(|rel| count_loc(&fleet.root_dir().join(rel)))
-            .sum(),
-        None => 0,
-    };
+    // The fleet total is the sum across every member (including non-deployed
+    // fleet repos like the deployer itself, which are members and documented).
+    let total_loc: u64 = services.iter().map(|s| s.loc).sum();
     let model = FleetDoc {
         docs_url: fleet.docs.as_ref().and_then(|d| d.url.clone()),
-        total_loc: members_loc + extra_loc,
+        total_loc,
         services,
     };
     let json_path = out.join("fleet.json");
@@ -453,7 +445,7 @@ fn print_plan(fleet: &Fleet, opts: &Options) -> Result<()> {
 /// is the signal that the published docs are stale. (Members with no checkout
 /// contribute `none`, so a missing repo is stable, not noisy.)
 pub fn fleet_fingerprint(fleet: &Fleet) -> String {
-    let mut entries: Vec<String> = fleet
+    let entries: Vec<String> = fleet
         .members
         .iter()
         .map(|m| {
@@ -461,15 +453,6 @@ pub fn fleet_fingerprint(fleet: &Fleet) -> String {
             format!("{}:{head}", m.label())
         })
         .collect();
-    // Extra repos counted in `total_loc` (e.g. the deployer) also change the docs
-    // output, so a commit to them must mark the docs stale too.
-    if let Some(docs) = &fleet.docs {
-        for rel in &docs.extra_loc {
-            let head =
-                git::state(&fleet.root_dir().join(rel)).head_sha.unwrap_or_else(|| "none".into());
-            entries.push(format!("{rel}:{head}"));
-        }
-    }
     entries.join("\n")
 }
 

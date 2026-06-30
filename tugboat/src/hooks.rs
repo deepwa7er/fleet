@@ -133,23 +133,10 @@ pub fn uninstall(fleet: &Fleet) -> Result<()> {
     Ok(())
 }
 
-/// The repos whose commits should refresh the docs: every fleet member, plus any
-/// `[docs] extra_loc` repos (e.g. the deployer) — these contribute to the docs'
-/// line count, so a commit to them should rebuild too. Returned as
-/// (label, checkout dir) pairs; extra repos already present as a member are
-/// skipped so nothing is hooked twice.
+/// The repos whose commits should refresh the docs: every fleet member (the
+/// deployer included — it's a member too). Returned as (label, checkout dir) pairs.
 fn hooked_repos(fleet: &Fleet) -> Vec<(String, PathBuf)> {
-    let mut repos: Vec<(String, PathBuf)> =
-        fleet.members.iter().map(|m| (m.label().to_owned(), fleet.dir(m))).collect();
-    if let Some(docs) = &fleet.docs {
-        for rel in &docs.extra_loc {
-            let dir = fleet.root_dir().join(rel);
-            if !repos.iter().any(|(_, d)| d == &dir) {
-                repos.push((rel.clone(), dir));
-            }
-        }
-    }
-    repos
+    fleet.members.iter().map(|m| (m.label().to_owned(), fleet.dir(m))).collect()
 }
 
 /// Derive the serve daemon URL from the host's tailnet IP (the daemon binds it so

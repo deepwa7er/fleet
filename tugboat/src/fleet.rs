@@ -54,12 +54,6 @@ pub struct DocsConfig {
     /// Public URL, polled after a ship to confirm the site is live. Optional.
     #[serde(default)]
     pub url: Option<String>,
-    /// Extra repos (paths relative to the fleet `root`) to include in the docs'
-    /// line-of-code total beyond the deployable members — e.g. the deployer
-    /// itself, `tugboat`. They count toward `total_loc` but aren't documented as
-    /// services.
-    #[serde(default)]
-    pub extra_loc: Vec<String>,
     /// Claude guidance documents to surface in pilot's Guidance section, beyond
     /// the per-member `CLAUDE.md` (which is auto-discovered). Each source is a
     /// file or a directory of `.md` files; see [`GuidanceSource`].
