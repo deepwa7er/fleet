@@ -1,4 +1,5 @@
 import type {
+  ChangelogCommit,
   DeployHistoryEntry,
   DeployStatus,
   LogEntry,
@@ -81,6 +82,19 @@ export function fetchDeployHistory(
 ): Promise<DeployHistoryEntry[]> {
   return getJson<DeployHistoryEntry[]>(
     `${BASE}/services/${encodeURIComponent(unit)}/deploy-history?limit=${limit}`,
+  );
+}
+
+/** The commits one deploy shipped: the range from the previously-deployed sha
+ *  (`from`) to the sha this deploy shipped (`to`), newest first. */
+export function fetchChangelog(
+  unit: string,
+  from: string,
+  to: string,
+): Promise<ChangelogCommit[]> {
+  const params = new URLSearchParams({ from, to });
+  return getJson<ChangelogCommit[]>(
+    `${BASE}/services/${encodeURIComponent(unit)}/changelog?${params}`,
   );
 }
 

@@ -456,6 +456,112 @@ pub async fn deploy_history(
     Ok(Json(history))
 }
 
+/// The tugboat daemon's `/changelog` payload: the commits a deploy shipped, plus
+/// the repo's web base so each can be linked.
+#[derive(Debug, Deserialize)]
+struct DaemonChangelog {
+    #[serde(default)]
+    repo_url: Option<String>,
+    commits: Vec<DaemonCommit>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DaemonCommit {
+    sha: String,
+    short: String,
+    subject: String,
+    at: u64,
+}
+
+/// One commit in a deploy's changelog, for the dashboard.
+#[derive(Debug, Serialize)]
+pub struct ChangelogCommit {
+    short: String,
+    subject: String,
+    /// GitHub link to this commit, when the repo is on GitHub.
+    commit_url: Option<String>,
+    /// Unix epoch seconds.
+    at: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangelogQuery {
+    /// The previously-deployed sha (base of the range).
+    from: String,
+    /// The sha this deploy shipped (tip of the range).
+    to: String,
+}
+
+/// Whether a string is a plausible git sha (non-empty hex, no longer than a full
+/// sha) — rejecting junk before it reaches the daemon's git argv.
+fn is_sha(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// `GET /api/services/{unit}/changelog?from=<sha>&to=<sha>` — the commits one
+/// deploy shipped (the range from the previously-deployed sha to the one it
+/// shipped), newest first. The git history lives on the dev box, so this proxies
+/// to the tugboat daemon and links each commit. `502` when the daemon is
+/// unreachable (the build host is asleep); `404` for an unknown unit or shas the
+/// daemon can't resolve; `400` for a malformed sha.
+pub async fn changelog(
+    State(state): State<Arc<AppState>>,
+    Path(unit): Path<String>,
+    Query(query): Query<ChangelogQuery>,
+) -> Result<Json<Vec<ChangelogCommit>>, StatusCode> {
+    let svc = resolve(&state.config, &unit).await?;
+    let Some(cfg) = &state.config.deploy else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    if !is_sha(&query.from) || !is_sha(&query.to) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let deploy_name = state.config.deploy_name(&svc.unit);
+    let url = format!("{}/changelog/{}", cfg.tugboat_url.trim_end_matches('/'), deploy_name);
+    let resp = state
+        .http
+        .get(&url)
+        .query(&[("from", &query.from), ("to", &query.to)])
+        .bearer_auth(&cfg.token)
+        .send()
+        .await
+        .map_err(|err| {
+            eprintln!("tugboat /changelog unreachable: {err}");
+            StatusCode::BAD_GATEWAY
+        })?;
+
+    // A 404 from the daemon (unknown member or unresolvable sha) is a real
+    // not-found, distinct from the daemon being down — pass it through as such.
+    if resp.status().as_u16() == 404 {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let daemon: DaemonChangelog = resp
+        .error_for_status()
+        .map_err(|err| {
+            eprintln!("tugboat /changelog error: {err}");
+            StatusCode::BAD_GATEWAY
+        })?
+        .json()
+        .await
+        .map_err(|err| {
+            eprintln!("parsing tugboat /changelog failed: {err}");
+            StatusCode::BAD_GATEWAY
+        })?;
+
+    let commits = daemon
+        .commits
+        .into_iter()
+        .map(|c| ChangelogCommit {
+            commit_url: commit_url(daemon.repo_url.as_deref(), &c.sha),
+            short: c.short,
+            subject: c.subject,
+            at: c.at,
+        })
+        .collect();
+    Ok(Json(commits))
+}
+
 /// The full transcript of a past deploy, newline-split into lines.
 #[derive(Debug, Serialize)]
 pub struct DeployLog {

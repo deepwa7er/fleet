@@ -79,3 +79,15 @@ export interface DeployHistoryEntry {
   /** Unix epoch seconds. */
   at: number;
 }
+
+/** One commit a deploy shipped — the range from the previously-deployed sha to
+ *  the one this deploy shipped. */
+export interface ChangelogCommit {
+  short: string;
+  /** First line of the commit message. */
+  subject: string;
+  /** GitHub link to this commit, when the repo is on GitHub. */
+  commit_url: string | null;
+  /** Unix epoch seconds. */
+  at: number;
+}
