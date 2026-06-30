@@ -49,10 +49,21 @@ cat > build/updates.xml <<XML
 </gupdate>
 XML
 
-# Human-facing install page, served at $HOST/extension/ alongside the crx. A
-# Chromium browser won't install a .crx straight from a link (by design), so the
-# page walks through the drag-onto-chrome://extensions flow. Once installed the
-# extension auto-updates from updates.xml, so this is a one-time step.
+# Unpacked extension as a zip — the only manual install modern browsers allow
+# for a self-hosted extension. A self-signed .crx can't be drag-installed
+# (browsers demand a Web-Store signature: CRX_REQUIRED_PROOF_MISSING), so the
+# install page hands out this zip for "Load unpacked". The crx/updates.xml stay
+# for the managed-policy force-install path (which bypasses the signature rule).
+rm -rf build/harbor build/harbor-unpacked.zip
+mkdir -p build/harbor
+for f in extension/*; do
+  case "$(basename "$f")" in pack.sh | helium-policy.json) continue ;; esac
+  cp -R "$f" build/harbor/
+done
+( cd build && zip -q -r harbor-unpacked.zip harbor )
+rm -rf build/harbor
+
+# Human-facing install page, served at $HOST/extension/ alongside the downloads.
 cat > build/index.html <<HTML
 <!doctype html>
 <html lang="en">
@@ -91,17 +102,18 @@ cat > build/index.html <<HTML
 <main>
   <h1>harbor</h1>
   <p class="sub">fleet new-tab extension — activity pulse + lagoon capture</p>
-  <a class="dl" href="/download/harbor.crx" download>Download harbor.crx</a>
-  <p class="ver">version $VERSION · auto-updates from this server once installed</p>
+  <a class="dl" href="/extension/harbor-unpacked.zip" download>Download extension (.zip)</a>
+  <p class="ver">version $VERSION</p>
   <section>
-    <h2>Install (one time)</h2>
+    <h2>Install — load unpacked (one time)</h2>
     <ol>
-      <li>Download <code>harbor.crx</code> above.</li>
-      <li>Open your browser's extensions page — <code>chrome://extensions</code>, <code>brave://extensions</code>, <code>helium://extensions</code>.</li>
+      <li>Download the <code>.zip</code> above and unzip it — you get a <code>harbor</code> folder.</li>
+      <li>Open your browser's extensions page — <code>helium://extensions</code>, <code>chrome://extensions</code>, <code>brave://extensions</code>.</li>
       <li>Turn on <strong>Developer mode</strong> (top-right toggle).</li>
-      <li>Drag <code>harbor.crx</code> from your downloads onto the page and confirm <em>Add extension</em>.</li>
+      <li>Click <strong>Load unpacked</strong> and select the unzipped <code>harbor</code> folder.</li>
+      <li>Open a new tab — harbor should load.</li>
     </ol>
-    <p class="note">After this it updates itself from <code>$HOST/extension/updates.xml</code> — no need to repeat. If you still have an older copy from the previous domain, remove it first.</p>
+    <p class="note">A self-signed <code>.crx</code> can't be drag-installed (browsers require a Web-Store signature — <em>CRX_REQUIRED_PROOF_MISSING</em>), so "Load unpacked" is the way. It won't auto-update; to update later, re-download and reload. Remove any older harbor copy first. (Linux auto-update is still available via the managed-policy force-install — see the repo README.)</p>
   </section>
 </main>
 </body>

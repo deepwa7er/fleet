@@ -36,6 +36,12 @@ src = "build/index.html"
 dest = "/srv/harbor/dist/index.html"
 mode = "0644"
 
+# Unpacked extension zip for the "Load unpacked" manual install.
+[[artifacts]]
+src = "build/harbor-unpacked.zip"
+dest = "/srv/harbor/dist/harbor-unpacked.zip"
+mode = "0644"
+
 # harbor binds the tailnet IP (no loopback), so health is the unit's active
 # state. (default health = `systemctl is-active harbor`)
 
