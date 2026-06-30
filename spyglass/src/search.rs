@@ -117,6 +117,8 @@ impl Engine {
         match source.kind {
             SourceKind::Code => self.fetch_code(source, query).await,
             SourceKind::Notes => self.fetch_notes(source, query).await,
+            SourceKind::Tickets => self.fetch_tickets(source, query).await,
+            SourceKind::Docs => fetch_docs(source, query).await,
         }
         .unwrap_or_else(|err| SourceResult::failed(source, err))
     }
@@ -124,7 +126,7 @@ impl Engine {
     /// The `source` service: ripgrep results grouped repo → file → match. Flatten
     /// into hits, each linking to the file+line on GitHub.
     async fn fetch_code(&self, source: &SourceConfig, query: &str) -> Result<SourceResult, String> {
-        let url = format!("{}/api/search", source.url.trim_end_matches('/'));
+        let url = format!("{}/api/search", fetch_base(source)?);
         let resp: CodeResponse = self
             .client
             .get(&url)
@@ -166,7 +168,7 @@ impl Engine {
     /// The `lagoon` service: an array of thought matches. Each becomes a dated
     /// snippet hit (lagoon has no per-note URL, so no link).
     async fn fetch_notes(&self, source: &SourceConfig, query: &str) -> Result<SourceResult, String> {
-        let url = format!("{}/api/search", source.url.trim_end_matches('/'));
+        let url = format!("{}/api/search", fetch_base(source)?);
         let matches: Vec<NoteMatch> = self
             .client
             .get(&url)
@@ -195,6 +197,148 @@ impl Engine {
             .collect();
         Ok(SourceResult { hits, truncated, ..SourceResult::base(source) })
     }
+
+    /// The `drydock` service: tickets matching the query's text. Each links to the
+    /// ticket on the drydock web UI (`?t=<id>`).
+    async fn fetch_tickets(&self, source: &SourceConfig, query: &str) -> Result<SourceResult, String> {
+        let url = format!("{}/api/tickets", fetch_base(source)?);
+        let tickets: Vec<TicketMatch> = self
+            .client
+            .get(&url)
+            .query(&[("q", query)])
+            .send()
+            .await
+            .map_err(|e| format!("request failed: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("upstream error: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("bad response: {e}"))?;
+
+        let web = link_base(source);
+        let truncated = tickets.len() > DISPLAY_LIMIT;
+        let hits = tickets
+            .into_iter()
+            .take(DISPLAY_LIMIT)
+            .map(|t| Hit {
+                title: format!("#{} {}", t.id, t.title),
+                line: None,
+                ranges: substring_spans(&t.goal, query),
+                snippet: t.goal,
+                url: Some(format!("{}/?t={}", web, t.id)),
+                at: None,
+            })
+            .collect();
+        Ok(SourceResult { hits, truncated, ..SourceResult::base(source) })
+    }
+}
+
+/// The `pilot` docs site: match the query against its published service catalog
+/// (`fleet.json`) and guidance index (`guidance.json`), read from disk (pilot is
+/// process-less static files on the same box). Each hit deep-links into the docs
+/// site. Disk-backed, so this is a free function — it needs no HTTP client.
+async fn fetch_docs(source: &SourceConfig, query: &str) -> Result<SourceResult, String> {
+    let dir = source
+        .path
+        .as_ref()
+        .ok_or_else(|| "docs source needs a `path`".to_string())?;
+    let web = link_base(source);
+    let needle = query.to_ascii_lowercase();
+    let mut hits = Vec::new();
+    let mut read_any = false;
+
+    // fleet.json — the service catalog: match name or description.
+    if let Ok(text) = tokio::fs::read_to_string(dir.join("fleet.json")).await {
+        read_any = true;
+        if let Ok(fleet) = serde_json::from_str::<FleetFile>(&text) {
+            for svc in fleet.services {
+                if svc.name.to_ascii_lowercase().contains(&needle)
+                    || svc.description.to_ascii_lowercase().contains(&needle)
+                {
+                    hits.push(Hit {
+                        title: svc.name.clone(),
+                        line: None,
+                        ranges: substring_spans(&svc.description, query),
+                        snippet: svc.description,
+                        url: Some(format!("{web}/{}", svc.name)),
+                        at: None,
+                    });
+                }
+            }
+        }
+    }
+
+    // guidance.json — the doc index: match label or category.
+    if let Ok(text) = tokio::fs::read_to_string(dir.join("guidance.json")).await {
+        read_any = true;
+        if let Ok(guidance) = serde_json::from_str::<GuidanceFile>(&text) {
+            for doc in guidance.docs {
+                let hay = format!("{} {}", doc.label, doc.category).to_ascii_lowercase();
+                if hay.contains(&needle) {
+                    let snippet = format!("guidance · {}", doc.category);
+                    hits.push(Hit {
+                        ranges: substring_spans(&snippet, query),
+                        title: doc.label,
+                        line: None,
+                        snippet,
+                        url: Some(format!("{web}/guidance/{}", doc.id)),
+                        at: None,
+                    });
+                }
+            }
+        }
+    }
+
+    if !read_any {
+        return Err(format!(
+            "could not read fleet.json/guidance.json under {}",
+            dir.display()
+        ));
+    }
+    let truncated = hits.len() > DISPLAY_LIMIT;
+    hits.truncate(DISPLAY_LIMIT);
+    Ok(SourceResult { hits, truncated, ..SourceResult::base(source) })
+}
+
+/// The base URL to fetch from, trimmed of a trailing slash — required for the
+/// HTTP-backed sources.
+fn fetch_base(source: &SourceConfig) -> Result<&str, String> {
+    source
+        .url
+        .as_deref()
+        .map(|u| u.trim_end_matches('/'))
+        .ok_or_else(|| format!("source `{}` needs a `url`", source.name))
+}
+
+/// The public base for building result links: `web_url` if set, else the fetch
+/// `url`, else empty — both trimmed of a trailing slash.
+fn link_base(source: &SourceConfig) -> &str {
+    source
+        .web_url
+        .as_deref()
+        .or(source.url.as_deref())
+        .unwrap_or("")
+        .trim_end_matches('/')
+}
+
+/// Case-insensitive byte-offset spans of `needle` within `haystack`, for the
+/// frontend to highlight. ASCII-only case folding keeps the byte offsets aligned
+/// with the original string (so multi-byte text never misplaces a highlight);
+/// a non-ASCII needle just matches case-sensitively. Empty when not found.
+fn substring_spans(haystack: &str, needle: &str) -> Vec<Range> {
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let hay = haystack.to_ascii_lowercase();
+    let need = needle.to_ascii_lowercase();
+    let mut spans = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = hay[from..].find(&need) {
+        let start = from + rel;
+        spans.push(Range { start, len: need.len() });
+        from = start + need.len();
+    }
+    spans
 }
 
 impl SourceResult {
@@ -206,6 +350,8 @@ impl SourceResult {
             kind: match source.kind {
                 SourceKind::Code => "code",
                 SourceKind::Notes => "notes",
+                SourceKind::Tickets => "tickets",
+                SourceKind::Docs => "docs",
             },
             hits: Vec::new(),
             truncated: false,
@@ -282,9 +428,53 @@ struct NoteRange {
     len: usize,
 }
 
+#[derive(Debug, Deserialize)]
+struct TicketMatch {
+    id: i64,
+    title: String,
+    goal: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FleetFile {
+    services: Vec<ServiceDoc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ServiceDoc {
+    name: String,
+    #[serde(default)]
+    description: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GuidanceFile {
+    docs: Vec<GuidanceItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GuidanceItem {
+    id: String,
+    label: String,
+    #[serde(default)]
+    category: String,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{github_blob, spans_from_pairs};
+    use super::{github_blob, spans_from_pairs, substring_spans};
+
+    #[test]
+    fn finds_case_insensitive_substring_spans() {
+        // Two matches, case-insensitive, with byte offsets into the original.
+        let spans = substring_spans("Tide Theme tide", "tide");
+        assert_eq!(spans.len(), 2);
+        assert_eq!((spans[0].start, spans[0].len), (0, 4));
+        assert_eq!((spans[1].start, spans[1].len), (11, 4));
+        // No match, and an empty needle, both yield nothing.
+        assert!(substring_spans("nothing here", "xyz").is_empty());
+        assert!(substring_spans("anything", "").is_empty());
+    }
 
     #[test]
     fn converts_offset_pairs_to_spans() {

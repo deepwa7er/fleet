@@ -6,6 +6,7 @@
 //! reached at its real tailnet/loopback address over plain HTTP.
 
 use std::net::IpAddr;
+use std::path::PathBuf;
 
 use serde::Deserialize;
 
@@ -29,8 +30,18 @@ pub struct SourceConfig {
     pub name: String,
     /// What it searches — selects the response adapter.
     pub kind: SourceKind,
-    /// Base URL, e.g. `http://127.0.0.1:8092` or `http://100.74.202.93:7879`.
-    pub url: String,
+    /// Base URL to query, e.g. `http://127.0.0.1:8092`. Used by the HTTP-backed
+    /// sources (code, notes, tickets); omitted for disk-backed ones (docs).
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Local directory to read, for disk-backed sources (docs reads pilot's
+    /// published `fleet.json` / `guidance.json`). Omitted for HTTP sources.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+    /// Public base URL for building result links (e.g. the drydock or docs site),
+    /// when it differs from the fetch `url`. Falls back to `url`.
+    #[serde(default)]
+    pub web_url: Option<String>,
     /// Display label; defaults to a title-cased `name`.
     #[serde(default)]
     pub label: Option<String>,
@@ -50,6 +61,11 @@ pub enum SourceKind {
     Code,
     /// A notes search (the `lagoon` service): FTS over thoughts.
     Notes,
+    /// A ticket search (the `drydock` service): text filter over tickets.
+    Tickets,
+    /// A docs search (the `pilot` site): match over its published `fleet.json`
+    /// service catalog and `guidance.json` doc index, read from disk.
+    Docs,
 }
 
 fn default_github_org() -> String {

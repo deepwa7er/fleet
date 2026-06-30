@@ -25,3 +25,21 @@ url = "http://100.74.202.93:7879"
 name = "lagoon"
 kind = "notes"
 url = "http://127.0.0.1:8092"
+
+# Ticket search — the `drydock` service on this VPS (loopback). Hits link to the
+# ticket on the drydock web UI (`?t=<id>`).
+[[sources]]
+name = "drydock"
+kind = "tickets"
+url = "http://127.0.0.1:8093"
+web_url = "https://drydock.intern.deepwa7er.net"
+
+# Docs search — the `pilot` site is process-less static files on this box, so it's
+# read straight from disk (its published service catalog + guidance index). Hits
+# deep-link into the docs site.
+[[sources]]
+name = "pilot"
+kind = "docs"
+label = "Docs"
+path = "/opt/pilot/web"
+web_url = "https://docs.intern.deepwa7er.net"

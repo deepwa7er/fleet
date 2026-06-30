@@ -16,6 +16,14 @@ cmd = "rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true; CARG
 src = "target/x86_64-unknown-linux-musl/release/spyglass"
 dest = "/usr/local/bin/spyglass"
 
+# The runtime config (the [[sources]] list) ships with the code so adding a source
+# deploys — it carries no secrets, so it's fine world-readable. provision.sh still
+# installs a baseline first-time so the service can start before the first deploy.
+[[artifacts]]
+src = "deploy/spyglass.toml"
+dest = "/etc/spyglass/config.toml"
+mode = "0644"
+
 # spyglass binds loopback, so health is a real HTTP check on it.
 [health]
 url = "http://127.0.0.1:8095/healthz"

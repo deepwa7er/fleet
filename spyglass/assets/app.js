@@ -101,13 +101,14 @@ function renderGroup(source) {
   } else if (source.hits.length === 0) {
     group.append(el("div", "group-empty", "No matches."));
   } else {
-    for (const hit of source.hits) group.append(renderHit(hit, source.kind));
+    for (const hit of source.hits) group.append(renderHit(hit));
   }
   return group;
 }
 
-function renderHit(hit, kind) {
-  // A hit is a link when it has a URL (code → GitHub), else a plain block.
+function renderHit(hit) {
+  // A hit is a link when it has a URL (code → GitHub, tickets/docs → their site),
+  // else a plain block (notes have no per-item URL).
   const node = hit.url ? el("a", "hit") : el("div", "hit");
   if (hit.url) {
     node.href = hit.url;
@@ -115,7 +116,9 @@ function renderHit(hit, kind) {
     node.rel = "noopener noreferrer";
   }
 
-  if (kind === "code") {
+  // A heading: the location/title (code "repo/path:line", a ticket title, a doc
+  // name), or — when there's none (notes) — the item's date.
+  if (hit.title) {
     const loc = el("div", "hit-loc");
     loc.textContent = hit.title;
     if (hit.line != null) {
