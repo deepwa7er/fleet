@@ -29,6 +29,13 @@ src = "build/updates.xml"
 dest = "/srv/harbor/dist/updates.xml"
 mode = "0644"
 
+# Install/download landing page, served at /extension/ (ServeDir serves
+# index.html for the directory request).
+[[artifacts]]
+src = "build/index.html"
+dest = "/srv/harbor/dist/index.html"
+mode = "0644"
+
 # harbor binds the tailnet IP (no loopback), so health is the unit's active
 # state. (default health = `systemctl is-active harbor`)
 
