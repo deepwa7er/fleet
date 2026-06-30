@@ -468,6 +468,18 @@ cal = "https://cal.example/"
         assert!(!page.contains("formaction=\"/commands/delete\""));
     }
 
+    /// The page surfaces the URLs needed to wire ferry up as a browser search
+    /// engine — the search URL (with Chrome's `%s`) and the suggest URL.
+    #[test]
+    fn lists_search_engine_setup_urls() {
+        let config = Config::from_toml(BASE).unwrap();
+        let page = render_commands_page(&config, None, &FormValues::default(), None);
+        assert!(page.contains(r#"id="se-search""#));
+        assert!(page.contains(r#"id="se-suggest""#));
+        assert!(page.contains(r#""/?q=%s""#));
+        assert!(page.contains(r#""/suggest?q=%s""#));
+    }
+
     /// Opening one entry for editing turns only that row into a form (inputs +
     /// Save/Delete/Cancel); the others stay read-only.
     #[test]
@@ -1044,6 +1056,28 @@ fn render_commands_page(
         .map(|a| format!(" &middot; Action <code>b {} &lt;args&gt;</code>", escape_html(&a.keyword)))
         .collect::<String>();
 
+    // Search-engine setup panel. The two URLs are filled client-side from the
+    // page's own origin, so they're correct for whatever host ferry is reached
+    // at (and we avoid threading the request origin through every render path).
+    // This is a plain string, not part of the page `format!`, so its braces stay
+    // literal.
+    let search_engine_html = r#"<section class="panel">
+<h2 class="panel-head">Search engine</h2>
+<p class="se-hint">Add ferry as a custom search engine (Chrome: Settings &rarr; Search engines &rarr; Add), with <code>b</code> as the shortcut. Click a field to select it.</p>
+<label class="field se-field"><span class="field-label">Search URL — use as the engine URL (with %s)</span>
+  <input id="se-search" readonly onclick="this.select()"></label>
+<label class="field se-field"><span class="field-label">Suggest URL</span>
+  <input id="se-suggest" readonly onclick="this.select()"></label>
+<script>
+(function () {
+  var o = window.location.origin;
+  document.getElementById("se-search").value = o + "/?q=%s";
+  document.getElementById("se-suggest").value = o + "/suggest?q=%s";
+})();
+</script>
+</section>
+"#;
+
     // Styled after DG-001 (U.S. Graphics school): light "paper + ink", mono,
     // hairline rules, flat fills, sharp corners, single amber signal accent.
     format!(
@@ -1132,6 +1166,10 @@ fn render_commands_page(
     margin: var(--s5) 0 0; padding-top: var(--s3); border-top: 1px solid var(--rule-strong);
     color: var(--ink-muted); font-size: 12px;
   }}
+  .se-hint {{ color: var(--ink-muted); font-size: 12px; margin: 0 0 var(--s4); }}
+  .se-field {{ margin-bottom: var(--s3); }}
+  .se-field:last-of-type {{ margin-bottom: 0; }}
+  .se-field input {{ background: var(--surface); cursor: pointer; }}
   @media (max-width: 640px) {{
     .cmd-head {{ display: none; }}
     .row {{ grid-template-columns: 1fr; }}
@@ -1148,7 +1186,7 @@ fn render_commands_page(
 <section class="panel">
 <h2 class="panel-head">Commands</h2>
 {table}</section>
-<p class="fallback">Built-in <code>:3000</code> &rarr; <code>http://localhost:3000</code> &middot; Fallback <code>{fallback}</code>{capture_hint}{action_hint}</p>
+{search_engine_html}<p class="fallback">Built-in <code>:3000</code> &rarr; <code>http://localhost:3000</code> &middot; Fallback <code>{fallback}</code>{capture_hint}{action_hint}</p>
 </body>
 </html>
 "#,
