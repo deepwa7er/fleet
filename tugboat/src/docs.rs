@@ -649,43 +649,55 @@ struct RouteInfo {
 }
 
 /// Only the routing fields breakwater's config carries that we care about; the
-/// rest of `breakwater.toml` (TLS, ACME, ports) is ignored.
+/// rest of `breakwater.toml` (TLS, ACME, ports) is ignored. breakwater composes
+/// each route's hostname as `<label>.<base_domain>`, so we need both.
 #[derive(Deserialize)]
 struct BreakwaterConfig {
+    base_domain: String,
     #[serde(default)]
     routes: Vec<BreakwaterRoute>,
 }
 #[derive(Deserialize)]
 struct BreakwaterRoute {
-    host: String,
+    /// The service's subdomain label (also the service name).
+    label: String,
     /// Present for proxy routes; absent for static-directory routes.
     #[serde(default)]
     upstream: Option<String>,
 }
 
-/// Read breakwater's routing table, keyed by each route host's first DNS label
-/// (the service name). Best-effort: if breakwater isn't a member or its config
-/// can't be read, services simply carry no URL.
+/// Read breakwater's routing table, keyed by each route's label (the service
+/// name). Best-effort: if breakwater isn't a member or its config can't be read,
+/// services simply carry no URL.
 fn load_routes(fleet: &Fleet) -> HashMap<String, RouteInfo> {
-    let mut table = HashMap::new();
     let Some(breakwater) = fleet.find("breakwater") else {
-        return table;
+        return HashMap::new();
     };
     let path = fleet.dir(breakwater).join("breakwater.toml");
     let Ok(text) = std::fs::read_to_string(&path) else {
-        return table;
+        return HashMap::new();
     };
-    let config: BreakwaterConfig = match toml::from_str(&text) {
-        Ok(config) => config,
+    match parse_routes(&text) {
+        Ok(table) => table,
         Err(err) => {
             eprintln!("    warning: could not parse {}: {err}", path.display());
-            return table;
+            HashMap::new()
         }
-    };
+    }
+}
+
+/// Parse breakwater's config text into the label → route-info table, composing
+/// each hostname as `<label>.<base_domain>`.
+fn parse_routes(text: &str) -> Result<HashMap<String, RouteInfo>, toml::de::Error> {
+    let config: BreakwaterConfig = toml::from_str(text)?;
+    let base_domain = config.base_domain.trim();
+    let mut table = HashMap::new();
     for route in config.routes {
-        let Some(label) = route.host.split('.').next() else {
+        let label = route.label.trim();
+        if label.is_empty() {
             continue;
-        };
+        }
+        let host = format!("{label}.{base_domain}");
         let port = route
             .upstream
             .as_deref()
@@ -693,10 +705,36 @@ fn load_routes(fleet: &Fleet) -> HashMap<String, RouteInfo> {
             .and_then(|p| p.parse().ok());
         table.insert(
             label.to_string(),
-            RouteInfo { url: format!("https://{}", route.host), port },
+            RouteInfo { url: format!("https://{host}"), port },
         );
     }
-    table
+    Ok(table)
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+
+    #[test]
+    fn parses_label_and_base_domain_schema() {
+        let toml = r#"
+            base_domain = "intern.deepwa7er.net"
+            [[routes]]
+            label = "lighthouse"
+            upstream = "127.0.0.1:8080"
+            [[routes]]
+            label = "docs"
+            serve_dir = "/opt/pilot/web"
+        "#;
+        let table = parse_routes(toml).expect("parses new schema");
+        let lh = table.get("lighthouse").expect("lighthouse route");
+        assert_eq!(lh.url, "https://lighthouse.intern.deepwa7er.net");
+        assert_eq!(lh.port, Some(8080));
+        // Static-dir route: URL composed, no port.
+        let docs = table.get("docs").expect("docs route");
+        assert_eq!(docs.url, "https://docs.intern.deepwa7er.net");
+        assert_eq!(docs.port, None);
+    }
 }
 
 // ── Cargo metadata + rustdoc ────────────────────────────────────────────────
