@@ -17,6 +17,7 @@
 //! build output are excluded by construction.
 
 mod config;
+mod edit;
 mod fleet;
 mod repo;
 mod search;
@@ -82,7 +83,7 @@ fn serve(config_path: &std::path::Path) -> ExitCode {
         fleet.root().display()
     );
 
-    let state = Arc::new(web::AppState { fleet });
+    let state = Arc::new(web::AppState { fleet, write_lock: tokio::sync::Mutex::new(()) });
 
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(rt) => rt,

@@ -82,3 +82,35 @@ export function search(
   if (regex) params.set("regex", "1");
   return getJSON(`/api/search?${params.toString()}`);
 }
+
+export interface SaveResult {
+  committed: boolean;
+  pushed: boolean;
+  commit: string | null;
+  warning: string | null;
+  file: FileContents;
+}
+
+export async function saveFile(
+  repo: string,
+  path: string,
+  content: string,
+  message: string,
+): Promise<SaveResult> {
+  const res = await fetch("/api/file", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ repo, path, content, message }),
+  });
+  if (!res.ok) {
+    let msg = `${res.status} ${res.statusText}`;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body.error) msg = body.error;
+    } catch {
+      // keep status line
+    }
+    throw new Error(msg);
+  }
+  return (await res.json()) as SaveResult;
+}

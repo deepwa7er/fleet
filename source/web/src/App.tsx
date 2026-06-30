@@ -178,7 +178,12 @@ export function App() {
             </div>
           )}
           {pane === "file" && (
-            <FileView target={open} file={file} error={fileError} />
+            <FileView
+              target={open}
+              file={file}
+              error={fileError}
+              onSaved={setFile}
+            />
           )}
           {pane === "search" && (
             <SearchPanel

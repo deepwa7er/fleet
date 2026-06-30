@@ -240,6 +240,11 @@ ul {
 }
 
 /* ── File view ──────────────────────────────────────────────────────────── */
+.fileview {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
 .fileheader {
   position: sticky;
   top: 0;
@@ -263,6 +268,85 @@ ul {
   color: var(--ink-muted);
   font-size: 11px;
   white-space: nowrap;
+}
+.fileheader-right {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+.edit-actions {
+  display: flex;
+  gap: var(--s2);
+}
+.btn {
+  border: var(--border);
+  padding: 2px var(--s3);
+  color: var(--ink-muted);
+}
+.btn:hover {
+  background: var(--bg);
+  color: var(--ink);
+}
+.btn.primary {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Status line under the file header after a save. */
+.status {
+  padding: var(--s2) var(--s4);
+  font-size: 12px;
+  border-bottom: var(--border);
+}
+.status.ok {
+  color: var(--active);
+}
+.status.warn {
+  color: var(--warn);
+}
+.status.err {
+  color: var(--failed);
+}
+
+/* Editor: commit-message field + a plain monospace textarea. A textarea is the
+ * honest v1 — no editor framework; it edits the exact bytes that get committed. */
+.editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.commit-msg {
+  background: var(--surface-2);
+  border: none;
+  border-bottom: var(--border);
+  color: var(--ink);
+  font: inherit;
+  padding: var(--s2) var(--s4);
+  outline: none;
+}
+.commit-msg:focus {
+  border-bottom-color: var(--accent);
+}
+.code-edit {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  background: var(--bg);
+  border: none;
+  outline: none;
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.5;
+  padding: var(--s3) var(--s4);
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
 }
 
 .code-wrap {

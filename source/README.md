@@ -38,21 +38,32 @@ traversal), tracked-only, a binary-file guard, and a 2 MB size cap.
 | `GET /api/repos` | the fleet's checked-out repos |
 | `GET /api/tree?repo=NAME` | a repo's tracked file paths |
 | `GET /api/file?repo=NAME&path=REL` | one file's contents + metadata |
+| `PUT /api/file` `{repo,path,content,message?}` | edit a tracked file: write + commit + push |
 | `GET /api/search?q=TERM[&repo=NAME][&regex=1]` | grouped match results |
 | `GET /api/healthz` | liveness |
+
+## Editing
+
+`PUT /api/file` writes the tracked file, makes a **path-scoped** commit
+(`git commit -- <path>`, so other in-progress changes in the repo aren't swept
+in), and pushes. Same gate as reads: tracked, in-tree files only. Identical
+content is a no-op (`committed: false`). The **commit** — not the push — is what
+updates the docs: a fleet repo's post-commit hook reships [pilot](https://github.com/deepwa7er/pilot)'s
+docs from the local working tree, so a push failure (offline, remote behind) is
+returned as a `warning`, not an error.
+
+**Editing a service's top-level docs** on `docs.internal.deepwa7er.com/<name>`
+means editing that repo's `README.md` here — pilot harvests the README as the
+service's "Architecture" prose, and regenerates on the commit.
 
 ## Security model
 
 `bind` is the dev box's **Tailscale IP** (not loopback), because breakwater runs
 on the VPS and reaches this service across the tailnet. So any tailnet device can
-reach it directly — the tailnet is the boundary, the same model as the rest of
-the fleet. v1 is **read-only**, so that's appropriate.
-
-**When editing lands** (`PUT /api/file` → write + commit + push), write access to
-every repo over a no-auth tailnet endpoint needs a second look — e.g. a bearer
-token, or restricting writes to a loopback-only control path. The handlers are
-structured so the write path slots in; the auth decision is deliberately deferred,
-not papered over.
+reach it directly — reads **and writes**. This matches the fleet's model (the
+tailnet is the boundary; lighthouse/harbor/drydock all mutate state with no app
+auth). If write exposure ever needs tightening, the options are a bearer token on
+`PUT` or a loopback-only write path; today it's deliberately tailnet-gated only.
 
 ## Run
 

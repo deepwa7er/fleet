@@ -21,10 +21,14 @@ use serde::{Deserialize, Serialize};
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::fleet::Fleet;
-use crate::{repo, search};
+use crate::{edit, repo, search};
 
 pub struct AppState {
     pub fleet: Fleet,
+    /// Serializes mutating git operations so two concurrent saves can't interleave
+    /// a working-tree write with another's commit. Writes are human-paced, so one
+    /// fleet-wide lock is simpler than per-repo locks and correct.
+    pub write_lock: tokio::sync::Mutex<()>,
 }
 
 type Shared = Arc<AppState>;
@@ -38,7 +42,7 @@ pub fn router(state: Shared, web_dir: &Path) -> Router {
     let api = Router::new()
         .route("/repos", get(list_repos))
         .route("/tree", get(tree))
-        .route("/file", get(file))
+        .route("/file", get(file).put(save_file))
         .route("/search", get(search_handler))
         .route("/healthz", get(|| async { "ok" }))
         .with_state(state);
@@ -112,6 +116,63 @@ async fn file(State(state): State<Shared>, Query(q): Query<FileQuery>) -> Result
         binary: f.binary,
         too_large: f.too_large,
         content: f.content,
+    }))
+}
+
+// ── PUT /api/file (edit) ─────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SaveRequest {
+    repo: String,
+    path: String,
+    content: String,
+    /// Commit message; defaults to `Update <path>` when absent or blank.
+    #[serde(default)]
+    message: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SaveResponse {
+    /// False when the content was unchanged (no commit made).
+    committed: bool,
+    pushed: bool,
+    commit: Option<String>,
+    /// A non-fatal note (e.g. the push failed); the edit is still live locally.
+    warning: Option<String>,
+    /// The file as it now stands.
+    file: FileResponse,
+}
+
+async fn save_file(
+    State(state): State<Shared>,
+    Json(body): Json<SaveRequest>,
+) -> Result<Json<SaveResponse>, AppError> {
+    let repo = state
+        .fleet
+        .repo(&body.repo)
+        .ok_or_else(|| AppError::not_found(format!("unknown repo: {}", body.repo)))?;
+
+    // One writer at a time across the fleet (see AppState::write_lock).
+    let _guard = state.write_lock.lock().await;
+    let outcome = edit::write_file(&repo.dir, &body.path, &body.content, body.message.as_deref())
+        .await
+        .map_err(AppError::bad_request)?;
+
+    let f = outcome.file;
+    Ok(Json(SaveResponse {
+        committed: outcome.committed,
+        pushed: outcome.pushed,
+        commit: outcome.commit,
+        warning: outcome.warning,
+        file: FileResponse {
+            repo: repo.name.clone(),
+            path: f.path,
+            language: f.language,
+            bytes: f.bytes,
+            binary: f.binary,
+            too_large: f.too_large,
+            content: f.content,
+        },
     }))
 }
 

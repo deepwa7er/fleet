@@ -58,14 +58,13 @@ pub struct FileContents {
     pub content: Option<String>,
 }
 
-/// Read one tracked file. Rejects path traversal and untracked paths, so the
-/// only things reachable are the same files [`tracked_files`] lists.
-pub async fn read_file(repo_dir: &Path, rel: &str) -> Result<FileContents> {
+/// Sanitize `rel` and confirm it names a tracked file in `repo_dir`, returning
+/// the cleaned repo-relative path. Shared by reads and writes so both reach
+/// exactly the same set of files — never a `.gitignore`d one (which may hold
+/// secrets) and never a path that escapes the repo.
+pub async fn ensure_tracked_path(repo_dir: &Path, rel: &str) -> Result<String> {
     let safe = sanitize_relpath(rel)?;
-
-    // Gate on tracked status: reading straight from the working tree keeps live
-    // edits visible, but we must never serve a `.gitignore`d file (it may hold
-    // secrets). `--error-unmatch` exits non-zero for an untracked path.
+    // `--error-unmatch` exits non-zero for an untracked path.
     let tracked = Command::new("git")
         .args(["ls-files", "--error-unmatch", "-z", "--"])
         .arg(&safe)
@@ -76,6 +75,14 @@ pub async fn read_file(repo_dir: &Path, rel: &str) -> Result<FileContents> {
     if !tracked.status.success() {
         bail!("not a tracked file: {safe}");
     }
+    Ok(safe)
+}
+
+/// Read one tracked file. Rejects path traversal and untracked paths, so the
+/// only things reachable are the same files [`tracked_files`] lists.
+pub async fn read_file(repo_dir: &Path, rel: &str) -> Result<FileContents> {
+    // Reading straight from the working tree keeps live edits visible.
+    let safe = ensure_tracked_path(repo_dir, rel).await?;
 
     let full = repo_dir.join(&safe);
     let meta = tokio::fs::metadata(&full)
