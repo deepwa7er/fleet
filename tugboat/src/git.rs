@@ -107,6 +107,56 @@ pub fn count_commits(dir: &Path, from: &str, to: &str) -> Option<u32> {
         .and_then(|s| s.parse().ok())
 }
 
+/// One commit in a range, for the deploy changelog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Commit {
+    /// Full commit sha.
+    pub sha: String,
+    /// Short sha for display.
+    pub short: String,
+    /// First line of the commit message.
+    pub subject: String,
+    /// Commit time, Unix epoch seconds.
+    pub at: u64,
+}
+
+/// The commits in `from..to` (reachable from `to` but not `from`), newest first,
+/// capped at `limit`. This is what a deploy shipped: `from` is the
+/// previously-deployed sha and `to` the one this deploy shipped.
+///
+/// Best-effort: an empty range, or either ref being unknown, both yield an empty
+/// vec — a caller that needs to tell "no new commits" from "unknown ref" should
+/// check the refs with [`rev_parse`] first. Subjects are read with a `0x1f` field
+/// separator (which can't appear in a one-line subject), so any character a commit
+/// message may contain survives the parse.
+pub fn log_range(dir: &Path, from: &str, to: &str, limit: usize) -> Vec<Commit> {
+    let range = format!("{from}..{to}");
+    let count = format!("-n{limit}");
+    let Some(text) = out(dir, &["log", &count, "--format=%H%x1f%s%x1f%ct", &range])
+        .ok()
+        .flatten()
+    else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\x1f');
+            let sha = fields.next()?;
+            let subject = fields.next()?;
+            let at = fields.next()?.parse().ok()?;
+            if sha.is_empty() {
+                return None;
+            }
+            Some(Commit {
+                short: short(sha).to_owned(),
+                sha: sha.to_owned(),
+                subject: subject.to_owned(),
+                at,
+            })
+        })
+        .collect()
+}
+
 /// Resolve a committish (branch, tag, sha, …) to its full sha, or `None` when it
 /// doesn't resolve in this repo.
 pub fn rev_parse(dir: &Path, committish: &str) -> Result<Option<String>> {
@@ -240,7 +290,69 @@ pub fn upstream(dir: &Path) -> Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::github_web_url;
+    use super::{github_web_url, log_range, rev_parse};
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    /// Run git in `dir` with a deterministic identity and no signing, so the test
+    /// never depends on (or is broken by) the developer's global git config.
+    fn git(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args([
+                "-c",
+                "user.email=t@example.com",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .status()
+            .expect("spawn git");
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    /// Commit a file with the given message and return the new HEAD sha.
+    fn commit(dir: &Path, file: &str, message: &str) -> String {
+        std::fs::write(dir.join(file), message).unwrap();
+        git(dir, &["add", file]);
+        git(dir, &["commit", "-q", "-m", message]);
+        rev_parse(dir, "HEAD").unwrap().unwrap()
+    }
+
+    #[test]
+    fn log_range_lists_shipped_commits_newest_first() {
+        let dir: PathBuf =
+            std::env::temp_dir().join(format!("tugboat-log-range-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+
+        let first = commit(&dir, "a", "first");
+        let _second = commit(&dir, "b", "second");
+        let third = commit(&dir, "c", "third");
+
+        // first..third is the two commits after `first`, newest first.
+        let commits = log_range(&dir, &first, &third, 10);
+        let subjects: Vec<&str> = commits.iter().map(|c| c.subject.as_str()).collect();
+        assert_eq!(subjects, ["third", "second"]);
+        assert_eq!(commits[0].sha, third);
+        assert_eq!(commits[0].short, &third[..8]);
+
+        // The limit caps the count, keeping the newest.
+        let capped = log_range(&dir, &first, &third, 1);
+        assert_eq!(capped.len(), 1);
+        assert_eq!(capped[0].subject, "third");
+
+        // An empty range (a re-deploy of the same sha) yields nothing.
+        assert!(log_range(&dir, &third, &third, 10).is_empty());
+        // An unknown ref is best-effort empty, not a panic.
+        assert!(log_range(&dir, "0000000000000000000000000000000000000000", &third, 10).is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn normalizes_github_remote_forms() {

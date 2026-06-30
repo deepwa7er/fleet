@@ -257,6 +257,7 @@ pub fn run(args: ServeArgs) -> Result<()> {
         let authed = Router::new()
             .route("/services", get(list_services))
             .route("/status", get(list_status))
+            .route("/changelog/{name}", get(changelog))
             .route("/deploy/{name}", post(deploy_service))
             .route("/jobs/{id}/stream", get(job_stream))
             .route("/docs", get(docs_status))
@@ -442,6 +443,107 @@ async fn list_status(
         })
         .collect();
     Json(infos)
+}
+
+/// The commits one deploy shipped: the `from..to` range in a member's repo.
+#[derive(Serialize)]
+struct ChangelogInfo {
+    /// GitHub web base, so a reader can build per-commit links. `None` off GitHub.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repo_url: Option<String>,
+    /// The commits, newest first.
+    commits: Vec<ChangelogCommit>,
+}
+
+#[derive(Serialize)]
+struct ChangelogCommit {
+    sha: String,
+    short: String,
+    subject: String,
+    /// Commit time, Unix epoch seconds.
+    at: u64,
+}
+
+#[derive(Deserialize)]
+struct ChangelogQuery {
+    /// The previously-deployed sha (the base of the range).
+    from: String,
+    /// The sha this deploy shipped (the tip of the range).
+    to: String,
+}
+
+/// Most commits a single changelog returns; a deploy that ships more than this is
+/// already far past the point a per-deploy list is the right view.
+const CHANGELOG_LIMIT: usize = 200;
+
+/// Whether a string is a plausible git sha: non-empty hex, no longer than a full
+/// sha. Both endpoints come from a deploy ledger and so are always full shas, but
+/// validating keeps anything starting with `-` (which git could read as a flag)
+/// out of the `git log`/`rev-parse` argv.
+fn is_sha(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// `GET /changelog/{name}?from=<sha>&to=<sha>` — the commits a deploy shipped: the
+/// range `from..to` in the member's repo, newest first. `from` is the
+/// previously-deployed sha, `to` the one this deploy shipped.
+///
+/// `400` if either sha is malformed, `404` if the member is unknown or either sha
+/// doesn't resolve in its repo — the last case is reported rather than returning a
+/// misleading empty list, so a caller can tell "no new commits" from "can't say".
+async fn changelog(
+    State(state): State<Arc<ServeState>>,
+    Path(name): Path<String>,
+    Query(query): Query<ChangelogQuery>,
+) -> Result<Json<ChangelogInfo>, (StatusCode, String)> {
+    if !is_sha(&query.from) || !is_sha(&query.to) {
+        return Err((StatusCode::BAD_REQUEST, "from/to must be git shas".to_owned()));
+    }
+
+    let root = state.fleet().root_dir();
+    let dir = fleet::discover_deployables(&root)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?
+        .into_iter()
+        .find(|d| d.name == name)
+        .map(|d| d.dir)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            format!("no deployable service named `{name}`"),
+        ))?;
+
+    // Both ends of the range must resolve to a commit that actually exists in
+    // this repo, or the changelog is meaningless; reporting 404 lets the caller
+    // distinguish this from an empty range. The `^{commit}` peel is what forces
+    // the existence check: `rev-parse --verify` alone accepts any well-formed
+    // 40-hex string without confirming the object is present.
+    for sha in [&query.from, &query.to] {
+        if git::rev_parse(&dir, &format!("{sha}^{{commit}}"))
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            return Err((
+                StatusCode::NOT_FOUND,
+                format!("commit `{sha}` not found in `{name}`"),
+            ));
+        }
+    }
+
+    let repo_url = git::out(&dir, &["remote", "get-url", "origin"])
+        .ok()
+        .flatten()
+        .and_then(|r| git::github_web_url(&r));
+    let commits = git::log_range(&dir, &query.from, &query.to, CHANGELOG_LIMIT)
+        .into_iter()
+        .map(|c| ChangelogCommit {
+            sha: c.sha,
+            short: c.short,
+            subject: c.subject,
+            at: c.at,
+        })
+        .collect();
+
+    Ok(Json(ChangelogInfo { repo_url, commits }))
 }
 
 /// `POST /deploy/{name}` — start a deploy job for one member and return its id.
