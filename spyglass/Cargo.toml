@@ -1,0 +1,21 @@
+[package]
+name = "spyglass"
+version = "0.1.0"
+edition = "2024"
+description = "Federated search across the deepwa7er fleet — one box over code (source) and notes (lagoon)."
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+clap = { version = "4", features = ["derive"] }
+# Plain HTTP only: the upstream search services are reached over the tailnet /
+# loopback (no TLS), so the default TLS backends are disabled to keep the build
+# a clean static musl with no C crypto deps.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+toml = "0.8"
+
+[profile.release]
+strip = true

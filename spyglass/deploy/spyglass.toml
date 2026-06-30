@@ -1,0 +1,27 @@
+# spyglass runtime config (installed to /etc/spyglass/config.toml).
+#
+# bind is loopback; breakwater is the tailnet front door at
+# https://spyglass.intern.deepwa7er.net (no auth — the tailnet is the boundary).
+bind = "127.0.0.1"
+port = 8095
+
+# GitHub org the fleet's repos live under, for building code deep-links.
+github_org = "deepwa7er"
+
+# The upstream search services to federate over, queried in parallel at their
+# real addresses over plain HTTP. A source that's down is isolated — its group
+# shows "unavailable" and the others still return.
+
+# Code search — the `source` service runs on the dev box, reached over the
+# tailnet (so its results need the dev box awake; it degrades gracefully if not).
+[[sources]]
+name = "source"
+kind = "code"
+url = "http://100.74.202.93:7879"
+
+# Notes search — the `lagoon` service on this VPS (loopback, same box as breakwater
+# routes it to).
+[[sources]]
+name = "lagoon"
+kind = "notes"
+url = "http://127.0.0.1:8092"
