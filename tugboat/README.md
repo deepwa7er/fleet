@@ -268,7 +268,7 @@ build = "cd web && bun install && bun run build"
 dist  = "web/dist"                               # built frontend, relative to the repo
 host  = "deepwa7er"                              # ship target
 dest  = "/opt/pilot/web"                         # served by breakwater (a serve_dir route)
-url   = "https://docs.internal.deepwa7er.com"    # polled after a ship
+url   = "https://docs.intern.deepwa7er.net"    # polled after a ship
 ```
 
 The site is process-less static files (breakwater serves the directory), so the

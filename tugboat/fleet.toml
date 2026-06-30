@@ -100,7 +100,7 @@ repo = "git@github.com:deepwa7er/git-autocommit.git"
 [[members]]
 # Source-code viewer for the whole fleet. Runs on the dev box (not the VPS) as a
 # launchd agent — it reads every member's working tree to browse/search source —
-# and is fronted by breakwater at source.internal.deepwa7er.com. No deploy.toml
+# and is fronted by breakwater at source.intern.deepwa7er.net. No deploy.toml
 # (not a VPS-deployed service), so clone/pull only.
 path = "source"
 repo = "git@github.com:deepwa7er/source.git"
@@ -114,7 +114,7 @@ build = "cd web && bun install && bun run build"
 dist = "web/dist"
 host = "deepwa7er"
 dest = "/opt/pilot/web"
-url = "https://docs.internal.deepwa7er.com"
+url = "https://docs.intern.deepwa7er.net"
 # Extra repos counted in the line-of-code total beyond the deployable members:
 # tugboat itself (the fleet's deployer) is fleet code we wrote, but not a service.
 extra_loc = ["tugboat"]
