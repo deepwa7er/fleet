@@ -16,14 +16,14 @@ cal = "https://calendar.google.com"
 # home = "https://my-server.example.ts.net/"
 
 # driftword — pronounceable fake-word generator (tailnet service via breakwater).
-drift = "https://driftword.internal.deepwa7er.com"
-words = "https://driftword.internal.deepwa7er.com"
+drift = "https://driftword.intern.deepwa7er.net"
+words = "https://driftword.intern.deepwa7er.net"
 
 # Fleet-wide dark/light theme (tide). `b dark` / `b light` set the global theme
 # every fleet web UI honors; tide persists it, sets the shared cookie across
-# *.internal.deepwa7er.com, and shows a confirmation page.
-dark = "https://tide.internal.deepwa7er.com/set?theme=dark"
-light = "https://tide.internal.deepwa7er.com/set?theme=light"
+# *.intern.deepwa7er.net, and shows a confirmation page.
+dark = "https://tide.intern.deepwa7er.net/set?theme=dark"
+light = "https://tide.intern.deepwa7er.net/set?theme=light"
 
 # Parameterized shortcuts: `b gh axum` searches GitHub for "axum".
 gh = "https://github.com/search?q={query}"
@@ -37,7 +37,7 @@ w = "https://en.wikipedia.org/wiki/Special:Search?search={query}"
 [capture]
 keyword = "lg"
 api = "http://127.0.0.1:8092/api/thoughts"
-open = "https://lagoon.internal.deepwa7er.com"
+open = "https://lagoon.intern.deepwa7er.net"
 
 # Authenticated POST actions: ferry makes the request itself (rather than
 # redirecting the browser), so it can attach a bearer token that never reaches
@@ -54,4 +54,4 @@ open = "https://lagoon.internal.deepwa7er.com"
 # keyword = "tug"
 # url = "http://100.74.202.93:7878/deploy/{1}"
 # token_env = "FERRY_TUGBOAT_TOKEN"
-# open = "https://lighthouse.internal.deepwa7er.com"
+# open = "https://lighthouse.intern.deepwa7er.net"
