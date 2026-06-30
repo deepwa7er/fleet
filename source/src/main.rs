@@ -4,7 +4,7 @@
 //! at the paths `fleet.toml` lists — the VPS holds built binaries, not source.
 //! So this service runs on the dev box (a launchd agent, like `tugboat serve`),
 //! reads those working trees directly, and is fronted by breakwater at
-//! https://source.internal.deepwa7er.com.
+//! https://source.intern.deepwa7er.net.
 //!
 //! Because breakwater runs on the VPS and must reach this service across the
 //! tailnet, `bind` is the host's Tailscale IP (not loopback). The tailnet is the

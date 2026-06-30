@@ -1,5 +1,5 @@
 //! source's HTTP surface, fronted by breakwater at
-//! https://source.internal.deepwa7er.com.
+//! https://source.intern.deepwa7er.net.
 //!
 //! - `GET /api/repos`                       → the fleet's repos.
 //! - `GET /api/tree?repo=NAME`              → a repo's tracked file paths.

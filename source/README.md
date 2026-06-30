@@ -1,7 +1,7 @@
 # source
 
 Browse and **search** the deepwa7er fleet's source code from one tailnet page —
-live at https://source.internal.deepwa7er.com.
+live at https://source.intern.deepwa7er.net.
 
 The fleet's canonical working trees live only on the dev box (the VPS holds built
 binaries, not source). So `source` runs **on the dev box** as a launchd agent —
@@ -9,7 +9,7 @@ the same home as `tugboat serve` — reads those working trees directly, and is
 fronted by [breakwater](https://github.com/deepwa7er/breakwater) over the tailnet.
 
 ```
-source.internal.deepwa7er.com
+source.intern.deepwa7er.net
         │  (breakwater on the VPS proxies over the tailnet)
         ▼
   dev box :7879  ──  source serve
@@ -52,7 +52,7 @@ updates the docs: a fleet repo's post-commit hook reships [pilot](https://github
 docs from the local working tree, so a push failure (offline, remote behind) is
 returned as a `warning`, not an error.
 
-**Editing a service's top-level docs** on `docs.internal.deepwa7er.com/<name>`
+**Editing a service's top-level docs** on `docs.intern.deepwa7er.net/<name>`
 means editing that repo's `README.md` here — pilot harvests the README as the
 service's "Architecture" prose, and regenerates on the commit.
 
