@@ -32,7 +32,7 @@ strip those steps out; they are what makes the worker behave like you.
 ## Prerequisites on the Mac
 
 - `drydock` CLI on `PATH` (`cargo install --path .`), with
-  `DRYDOCK_URL=https://drydock.internal.deepwa7er.com` in the task environment.
+  `DRYDOCK_URL=https://drydock.intern.deepwa7er.net` in the task environment.
   The server runs on the VPS (see the repo README) — nothing to start here.
 - The Mac is on the tailnet (so the VPS host resolves and is reachable).
 - `gh` is authenticated; the fleet repos and `~/secondbrain/PORTFOLIO.md` exist.

@@ -5,7 +5,7 @@
 # then ship the binary and the built web assets. Infra provisioning (service
 # user, systemd unit, state dir) is deploy/provision.sh — a one-time/on-change
 # step, not run here. drydock binds loopback; breakwater fronts it at
-# https://drydock.internal.deepwa7er.com (add the route in breakwater.toml).
+# https://drydock.intern.deepwa7er.net (add the route in breakwater.toml).
 name = "drydock"
 host = "deepwa7er"
 

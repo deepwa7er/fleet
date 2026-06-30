@@ -45,7 +45,7 @@ impl fmt::Display for CliError {
 impl Client {
     pub fn from_env() -> Self {
         // Full base URL so the worker can point at the VPS through breakwater,
-        // e.g. DRYDOCK_URL=https://drydock.internal.deepwa7er.com. Defaults to a
+        // e.g. DRYDOCK_URL=https://drydock.intern.deepwa7er.net. Defaults to a
         // local server for development on the same machine.
         let base = std::env::var("DRYDOCK_URL").unwrap_or_else(|_| "http://127.0.0.1:8093".into());
         // Bounded timeouts so a hung or wedged server can't freeze the worker's
