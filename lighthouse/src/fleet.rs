@@ -106,10 +106,10 @@ mod tests {
     fn indexes_by_unit_and_builds_docs_link() {
         let path = temp_json(
             r#"{
-              "docs_url": "https://docs.internal.deepwa7er.com",
+              "docs_url": "https://docs.intern.deepwa7er.net",
               "services": [
                 {"name":"ferry","description":"redirects","unit":"ferry.service",
-                 "url":"https://ferry.internal.deepwa7er.com","port":7777,
+                 "url":"https://ferry.intern.deepwa7er.net","port":7777,
                  "repo":"git@github.com:x/ferry.git"},
                 {"name":"pilot","description":"the docs site"}
               ]
@@ -122,11 +122,11 @@ mod tests {
         assert_eq!(map.len(), 1);
         let ferry = map.get("ferry.service").expect("ferry indexed by unit");
         assert_eq!(ferry.summary, "redirects");
-        assert_eq!(ferry.url.as_deref(), Some("https://ferry.internal.deepwa7er.com"));
+        assert_eq!(ferry.url.as_deref(), Some("https://ferry.intern.deepwa7er.net"));
         assert_eq!(ferry.port, Some(7777));
         assert_eq!(
             ferry.docs_url.as_deref(),
-            Some("https://docs.internal.deepwa7er.com/#ferry"),
+            Some("https://docs.intern.deepwa7er.net/#ferry"),
         );
     }
 

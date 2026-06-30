@@ -2,7 +2,7 @@
 #
 # `bind` is the address the dashboard listens on. It binds loopback; the
 # breakwater reverse proxy is the tailnet front door and serves it at
-# https://lighthouse.internal.deepwa7er.com (nothing is exposed publicly).
+# https://lighthouse.intern.deepwa7er.net (nothing is exposed publicly).
 bind = "127.0.0.1"
 port = 8080
 
