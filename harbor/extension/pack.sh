@@ -91,7 +91,7 @@ cat > build/index.html <<HTML
 <main>
   <h1>harbor</h1>
   <p class="sub">fleet new-tab extension — activity pulse + lagoon capture</p>
-  <a class="dl" href="harbor.crx" download>Download harbor.crx</a>
+  <a class="dl" href="/download/harbor.crx" download>Download harbor.crx</a>
   <p class="ver">version $VERSION · auto-updates from this server once installed</p>
   <section>
     <h2>Install (one time)</h2>

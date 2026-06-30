@@ -52,10 +52,15 @@ async fn main() -> Result<()> {
     spawn_refresh_loop(Arc::clone(&updater), config.refresh_secs, Arc::clone(&shared));
 
     let cors = build_cors(&config.allow_origin)?;
+    let crx_path = config.extension_dir.join("harbor.crx");
     let app = Router::new()
         .route("/api/state", get(api::get_state))
         .route("/api/note/{name}", get(api::get_note))
         .route("/healthz", get(api::healthz))
+        // Manual-install download: serves the crx as a plain attachment (see
+        // download_crx). The install page links here so the browser actually
+        // downloads the file instead of trying to inline-install it.
+        .route("/download/harbor.crx", get(move || download_crx(crx_path.clone())))
         // Self-hosted extension distribution: serves harbor.crx + updates.xml so
         // tailnet devices force-install and auto-update over the tailnet.
         .nest_service("/extension", ServeDir::new(&config.extension_dir))
@@ -241,6 +246,32 @@ fn config_path_from_args() -> PathBuf {
     std::env::args()
         .nth(1)
         .map_or_else(|| Path::new("harbor.toml").to_path_buf(), PathBuf::from)
+}
+
+/// Serve the packed extension as a plain file download. ServeDir labels
+/// `harbor.crx` as `application/x-chrome-extension`, which Chromium-family
+/// browsers intercept as an inline extension install — and refuse, for a
+/// self-hosted crx — instead of downloading it ("Failed - No file"). The manual
+/// install page links here, where we force a generic type + attachment
+/// disposition so the file just downloads. The force-install poller is
+/// unaffected: it keeps fetching `/extension/harbor.crx` from ServeDir.
+async fn download_crx(path: PathBuf) -> axum::response::Response {
+    use axum::http::{StatusCode, header};
+    use axum::response::IntoResponse;
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, "application/octet-stream"),
+                (header::CONTENT_DISPOSITION, "attachment; filename=\"harbor.crx\""),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(err) => {
+            tracing::warn!(path = %path.display(), error = %err, "crx download read failed");
+            (StatusCode::NOT_FOUND, "harbor.crx not available").into_response()
+        }
+    }
 }
 
 async fn shutdown_signal() {
