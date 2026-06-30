@@ -142,6 +142,7 @@ dependencies = [
  "hyper-util",
  "if-addrs",
  "instant-acme",
+ "rcgen",
  "rustls-pemfile",
  "serde",
  "serde_json",

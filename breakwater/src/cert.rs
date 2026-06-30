@@ -56,15 +56,54 @@ impl CertMaterial {
         Ok(())
     }
 
-    /// The certificate's `notAfter`, as a Unix timestamp.
-    fn not_after_unix(&self) -> anyhow::Result<i64> {
+    /// The DER bytes of the leaf certificate (first entry in the chain).
+    fn leaf_der(&self) -> anyhow::Result<Vec<u8>> {
         let der = rustls_pemfile::certs(&mut self.chain_pem.as_bytes())
             .next()
             .context("no certificate in PEM chain")?
             .context("failed to parse leaf certificate")?;
-        let (_, cert) = x509_parser::parse_x509_certificate(der.as_ref())
+        Ok(der.as_ref().to_vec())
+    }
+
+    /// The certificate's `notAfter`, as a Unix timestamp.
+    fn not_after_unix(&self) -> anyhow::Result<i64> {
+        let der = self.leaf_der()?;
+        let (_, cert) = x509_parser::parse_x509_certificate(&der)
             .map_err(|e| anyhow!("failed to parse X.509 certificate: {e}"))?;
         Ok(cert.validity().not_after.timestamp())
+    }
+
+    /// The DNS names (SAN entries) the leaf certificate is valid for.
+    fn san_dns_names(&self) -> anyhow::Result<Vec<String>> {
+        use x509_parser::extensions::{GeneralName, ParsedExtension};
+        let der = self.leaf_der()?;
+        let (_, cert) = x509_parser::parse_x509_certificate(&der)
+            .map_err(|e| anyhow!("failed to parse X.509 certificate: {e}"))?;
+        let mut names = Vec::new();
+        for ext in cert.extensions() {
+            if let ParsedExtension::SubjectAlternativeName(san) = ext.parsed_extension() {
+                for gn in &san.general_names {
+                    if let GeneralName::DNSName(dns) = gn {
+                        names.push((*dns).to_string());
+                    }
+                }
+            }
+        }
+        Ok(names)
+    }
+
+    /// Whether the cached certificate covers every configured domain. A domain
+    /// change (e.g. moving the fleet to a new domain) leaves a still-fresh cert
+    /// whose names no longer match the hostnames breakwater serves; reuse must be
+    /// gated on this as well as freshness, or breakwater would serve the old
+    /// domain's certificate for the new hostnames and every client would hit a
+    /// TLS name mismatch. An unparseable cert is treated as not covering, so it
+    /// is re-issued rather than trusted.
+    fn covers(&self, domains: &[String]) -> bool {
+        match self.san_dns_names() {
+            Ok(sans) => domains.iter().all(|want| sans.iter().any(|have| have == want)),
+            Err(_) => false,
+        }
     }
 
     /// How long until the certificate should be renewed (0 if already due).
@@ -91,11 +130,21 @@ pub async fn start_acme(config: AcmeConfig) -> anyhow::Result<Arc<CertResolver>>
     let token = read_token(&config)?;
 
     let material = match CertMaterial::from_cache(&config.cache_dir)? {
-        Some(cached) if cached.is_fresh(config.renew_before_days) => {
+        Some(cached)
+            if cached.is_fresh(config.renew_before_days) && cached.covers(&config.domains) =>
+        {
             println!("breakwater: using cached certificate from {}", config.cache_dir.display());
             cached
         }
-        _ => {
+        cached => {
+            // Re-issue when there's no cache, it's due for renewal, or — after a
+            // domain move — it no longer covers the configured names.
+            if matches!(&cached, Some(c) if !c.covers(&config.domains)) {
+                println!(
+                    "breakwater: cached certificate does not cover {:?}; re-issuing",
+                    config.domains
+                );
+            }
             println!("breakwater: obtaining certificate via ACME ({})", config.directory);
             let issued = acme::issue(&config, &token).await.context("ACME issuance failed")?;
             issued.persist(&config.cache_dir)?;
@@ -204,4 +253,43 @@ fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> anyhow::Result<()> {
         .and_then(|d| d.sync_all())
         .with_context(|| format!("failed to fsync directory {}", dir.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A self-signed cert carrying the given SAN DNS names (key ignored — the
+    /// cover-check only reads the public chain).
+    fn cert_for(sans: &[&str]) -> CertMaterial {
+        let certified =
+            rcgen::generate_simple_self_signed(sans.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+                .expect("generate self-signed cert");
+        CertMaterial {
+            chain_pem: certified.cert.pem(),
+            key_pem: String::new(),
+        }
+    }
+
+    #[test]
+    fn covers_matches_the_cert_san_names() {
+        let cert = cert_for(&["*.intern.deepwa7er.net"]);
+        assert!(cert.covers(&["*.intern.deepwa7er.net".to_string()]));
+        // The pre-move domain is NOT covered, so a still-fresh old cert forces a
+        // re-issue after a domain move rather than being served by mistake.
+        assert!(!cert.covers(&["*.internal.deepwa7er.com".to_string()]));
+    }
+
+    #[test]
+    fn covers_requires_every_configured_domain() {
+        let cert = cert_for(&["a.example.com"]);
+        assert!(cert.covers(&["a.example.com".to_string()]));
+        assert!(!cert.covers(&["a.example.com".to_string(), "b.example.com".to_string()]));
+    }
+
+    #[test]
+    fn unparseable_cert_covers_nothing() {
+        let cert = CertMaterial { chain_pem: "not a pem".into(), key_pem: String::new() };
+        assert!(!cert.covers(&["a.example.com".to_string()]));
+    }
 }

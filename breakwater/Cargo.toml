@@ -39,3 +39,9 @@ arc-swap = "1"
 instant-acme = { version = "0.8", default-features = false, features = ["hyper-rustls", "ring", "rcgen"] }
 x509-parser = "0.16"
 hickory-resolver = { version = "0.24", default-features = false, features = ["tokio-runtime"] }
+
+[dev-dependencies]
+# Generate self-signed certs with known SAN names for the cert-cover tests.
+# Already in the tree via instant-acme's `rcgen` feature; dev-only, so it never
+# touches the static-musl release build.
+rcgen = "0.14"
