@@ -1,7 +1,7 @@
 //! breakwater — a tailnet reverse proxy.
 //!
 //! Terminates TLS on the Tailscale interface and routes HTTPS requests to local
-//! services by hostname (`<name>.internal.deepwa7er.com` → `127.0.0.1:<port>`),
+//! services by hostname (`<name>.intern.deepwa7er.net` → `127.0.0.1:<port>`),
 //! so services are reached by name over HTTPS instead of by raw port. Reachable
 //! only from the tailnet, which is the security boundary.
 

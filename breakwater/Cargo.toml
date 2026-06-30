@@ -2,7 +2,7 @@
 name = "breakwater"
 version = "0.1.0"
 edition = "2024"
-description = "Tailnet HTTPS front door — routes *.internal.deepwa7er.com to local services by host."
+description = "Tailnet HTTPS front door — routes *.intern.deepwa7er.net to local services by host."
 
 [dependencies]
 anyhow = "1"

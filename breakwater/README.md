@@ -3,7 +3,7 @@
 A small reverse proxy that is the front door to the `deepwa7er` tailnet. It
 terminates TLS on the Tailscale interface and routes HTTPS requests to local
 services **by hostname**, so services are reached as
-`https://<name>.internal.deepwa7er.com` instead of by raw `host:port`.
+`https://<name>.intern.deepwa7er.net` instead of by raw `host:port`.
 
 Like the rest of the fleet, it binds only the Tailscale IP — the tailnet is the
 security boundary, so there is no public exposure and no per-service auth.
@@ -14,7 +14,7 @@ One TLS listener, host-based routing from a config table:
 
 ```toml
 [[routes]]
-host = "lighthouse.internal.deepwa7er.com"
+host = "lighthouse.intern.deepwa7er.net"
 upstream = "127.0.0.1:8080"
 ```
 
@@ -34,7 +34,7 @@ the wildcard record below) and no per-app changes.
 Two mutually-exclusive modes; set exactly one:
 
 - **`[acme]`** (production) — breakwater obtains and renews a wildcard
-  certificate for `*.internal.deepwa7er.com` via ACME DNS-01, solved through the
+  certificate for `*.intern.deepwa7er.net` via ACME DNS-01, solved through the
   Cloudflare API. It runs the whole lifecycle in-process: issue at startup
   (reusing the on-disk cache if still fresh), renew ~30 days before expiry, and
   hot-swap the new certificate with zero downtime.
@@ -42,9 +42,9 @@ Two mutually-exclusive modes; set exactly one:
 
 ```toml
 [acme]
-domains = ["*.internal.deepwa7er.com"]
+domains = ["*.intern.deepwa7er.net"]
 contact = "mailto:you@example.com"
-cloudflare_zone = "deepwa7er.com"
+cloudflare_zone = "deepwa7er.net"
 cloudflare_token_file = "/etc/breakwater/cloudflare-token"
 cache_dir = "/var/lib/breakwater/acme"
 # directory = "https://acme-staging-v02.api.letsencrypt.org/directory"  # test first
@@ -52,11 +52,11 @@ cache_dir = "/var/lib/breakwater/acme"
 
 ### One-time Cloudflare setup
 
-1. **DNS:** a wildcard record `*.internal.deepwa7er.com` → the Tailscale IP
+1. **DNS:** a wildcard record `*.intern.deepwa7er.net` → the Tailscale IP
    (`100.98.184.58`), **DNS-only** (grey cloud — Cloudflare must not proxy a
    private IP). Set once; new services need no further DNS changes.
 2. **Token:** a scoped API token with `Zone:DNS:Edit` + `Zone:Read` on the
-   `deepwa7er.com` zone, used only to create/delete the `_acme-challenge` TXT
+   `deepwa7er.net` zone, used only to create/delete the `_acme-challenge` TXT
    record. Install it on the VPS at `/etc/breakwater/cloudflare-token` (mode
    600, owned by `breakwater`) — never in git.
 

@@ -26,7 +26,7 @@ fn default_renew_before_days() -> i64 {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Port for the TLS listener — the tailnet-facing front door. Every service
-    /// is reached here as `https://<name>.internal.deepwa7er.com`. breakwater
+    /// is reached here as `https://<name>.intern.deepwa7er.net`. breakwater
     /// resolves the host's Tailscale IPv4 at startup and binds this port on it,
     /// so it is reachable only from the tailnet and the config carries no
     /// host-specific address (see [`crate::tailscale`]).
@@ -43,7 +43,7 @@ pub struct Config {
     pub health_addr: Option<SocketAddr>,
 
     /// The subdomain space every routed service lives under, e.g.
-    /// `internal.deepwa7er.com`. Each route's `label` is prefixed to this to form
+    /// `intern.deepwa7er.net`. Each route's `label` is prefixed to this to form
     /// the hostname clients use (`<label>.<base_domain>`), and — unless `[acme]
     /// domains` is set explicitly — the ACME certificate is a wildcard over it
     /// (`*.<base_domain>`). This field and `[acme] cloudflare_zone` are the only
@@ -88,7 +88,7 @@ pub struct AcmeConfig {
     #[serde(default = "default_directory")]
     pub directory: String,
     /// The Cloudflare DNS zone that hosts the challenge records, e.g.
-    /// `deepwa7er.com`. Stated explicitly rather than guessed from the domain
+    /// `deepwa7er.net`. Stated explicitly rather than guessed from the domain
     /// (which would need a public-suffix list to do correctly).
     pub cloudflare_zone: String,
     /// File containing the Cloudflare API token (DNS:Edit + Zone:Read). Kept out
@@ -309,9 +309,9 @@ mod tests {
             cert = "/x/cert.pem"
             key = "/x/key.pem"
             [acme]
-            domains = ["*.internal.deepwa7er.com"]
+            domains = ["*.intern.deepwa7er.net"]
             contact = "mailto:a@b.com"
-            cloudflare_zone = "deepwa7er.com"
+            cloudflare_zone = "deepwa7er.net"
             cloudflare_token_file = "/etc/breakwater/cloudflare-token"
             cache_dir = "/etc/breakwater/acme"
             [[routes]]
@@ -339,9 +339,9 @@ mod tests {
             https_port = 443
             base_domain = "example.com"
             [acme]
-            domains = ["*.internal.deepwa7er.com"]
+            domains = ["*.intern.deepwa7er.net"]
             contact = "mailto:a@b.com"
-            cloudflare_zone = "deepwa7er.com"
+            cloudflare_zone = "deepwa7er.net"
             cloudflare_token_file = "/etc/breakwater/cloudflare-token"
             cache_dir = "/etc/breakwater/acme"
             [[routes]]

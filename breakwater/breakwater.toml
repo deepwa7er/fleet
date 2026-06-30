@@ -13,7 +13,7 @@
 # startup and binds these ports on it, so the file is host-independent.
 
 # TLS listener — the front door. Every service is reached as
-# https://<name>.internal.deepwa7er.com on the tailnet IP.
+# https://<name>.intern.deepwa7er.net on the tailnet IP.
 https_port = 443
 
 # Plain-HTTP listener; 308-redirects everything to its https:// equivalent.
@@ -26,7 +26,7 @@ health_addr = "127.0.0.1:8079"
 # its `label`; the hostname is `<label>.<base_domain>`, and the ACME cert is a
 # wildcard over this domain. This line and `cloudflare_zone` (below) are the only
 # two settings that carry the fleet's domain — change them to move the fleet.
-base_domain = "internal.deepwa7er.com"
+base_domain = "intern.deepwa7er.net"
 
 # Automatic certificates via ACME DNS-01 (Cloudflare). breakwater obtains and
 # renews a wildcard cert in-process and hot-swaps it with no downtime.
@@ -42,7 +42,7 @@ base_domain = "internal.deepwa7er.com"
 # which covers every routed host. Set `domains = [...]` here only to override.
 contact = "mailto:hello@joemafrici.com"
 # Cloudflare DNS zone hosting the challenge records.
-cloudflare_zone = "deepwa7er.com"
+cloudflare_zone = "deepwa7er.net"
 # Token file (DNS:Edit + Zone:Read), installed on the host at mode 600.
 cloudflare_token_file = "/etc/breakwater/cloudflare-token"
 # Account key + issued cert/key are cached here so restarts don't re-issue.

@@ -53,7 +53,7 @@ impl Cloudflare {
         }
     }
 
-    /// Resolve a zone name (e.g. `deepwa7er.com`) to its id and authoritative
+    /// Resolve a zone name (e.g. `deepwa7er.net`) to its id and authoritative
     /// nameservers.
     pub async fn zone(&self, zone_name: &str) -> anyhow::Result<Zone> {
         let json = self

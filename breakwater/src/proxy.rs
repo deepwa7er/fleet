@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn strips_hop_by_hop_and_connection_named_headers() {
         let incoming = headers(&[
-            ("host", "lighthouse.internal.deepwa7er.com"),
+            ("host", "lighthouse.intern.deepwa7er.net"),
             ("connection", "keep-alive, X-Custom-Hop"),
             ("keep-alive", "timeout=5"),
             ("x-custom-hop", "secret"),
@@ -389,22 +389,22 @@ mod tests {
         assert!(out.get("x-custom-hop").is_none(), "Connection-named header must be dropped");
         assert_eq!(out.get("accept").unwrap(), "text/html");
         // Host is preserved end-to-end.
-        assert_eq!(out.get("host").unwrap(), "lighthouse.internal.deepwa7er.com");
+        assert_eq!(out.get("host").unwrap(), "lighthouse.intern.deepwa7er.net");
     }
 
     #[test]
     fn sets_forwarded_trio() {
-        let incoming = headers(&[("host", "svc.internal.deepwa7er.com")]);
+        let incoming = headers(&[("host", "svc.intern.deepwa7er.net")]);
         let out = forward_request_headers(&incoming, ip(), false);
         assert_eq!(out.get("x-forwarded-for").unwrap(), "203.0.113.7");
         assert_eq!(out.get("x-forwarded-proto").unwrap(), "https");
-        assert_eq!(out.get("x-forwarded-host").unwrap(), "svc.internal.deepwa7er.com");
+        assert_eq!(out.get("x-forwarded-host").unwrap(), "svc.intern.deepwa7er.net");
     }
 
     #[test]
     fn appends_to_existing_forwarded_for_chain() {
         let incoming = headers(&[
-            ("host", "svc.internal.deepwa7er.com"),
+            ("host", "svc.intern.deepwa7er.net"),
             ("x-forwarded-for", "198.51.100.1, 198.51.100.2"),
         ]);
         let out = forward_request_headers(&incoming, ip(), false);
@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn does_not_trust_inbound_forwarded_proto() {
         let incoming = headers(&[
-            ("host", "svc.internal.deepwa7er.com"),
+            ("host", "svc.intern.deepwa7er.net"),
             ("x-forwarded-proto", "http"),
         ]);
         let out = forward_request_headers(&incoming, ip(), false);
@@ -427,7 +427,7 @@ mod tests {
     #[test]
     fn upgrade_request_keeps_upgrade_machinery() {
         let incoming = headers(&[
-            ("host", "svc.internal.deepwa7er.com"),
+            ("host", "svc.intern.deepwa7er.net"),
             ("connection", "Upgrade"),
             ("upgrade", "websocket"),
         ]);

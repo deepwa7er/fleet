@@ -273,11 +273,13 @@ mod tests {
 
     #[test]
     fn covers_matches_the_cert_san_names() {
-        let cert = cert_for(&["*.intern.deepwa7er.net"]);
-        assert!(cert.covers(&["*.intern.deepwa7er.net".to_string()]));
-        // The pre-move domain is NOT covered, so a still-fresh old cert forces a
-        // re-issue after a domain move rather than being served by mistake.
-        assert!(!cert.covers(&["*.internal.deepwa7er.com".to_string()]));
+        // Neutral RFC-2606 example domains, deliberately NOT the live fleet domain,
+        // so a future domain-rename sweep can't collapse the two cases into one.
+        let cert = cert_for(&["*.intern.example.net"]);
+        assert!(cert.covers(&["*.intern.example.net".to_string()]));
+        // A different domain (e.g. the pre-move name) is NOT covered, so a
+        // still-fresh old cert forces a re-issue rather than being served.
+        assert!(!cert.covers(&["*.internal.example.com".to_string()]));
     }
 
     #[test]
