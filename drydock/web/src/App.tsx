@@ -44,6 +44,14 @@ export function App() {
     return () => clearInterval(t);
   }, [refresh]);
 
+  // Deep-link: `?t=<id>` opens that ticket on load, so links from elsewhere
+  // (e.g. spyglass federated search) land on the right ticket.
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("t");
+    const id = t ? Number.parseInt(t, 10) : NaN;
+    if (Number.isInteger(id)) setSelected(id);
+  }, []);
+
   return (
     <div className="app">
       <header>

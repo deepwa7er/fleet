@@ -36,6 +36,19 @@ fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+/// Escape SQL `LIKE` wildcards (`%`, `_`) and the escape char itself so a search
+/// query matches literally. Pair with `ESCAPE '\'` in the LIKE clause.
+fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(c, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Parse a TEXT column into a string-backed enum, surfacing a precise SQLite
 /// conversion error rather than panicking if the DB ever holds a bad value.
 fn parse_col<T: FromStr<Err = String>>(s: &str, col: usize) -> rusqlite::Result<T> {
@@ -170,17 +183,30 @@ impl Store {
         Ok(ticket)
     }
 
-    pub fn list(&self, state: Option<State>) -> Result<Vec<Ticket>> {
+    /// List tickets, optionally filtered by `state` and by a free-text `query`
+    /// (a case-insensitive substring of the title, goal, acceptance, or target).
+    pub fn list(&self, state: Option<State>, query: Option<&str>) -> Result<Vec<Ticket>> {
         let conn = self.lock();
+        // Wrap the query in LIKE wildcards with any literal `%`/`_`/`\` escaped,
+        // so user text matches itself. `None`/empty disables the text filter.
+        let like = query
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .map(|q| format!("%{}%", escape_like(q)));
         let sql = format!(
             "SELECT {TICKET_COLS} FROM tickets
              WHERE (?1 IS NULL OR state = ?1)
+               AND (?2 IS NULL
+                    OR title LIKE ?2 ESCAPE '\\'
+                    OR goal LIKE ?2 ESCAPE '\\'
+                    OR IFNULL(acceptance, '') LIKE ?2 ESCAPE '\\'
+                    OR target LIKE ?2 ESCAPE '\\')
              ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'med' THEN 1 ELSE 2 END,
                       created_at ASC, id ASC",
         );
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt
-            .query_map(params![state.map(|s| s.as_str())], ticket_from_row)?
+            .query_map(params![state.map(|s| s.as_str()), like], ticket_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
@@ -785,7 +811,7 @@ mod tests {
 
         // Reopening via Store runs the pending migration, preserving the row…
         let s = Store::open(&tmp).unwrap();
-        let tickets = s.list(None).unwrap();
+        let tickets = s.list(None, None).unwrap();
         assert_eq!(tickets.len(), 1);
         assert_eq!(tickets[0].state, State::Blocked);
         // …and 'closed' is now accepted — the whole point.
@@ -872,10 +898,36 @@ mod tests {
         let _b = mk(&s, "b", Priority::Med);
         s.claim(a.id, Some("br")).unwrap();
 
-        assert_eq!(s.list(None).unwrap().len(), 2);
-        assert_eq!(s.list(Some(State::Open)).unwrap().len(), 1);
-        let inprog = s.list(Some(State::InProgress)).unwrap();
+        assert_eq!(s.list(None, None).unwrap().len(), 2);
+        assert_eq!(s.list(Some(State::Open), None).unwrap().len(), 1);
+        let inprog = s.list(Some(State::InProgress), None).unwrap();
         assert_eq!(inprog.len(), 1);
         assert_eq!(inprog[0].id, a.id);
+    }
+
+    #[test]
+    fn list_filters_by_text() {
+        let s = store();
+        let alpha = mk(&s, "alpha widget", Priority::Med);
+        mk(&s, "beta gadget", Priority::Med);
+        mk(&s, "100% coverage", Priority::Med);
+
+        // Substring of the title, case-insensitive.
+        let hits = s.list(None, Some("WIDGET")).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, alpha.id);
+
+        // Empty/whitespace query disables the filter (all tickets).
+        assert_eq!(s.list(None, Some("   ")).unwrap().len(), 3);
+        assert_eq!(s.list(None, None).unwrap().len(), 3);
+
+        // A literal `%` is escaped — it matches the percent ticket, not everything.
+        let pct = s.list(None, Some("100% cov")).unwrap();
+        assert_eq!(pct.len(), 1);
+        assert!(pct[0].title.starts_with("100%"));
+
+        // State and text filters compose.
+        assert_eq!(s.list(Some(State::Open), Some("gadget")).unwrap().len(), 1);
+        assert_eq!(s.list(Some(State::InProgress), Some("gadget")).unwrap().len(), 0);
     }
 }

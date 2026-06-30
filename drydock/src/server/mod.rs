@@ -73,6 +73,10 @@ pub async fn run(store: Arc<Store>, config: ServerConfig) -> std::io::Result<()>
 #[derive(Deserialize)]
 struct ListQuery {
     state: Option<TicketState>,
+    /// Free-text filter over title/goal/acceptance/target (used by spyglass's
+    /// federated search, and the web UI's filter box).
+    #[serde(default)]
+    q: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -133,7 +137,7 @@ async fn list(
     State(st): State<AppState>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Vec<Ticket>>> {
-    Ok(Json(st.store.list(q.state)?))
+    Ok(Json(st.store.list(q.state, q.q.as_deref())?))
 }
 
 async fn create(
