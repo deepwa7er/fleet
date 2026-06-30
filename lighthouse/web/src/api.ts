@@ -2,6 +2,7 @@ import type {
   ChangelogCommit,
   DeployHistoryEntry,
   DeployStatus,
+  HealthHistory,
   LogEntry,
   ServiceStatus,
 } from "./types.ts";
@@ -95,6 +96,17 @@ export function fetchChangelog(
   const params = new URLSearchParams({ from, to });
   return getJson<ChangelogCommit[]>(
     `${BASE}/services/${encodeURIComponent(unit)}/changelog?${params}`,
+  );
+}
+
+/** A service's recorded health over a window: an up/unreachable/down timeline,
+ *  reachability + systemd uptime, and a memory series. */
+export function fetchHealthHistory(
+  unit: string,
+  windowSecs: number,
+): Promise<HealthHistory> {
+  return getJson<HealthHistory>(
+    `${BASE}/services/${encodeURIComponent(unit)}/history?window_secs=${windowSecs}`,
   );
 }
 

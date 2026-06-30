@@ -15,8 +15,12 @@ SupplementaryGroups=systemd-journal
 ExecStart=/usr/local/bin/lighthouse --config /etc/lighthouse/config.toml
 Restart=on-failure
 RestartSec=2
+# Writable state dir for the health-history SQLite db (/var/lib/lighthouse),
+# created and owned by the service user. Required under ProtectSystem=strict.
+StateDirectory=lighthouse
 
-# Hardening — the service only reads systemd state and serves static files.
+# Hardening — the service reads systemd state, serves static files, and writes
+# its history db under StateDirectory.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

@@ -1,7 +1,9 @@
 mod alerts;
 mod api;
+mod collector;
 mod config;
 mod fleet;
+mod store;
 mod systemd;
 
 use std::net::SocketAddr;
@@ -33,6 +35,9 @@ pub struct AppState {
     pub config: Config,
     /// HTTP client for relaying deploy requests to the tugboat daemon.
     pub http: reqwest::Client,
+    /// Health-history database, when collection is enabled and it opened. `None`
+    /// leaves the dashboard fully functional minus the history view.
+    pub history: Option<Arc<store::Store>>,
 }
 
 #[tokio::main]
@@ -55,9 +60,28 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(alerts::run(config.clone()));
     }
 
+    // Open the health-history store and start the collector. A failure here
+    // (e.g. an unwritable data dir before the unit is reprovisioned with
+    // StateDirectory) disables history but never the dashboard.
+    let history = if config.history.enabled {
+        match store::Store::open(&config.history.db_path) {
+            Ok(store) => Some(Arc::new(store)),
+            Err(err) => {
+                eprintln!("history collection disabled: {err:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(store) = &history {
+        tokio::spawn(collector::run(config.clone(), store.clone()));
+    }
+
     let state = Arc::new(AppState {
         config,
         http: reqwest::Client::new(),
+        history,
     });
 
     // The pilot docs site (a static page on another tailnet origin) reads the
@@ -87,6 +111,7 @@ async fn main() -> anyhow::Result<()> {
             get(api::deploy_log),
         )
         .route("/api/services/{unit}/changelog", get(api::changelog))
+        .route("/api/services/{unit}/history", get(api::health_history))
         .route("/api/services/{unit}/deploy", post(api::deploy_service))
         .route(
             "/api/services/{unit}/deploy/{job}/stream",

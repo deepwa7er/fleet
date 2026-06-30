@@ -56,3 +56,18 @@ target = "lighthouse.target"
 #   [[services]]
 #   unit = "sonar-discovery.service"
 #   deploy_name = "sonar"
+
+# Health history. A background collector samples each monitored service's systemd
+# state and memory, plus an OUT-OF-LOOPBACK reachability probe (an HTTPS GET of
+# the service's public URL through breakwater — real TLS + host routing, so a cert
+# mismatch or misroute shows up where the loopback health-check can't). The
+# service detail page then shows an uptime/reachability timeline and a memory
+# sparkline. ON BY DEFAULT — this whole block is optional and shown only to
+# document the knobs. The db lives under the unit's StateDirectory.
+#
+#   [history]
+#   enabled = true
+#   db_path = "/var/lib/lighthouse/history.db"
+#   interval_secs = 60        # how often to sample
+#   retention_days = 30       # older samples are pruned
+#   probe_timeout_secs = 10   # per-service probe timeout

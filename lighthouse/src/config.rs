@@ -39,6 +39,40 @@ pub struct Config {
     /// status only, exactly as before.
     #[serde(default = "default_fleet_path")]
     pub fleet_path: PathBuf,
+    /// Health-history collection. On by default; an absent `[history]` block uses
+    /// the defaults, so it works without editing a deployed config.
+    #[serde(default)]
+    pub history: HistoryConfig,
+}
+
+/// Settings for the background health collector: how often it samples, how long
+/// it keeps samples, and where it stores them. Sampling needs a writable data dir
+/// — the systemd unit grants `/var/lib/lighthouse` via `StateDirectory=lighthouse`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct HistoryConfig {
+    /// Set `false` to turn the collector (and the history API) off entirely.
+    pub enabled: bool,
+    /// SQLite database file for the time-series.
+    pub db_path: PathBuf,
+    /// Seconds between sample sweeps.
+    pub interval_secs: u64,
+    /// Days of history to retain; older samples are pruned each sweep.
+    pub retention_days: i64,
+    /// Per-service timeout (seconds) for the out-of-loopback reachability probe.
+    pub probe_timeout_secs: u64,
+}
+
+impl Default for HistoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            db_path: PathBuf::from("/var/lib/lighthouse/history.db"),
+            interval_secs: 60,
+            retention_days: 30,
+            probe_timeout_secs: 10,
+        }
+    }
 }
 
 fn default_fleet_path() -> PathBuf {

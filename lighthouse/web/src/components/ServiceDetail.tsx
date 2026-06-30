@@ -12,7 +12,10 @@ import {
 import { CommitLink } from "./CommitLink.tsx";
 import { DeployConsole } from "./DeployConsole.tsx";
 import { DeployHistory } from "./DeployHistory.tsx";
+import { HealthHistory } from "./HealthHistory.tsx";
 import { LogViewer } from "./LogViewer.tsx";
+
+type View = "logs" | "deploys" | "health";
 
 interface Props {
   service: ServiceStatus;
@@ -39,8 +42,8 @@ export function ServiceDetail({ service, deploy, onChanged, onDeployed }: Props)
   // transcript replaces the log view.
   const [deployJob, setDeployJob] = useState<string | null>(null);
   const [deploying, setDeploying] = useState(false);
-  // Body shows logs by default; the Deploys toggle swaps in the deploy history.
-  const [showHistory, setShowHistory] = useState(false);
+  // Body shows logs by default; the tabs swap in deploy history or health.
+  const [view, setView] = useState<View>("logs");
   const color = statusColor(service.active_state);
   // A crash-looping service is rarely caught in "active" — it cycles through
   // activating / auto-restart / failed. `systemctl stop` is exactly what breaks
@@ -152,19 +155,22 @@ export function ServiceDetail({ service, deploy, onChanged, onDeployed }: Props)
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
-          {canDeploy && (
-            <button
-              type="button"
-              onClick={() => setShowHistory((on) => !on)}
-              className={cn(
-                "border bg-surface px-3 py-1.5 text-xs uppercase tracking-wide",
-                showHistory
-                  ? "border-accent text-accent"
-                  : "border-rule-strong text-ink-muted hover:border-rule-strong",
-              )}
-            >
-              {showHistory ? "logs" : "deploys"}
-            </button>
+          {(["logs", canDeploy && "deploys", "health"].filter(Boolean) as View[]).map(
+            (v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                className={cn(
+                  "border bg-surface px-3 py-1.5 text-xs uppercase tracking-wide",
+                  view === v
+                    ? "border-accent text-accent"
+                    : "border-rule-strong text-ink-muted hover:border-rule-strong",
+                )}
+              >
+                {v}
+              </button>
+            ),
           )}
           {canDeploy && (
             <button
@@ -216,8 +222,10 @@ export function ServiceDetail({ service, deploy, onChanged, onDeployed }: Props)
               onDeployed();
             }}
           />
-        ) : showHistory ? (
+        ) : view === "deploys" && canDeploy ? (
           <DeployHistory unit={service.unit} />
+        ) : view === "health" ? (
+          <HealthHistory unit={service.unit} />
         ) : (
           <LogViewer unit={service.unit} />
         )}

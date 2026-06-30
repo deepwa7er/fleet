@@ -21,6 +21,7 @@ use tokio_stream::{Stream, StreamExt};
 
 use crate::AppState;
 use crate::config::{Config, DeployConfig};
+use crate::store::Sample;
 use crate::systemd::{self, ServiceStatus};
 
 const DEFAULT_LOG_LINES: u32 = 200;
@@ -562,6 +563,201 @@ pub async fn changelog(
     Ok(Json(commits))
 }
 
+/// Default history window if none is given: the last 24 hours.
+const DEFAULT_HISTORY_WINDOW_SECS: i64 = 86_400;
+/// Smallest and largest windows the API will serve.
+const MIN_HISTORY_WINDOW_SECS: i64 = 3_600;
+const MAX_HISTORY_WINDOW_SECS: i64 = 30 * 86_400;
+/// Fixed number of timeline buckets — the status-bar resolution, independent of
+/// window length so the chart is a constant width and any downtime in a bucket
+/// shows (a bucket is "down" if any sample in it was).
+const TIMELINE_BUCKETS: usize = 96;
+
+#[derive(Debug, Deserialize)]
+pub struct HealthQuery {
+    window_secs: Option<i64>,
+}
+
+/// A service's health over a window: a per-bucket timeline plus rollup figures.
+#[derive(Debug, Serialize)]
+pub struct HealthHistory {
+    window_secs: i64,
+    now: i64,
+    interval_secs: u64,
+    summary: HealthSummary,
+    buckets: Vec<Bucket>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HealthSummary {
+    sample_count: usize,
+    /// Percent of samples whose systemd state was `active` (0–100).
+    systemd_uptime_pct: f64,
+    /// Whether this service is probed at all (it has a public URL).
+    probed: bool,
+    /// Percent of probed samples reachable through breakwater (0–100). `None`
+    /// when the service isn't probed.
+    probe_uptime_pct: Option<f64>,
+    /// Current reachability and when that state began. `None` when not probed.
+    current: Option<CurrentProbe>,
+    memory_current: Option<i64>,
+    memory_peak: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CurrentProbe {
+    ok: bool,
+    status: Option<u16>,
+    ms: Option<u32>,
+    /// Unix seconds when the current reachable/unreachable state began.
+    since: i64,
+}
+
+/// One timeline cell. `status` is the worst observation in the cell so an outage
+/// is never hidden by averaging.
+#[derive(Debug, Serialize)]
+pub struct Bucket {
+    at: i64,
+    /// `up` | `unreachable` | `down` | `gap` (no samples collected).
+    status: &'static str,
+    /// Peak memory in the cell, for the resource sparkline.
+    memory_bytes: Option<i64>,
+}
+
+/// `GET /api/services/{unit}/history?window_secs=N` — the service's recorded
+/// health over the window: a bucketed up/unreachable/down timeline, reachability
+/// and systemd uptime percentages, and a memory series. `503` when history
+/// collection is disabled or its database couldn't be opened.
+pub async fn health_history(
+    State(state): State<Arc<AppState>>,
+    Path(unit): Path<String>,
+    Query(query): Query<HealthQuery>,
+) -> Result<Json<HealthHistory>, StatusCode> {
+    let svc = resolve(&state.config, &unit).await?;
+    let Some(store) = &state.history else {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    };
+    let window = query
+        .window_secs
+        .unwrap_or(DEFAULT_HISTORY_WINDOW_SECS)
+        .clamp(MIN_HISTORY_WINDOW_SECS, MAX_HISTORY_WINDOW_SECS);
+    let now = now_unix();
+    let since = now - window;
+
+    let samples = store.window(&svc.unit, since).map_err(|err| {
+        eprintln!("history query for {} failed: {err:#}", svc.unit);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(HealthHistory {
+        window_secs: window,
+        now,
+        interval_secs: state.config.history.interval_secs,
+        summary: summarize(&samples),
+        buckets: bucketize(&samples, since, now, TIMELINE_BUCKETS),
+    }))
+}
+
+/// Roll a window of samples up into the summary figures.
+fn summarize(samples: &[Sample]) -> HealthSummary {
+    let n = samples.len();
+    let active = samples.iter().filter(|s| s.active_state == "active").count();
+    let systemd_uptime_pct = pct(active, n);
+
+    let probed: Vec<&Sample> = samples.iter().filter(|s| s.probe.is_some()).collect();
+    let probe_uptime_pct = (!probed.is_empty()).then(|| {
+        let ok = probed.iter().filter(|s| s.probe.as_ref().unwrap().ok).count();
+        pct(ok, probed.len())
+    });
+
+    HealthSummary {
+        sample_count: n,
+        systemd_uptime_pct,
+        probed: !probed.is_empty(),
+        probe_uptime_pct,
+        current: current_probe(samples),
+        memory_current: samples.last().and_then(|s| s.memory_bytes),
+        memory_peak: samples.iter().filter_map(|s| s.memory_bytes).max(),
+    }
+}
+
+/// The most recent probe and how long the current reachable/unreachable state has
+/// held — walking back while the `ok` value is unchanged (samples with no probe
+/// don't break the run).
+fn current_probe(samples: &[Sample]) -> Option<CurrentProbe> {
+    let latest = samples.iter().rev().find_map(|s| s.probe.as_ref().map(|p| (s.at, p)))?;
+    let (_, probe) = latest;
+    let ok = probe.ok;
+    let mut since = latest.0;
+    for s in samples.iter().rev() {
+        match &s.probe {
+            Some(p) if p.ok == ok => since = s.at,
+            Some(_) => break,
+            None => continue,
+        }
+    }
+    Some(CurrentProbe { ok, status: probe.status, ms: probe.ms, since })
+}
+
+/// Distribute samples into `k` fixed time buckets across `[since, now]`, each
+/// taking the worst status it saw and its peak memory.
+fn bucketize(samples: &[Sample], since: i64, now: i64, k: usize) -> Vec<Bucket> {
+    let span = (now - since).max(1);
+    let mut buckets: Vec<Bucket> = (0..k)
+        .map(|i| Bucket {
+            at: since + span * i as i64 / k as i64,
+            status: "gap",
+            memory_bytes: None,
+        })
+        .collect();
+
+    for s in samples {
+        let idx = (((s.at - since) * k as i64) / span).clamp(0, k as i64 - 1) as usize;
+        let bucket = &mut buckets[idx];
+        let observed = if s.active_state != "active" {
+            "down"
+        } else if s.probe.as_ref().is_some_and(|p| !p.ok) {
+            "unreachable"
+        } else {
+            "up"
+        };
+        bucket.status = worse(bucket.status, observed);
+        if let Some(mem) = s.memory_bytes {
+            bucket.memory_bytes = Some(bucket.memory_bytes.map_or(mem, |cur| cur.max(mem)));
+        }
+    }
+    buckets
+}
+
+/// The more-severe of two bucket statuses (`down` > `unreachable` > `up` > `gap`).
+fn worse(a: &'static str, b: &'static str) -> &'static str {
+    fn rank(s: &str) -> u8 {
+        match s {
+            "down" => 3,
+            "unreachable" => 2,
+            "up" => 1,
+            _ => 0,
+        }
+    }
+    if rank(b) > rank(a) { b } else { a }
+}
+
+/// A count as a percentage of a total, guarding the empty case.
+fn pct(count: usize, total: usize) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        count as f64 * 100.0 / total as f64
+    }
+}
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 /// The full transcript of a past deploy, newline-split into lines.
 #[derive(Debug, Serialize)]
 pub struct DeployLog {
@@ -679,7 +875,88 @@ pub async fn deploy_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::{changes_url, commit_url, valid_log_id, LedgerEntry};
+    use super::{
+        bucketize, changes_url, commit_url, current_probe, summarize, valid_log_id, worse,
+        LedgerEntry,
+    };
+    use crate::store::{Probe, Sample};
+
+    fn sample(at: i64, state: &str, mem: Option<i64>, probe: Option<Probe>) -> Sample {
+        Sample { at, active_state: state.into(), memory_bytes: mem, probe }
+    }
+
+    fn ok_probe() -> Probe {
+        Probe { ok: true, status: Some(200), ms: Some(12) }
+    }
+    fn bad_probe() -> Probe {
+        Probe { ok: false, status: None, ms: None }
+    }
+
+    #[test]
+    fn summary_counts_uptime_and_reachability() {
+        let samples = vec![
+            sample(10, "active", Some(100), Some(ok_probe())),
+            sample(20, "active", Some(200), Some(bad_probe())), // up by systemd, unreachable
+            sample(30, "failed", Some(150), Some(bad_probe())),
+            sample(40, "active", Some(120), Some(ok_probe())),
+        ];
+        let s = summarize(&samples);
+        assert_eq!(s.sample_count, 4);
+        assert_eq!(s.systemd_uptime_pct, 75.0); // 3 of 4 active
+        assert!(s.probed);
+        assert_eq!(s.probe_uptime_pct, Some(50.0)); // 2 of 4 reachable
+        assert_eq!(s.memory_current, Some(120)); // last
+        assert_eq!(s.memory_peak, Some(200));
+    }
+
+    #[test]
+    fn summary_handles_unprobed_service() {
+        let samples = vec![sample(10, "active", Some(100), None)];
+        let s = summarize(&samples);
+        assert!(!s.probed);
+        assert_eq!(s.probe_uptime_pct, None);
+        assert!(s.current.is_none());
+    }
+
+    #[test]
+    fn current_probe_tracks_state_start() {
+        // Reachable, then a run of unreachable; `since` is the start of the run,
+        // and a sample with no probe in the middle doesn't break it.
+        let samples = vec![
+            sample(10, "active", None, Some(ok_probe())),
+            sample(20, "active", None, Some(bad_probe())), // unreachable begins here
+            sample(30, "active", None, None),              // no probe — skipped
+            sample(40, "active", None, Some(bad_probe())),
+        ];
+        let current = current_probe(&samples).unwrap();
+        assert!(!current.ok);
+        assert_eq!(current.since, 20);
+    }
+
+    #[test]
+    fn buckets_take_worst_status_and_peak_memory() {
+        // One bucket spanning [0,100): an unreachable sample then a down sample —
+        // the cell must read as the worse of the two (down), with peak memory.
+        let samples = vec![
+            sample(10, "active", Some(100), Some(bad_probe())),
+            sample(20, "failed", Some(300), Some(bad_probe())),
+        ];
+        let buckets = bucketize(&samples, 0, 100, 1);
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].status, "down");
+        assert_eq!(buckets[0].memory_bytes, Some(300));
+
+        // No samples in a window → a single "gap" cell.
+        assert_eq!(bucketize(&[], 0, 100, 1)[0].status, "gap");
+    }
+
+    #[test]
+    fn worse_orders_statuses() {
+        assert_eq!(worse("up", "down"), "down");
+        assert_eq!(worse("unreachable", "up"), "unreachable");
+        assert_eq!(worse("gap", "up"), "up");
+        assert_eq!(worse("down", "unreachable"), "down");
+    }
 
     fn deployed_entry(short: &str) -> LedgerEntry {
         LedgerEntry {

@@ -91,3 +91,47 @@ export interface ChangelogCommit {
   /** Unix epoch seconds. */
   at: number;
 }
+
+/** One cell of the health timeline. `gap` means no samples were collected then
+ *  (e.g. lighthouse itself was down). `unreachable` means systemd was active but
+ *  the service couldn't be reached through breakwater. */
+export type HealthStatus = "up" | "unreachable" | "down" | "gap";
+
+export interface HealthBucket {
+  /** Unix epoch seconds — the cell's start. */
+  at: number;
+  status: HealthStatus;
+  /** Peak memory in the cell, for the sparkline. */
+  memory_bytes: number | null;
+}
+
+export interface CurrentProbe {
+  ok: boolean;
+  status: number | null;
+  ms: number | null;
+  /** Unix epoch seconds when the current reachable/unreachable state began. */
+  since: number;
+}
+
+export interface HealthSummary {
+  sample_count: number;
+  /** Percent of samples whose systemd state was `active` (0–100). */
+  systemd_uptime_pct: number;
+  /** Whether this service is probed (it has a public URL). */
+  probed: boolean;
+  /** Percent of probed samples reachable through breakwater, or null. */
+  probe_uptime_pct: number | null;
+  /** Current reachability, or null when not probed. */
+  current: CurrentProbe | null;
+  memory_current: number | null;
+  memory_peak: number | null;
+}
+
+export interface HealthHistory {
+  window_secs: number;
+  /** Server's current time (epoch seconds), to anchor the timeline. */
+  now: number;
+  interval_secs: number;
+  summary: HealthSummary;
+  buckets: HealthBucket[];
+}
