@@ -68,7 +68,7 @@ ROOT="${FLEET_ROOT:-$HOME/code}"
 # (the live ferry config repo). Kept explicit so unrelated projects under the
 # root (playground, poe2-mcp, siren, …) are never touched.
 FLEET_DIRS=(
-  lighthouse breakwater ferry ferry-config tidepool harbor lagoon
+  lighthouse breakwater ferry ferry-config tidepool harbor lagoon source
   driftword drydock tide pilot sonar fleet-backup git-autocommit tugboat Helm
 )
 
