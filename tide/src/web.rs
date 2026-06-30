@@ -1,9 +1,9 @@
-//! tide's HTTP surface, fronted by breakwater at https://tide.internal.deepwa7er.com.
+//! tide's HTTP surface, fronted by breakwater at https://tide.intern.deepwa7er.net.
 //!
 //! - `GET /theme`            → `{"theme":"dark"}`. CORS-open for GET so every
 //!   fleet web UI (each on its own subdomain) can read it cross-origin.
 //! - `GET /set?theme=dark`   → persist the theme, set a cookie shared across
-//!   `*.internal.deepwa7er.com` (first-paint cache for the UIs), and show a
+//!   `*.intern.deepwa7er.net` (first-paint cache for the UIs), and show a
 //!   confirmation page. This is what ferry's `b dark` / `b light` redirect to.
 //! - `GET /healthz`          → liveness.
 
@@ -62,7 +62,7 @@ async fn set_theme(State(store): State<Arc<Store>>, Query(q): Query<SetQuery>) -
     }
 
     let cookie = format!(
-        "fleet_theme={theme}; Domain=.internal.deepwa7er.com; Path=/; Max-Age=31536000; SameSite=Lax; Secure"
+        "fleet_theme={theme}; Domain=.intern.deepwa7er.net; Path=/; Max-Age=31536000; SameSite=Lax; Secure"
     );
     ([(header::SET_COOKIE, cookie)], Html(confirm_page(theme))).into_response()
 }
@@ -89,10 +89,10 @@ fn confirm_page(theme: Theme) -> String {
   <h1>Fleet theme → <span class="t">{theme}</span> ✓</h1>
   <p>Every fleet service will use <span class="t">{theme}</span> mode. Open tabs flip within a few seconds; new ones are already set.</p>
   <nav>
-    <a href="https://lighthouse.internal.deepwa7er.com">lighthouse</a>
-    <a href="https://docs.internal.deepwa7er.com">pilot</a>
-    <a href="https://lagoon.internal.deepwa7er.com">lagoon</a>
-    <a href="https://drydock.internal.deepwa7er.com">drydock</a>
+    <a href="https://lighthouse.intern.deepwa7er.net">lighthouse</a>
+    <a href="https://docs.intern.deepwa7er.net">pilot</a>
+    <a href="https://lagoon.intern.deepwa7er.net">lagoon</a>
+    <a href="https://drydock.intern.deepwa7er.net">drydock</a>
   </nav>
 </div></body></html>"#
     )

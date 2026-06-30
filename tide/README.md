@@ -9,7 +9,7 @@ single source of truth, flipped from anywhere.
 ```
 b dark  ──ferry 302──►  tide /set?theme=dark
                           ├─ persist /var/lib/tide/settings.json   (source of truth)
-                          ├─ Set-Cookie fleet_theme=dark; Domain=.internal.deepwa7er.com
+                          ├─ Set-Cookie fleet_theme=dark; Domain=.intern.deepwa7er.net
                           └─ confirmation page
 each fleet UI:  read the cookie for instant first-paint, then fetch /theme and
                 poll it (~5s) so open tabs flip live and every device agrees.
@@ -23,7 +23,7 @@ each fleet UI:  read the cookie for instant first-paint, then fetch /theme and
 - `GET /healthz` → liveness.
 
 `bind` is loopback; [breakwater](https://github.com/deepwa7er/breakwater) is the
-tailnet front door at `https://tide.internal.deepwa7er.com` (the tailnet is the
+tailnet front door at `https://tide.intern.deepwa7er.net` (the tailnet is the
 security boundary — no auth). The cookie is only a per-browser first-paint cache;
 `settings.json` on the VPS is authoritative across devices.
 
@@ -34,5 +34,5 @@ deploy/provision.sh     # once: service user, config, systemd unit
 tugboat deploy          # build (musl) + ship the binary
 ```
 
-Add the breakwater route (`tide.internal.deepwa7er.com → 127.0.0.1:8094`) and the
+Add the breakwater route (`tide.intern.deepwa7er.net → 127.0.0.1:8094`) and the
 ferry `dark`/`light` commands; see the fleet docs.
