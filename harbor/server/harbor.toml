@@ -10,7 +10,7 @@
 # Run with:  harbor-server harbor.local.toml
 
 # Binds loopback; breakwater is the tailnet front door and serves harbor at
-# https://harbor.internal.deepwa7er.com (no public exposure).
+# https://harbor.intern.deepwa7er.net (no public exposure).
 bind = "127.0.0.1"
 port = 8090
 
@@ -51,4 +51,4 @@ extension_dir = "dist"
 # new-tab page.
 [[external_links]]
 name = "driftword"
-url = "https://driftword.internal.deepwa7er.com"
+url = "https://driftword.intern.deepwa7er.net"

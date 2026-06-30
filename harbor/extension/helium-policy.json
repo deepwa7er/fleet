@@ -1,8 +1,8 @@
 {
   "ExtensionInstallForcelist": [
-    "mphgmoeghlcdljjpglbhhfpgmicoenlm;https://harbor.internal.deepwa7er.com/extension/updates.xml"
+    "mphgmoeghlcdljjpglbhhfpgmicoenlm;https://harbor.intern.deepwa7er.net/extension/updates.xml"
   ],
   "ExtensionInstallSources": [
-    "https://harbor.internal.deepwa7er.com/*"
+    "https://harbor.intern.deepwa7er.net/*"
   ]
 }

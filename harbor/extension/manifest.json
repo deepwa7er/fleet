@@ -3,12 +3,12 @@
   "name": "harbor",
   "version": "0.3.8",
   "description": "Personal mission-control new tab — activity pulse across the fleet and quick capture to lagoon.",
-  "update_url": "https://harbor.internal.deepwa7er.com/extension/updates.xml",
+  "update_url": "https://harbor.intern.deepwa7er.net/extension/updates.xml",
   "chrome_url_overrides": {
     "newtab": "newtab.html"
   },
   "host_permissions": [
     "http://127.0.0.1:8090/*",
-    "https://*.internal.deepwa7er.com/*"
+    "https://*.intern.deepwa7er.net/*"
   ]
 }

@@ -71,7 +71,7 @@ computer's extension queries it.
    ```sh
    tugboat            # reads ./deploy.toml
    ```
-4. Point `extension/config.js` at `https://harbor.internal.deepwa7er.com` (the
+4. Point `extension/config.js` at `https://harbor.intern.deepwa7er.net` (the
    breakwater front door, served over the tailnet) and reload the extension.
 5. Enroll in lighthouse so harbor monitors itself (tugboat also does this on
    every deploy): `systemctl add-wants lighthouse.target harbor.service`.
