@@ -105,6 +105,12 @@ upstream = "127.0.0.1:8094"
 label = "spyglass"
 upstream = "127.0.0.1:8095"
 
+# Wardrobe organizer (clothes) — clothes by category with product links, tracked
+# wishlist -> ordered -> owned against per-category targets.
+[[routes]]
+label = "clothes"
+upstream = "127.0.0.1:8099"
+
 # The fleet documentation site (pilot) — process-less static files, so breakwater
 # serves the directory directly instead of proxying an upstream. `tugboat fleet
 # docs` assembles and ships the site to this path; a path that doesn't resolve to
