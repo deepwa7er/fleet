@@ -1,0 +1,9 @@
+[package]
+name = "tugboat-ledger"
+version = "0.1.0"
+edition = "2021"
+description = "The tugboat deploy ledger's on-host contract — record schema, version, deploy-id format, and file layout — shared by the writer (tugboat) and its readers (lighthouse), so the format can't drift by copy."
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

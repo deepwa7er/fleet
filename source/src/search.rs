@@ -9,54 +9,19 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+
+// The response shapes live in fleet-api — the shared producer/consumer
+// contract (spyglass deserializes exactly these types).
+pub use fleet_api::search::{FileMatches, LineMatch, RepoMatches, SearchResults};
 
 use crate::fleet::Repo;
 
 /// Hard cap on match lines returned in one search, so a common term can't
 /// produce an unbounded payload. When hit, the response is flagged `truncated`.
 const MAX_MATCHES: usize = 500;
-
-/// One matching line.
-#[derive(Debug, Serialize)]
-pub struct LineMatch {
-    pub line_number: u64,
-    /// The line's text (trailing newline trimmed).
-    pub text: String,
-    /// `[start, end)` byte offsets of each match within `text`, for highlighting.
-    pub ranges: Vec<[usize; 2]>,
-}
-
-/// Matches within a single file.
-#[derive(Debug, Serialize)]
-pub struct FileMatches {
-    /// Repo-relative path.
-    pub path: String,
-    pub matches: Vec<LineMatch>,
-}
-
-/// Matches within a single repo.
-#[derive(Debug, Serialize)]
-pub struct RepoMatches {
-    pub repo: String,
-    /// GitHub blob-URL prefix for this repo's files at HEAD (append
-    /// `/<path>#L<line>`); `None` when the remote isn't GitHub. Lets consumers
-    /// (spyglass) deep-link without knowing the fleet's repo layout.
-    pub blob_base: Option<String>,
-    pub files: Vec<FileMatches>,
-}
-
-/// A whole search result set, grouped repo → file → line.
-#[derive(Debug, Serialize)]
-pub struct SearchResults {
-    pub query: String,
-    /// True if the [`MAX_MATCHES`] cap stopped the scan early.
-    pub truncated: bool,
-    pub total: usize,
-    pub repos: Vec<RepoMatches>,
-}
 
 /// Run a search over `repos`. `query` is a literal substring unless `regex` is
 /// set, in which case it's a ripgrep regular expression. Search is smart-case

@@ -5,6 +5,7 @@ edition = "2021"
 description = "Manifest-driven deployer for personal VPS services"
 
 [dependencies]
+tugboat-ledger = { path = "../crates/tugboat-ledger" }
 clap = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

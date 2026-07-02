@@ -9,6 +9,7 @@ name = "source"
 path = "src/main.rs"
 
 [dependencies]
+fleet-api = { path = "../crates/fleet-api" }
 axum = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "process", "io-util", "sync"] }
 serde = { workspace = true, features = ["derive"] }

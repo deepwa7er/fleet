@@ -5,6 +5,7 @@ edition = "2024"
 description = "systemd service status + log dashboard and deploy button for the deepwa7er fleet."
 
 [dependencies]
+tugboat-ledger = { path = "../crates/tugboat-ledger" }
 anyhow = { workspace = true }
 axum = { workspace = true }
 clap = { workspace = true, features = ["derive"] }

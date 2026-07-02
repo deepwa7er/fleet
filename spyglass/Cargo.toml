@@ -5,6 +5,7 @@ edition = "2024"
 description = "Federated search across the deepwa7er fleet — one box over code (source) and notes (lagoon)."
 
 [dependencies]
+fleet-api = { path = "../crates/fleet-api" }
 anyhow = { workspace = true }
 axum = { workspace = true }
 clap = { workspace = true, features = ["derive"] }

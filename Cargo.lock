@@ -717,6 +717,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fleet-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "fleet-common"
 version = "0.1.0"
 dependencies = [
@@ -1415,6 +1422,7 @@ dependencies = [
  "tokio-stream",
  "toml",
  "tower-http",
+ "tugboat-ledger",
 ]
 
 [[package]]
@@ -2499,6 +2507,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "fleet-api",
  "serde",
  "serde_json",
  "tokio",
@@ -2513,6 +2522,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "fleet-api",
  "reqwest",
  "serde",
  "serde_json",
@@ -2983,6 +2993,15 @@ dependencies = [
  "syntect",
  "tokio",
  "toml",
+ "tugboat-ledger",
+]
+
+[[package]]
+name = "tugboat-ledger"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -15,7 +15,6 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
-use serde_json::json;
 
 use crate::git;
 use crate::manifest::{ArtifactKind, Health, Manifest, Verify};
@@ -551,32 +550,27 @@ fn build_stamp(project_dir: &Path, at: u64) -> Option<Stamp> {
     })
 }
 
-/// The deploy id used to name the transcript file and link it from the ledger:
-/// `{start-unix-seconds}-{short-sha}` (or `…-nogit` outside a checkout). Matches
-/// the reader's `^[0-9]+-[0-9a-z]+$` validation.
+/// The deploy id naming the transcript file, in the shared contract's format
+/// (see the `tugboat-ledger` crate, which readers validate against).
 fn deploy_id(at: u64, stamp: Option<&Stamp>) -> String {
-    let short = stamp.map_or("nogit", |s| s.short.as_str());
-    format!("{at}-{short}")
+    tugboat_ledger::deploy_id(at, stamp.map(|s| s.short.as_str()))
 }
 
-/// Current ledger schema version (see README "The deploy ledger"). v2 adds `id`,
-/// which names the deploy's transcript file at `/var/lib/tugboat/<name>/<id>.log`.
-const LEDGER_VERSION: u32 = 2;
-
-/// One ledger line: the JSON record written for a deploy (see README "The deploy
-/// ledger"). Kept separate from the bash wrapper so it can be unit-tested.
+/// One ledger line: the JSON record written for a deploy, through the shared
+/// `tugboat-ledger` contract type — so the writer and lighthouse's reader can
+/// only change together. Kept separate from the bash wrapper for unit tests.
 fn ledger_payload(stamp: &Stamp, id: &str, result: &str) -> String {
-    json!({
-        "v": LEDGER_VERSION,
-        "id": id,
-        "sha": stamp.sha,
-        "short": stamp.short,
-        "dirty": stamp.dirty,
-        "branch": stamp.branch,
-        "result": result,
-        "at": stamp.deployed_at,
+    serde_json::to_string(&tugboat_ledger::LedgerEntry {
+        v: tugboat_ledger::LEDGER_VERSION,
+        id: Some(id.to_owned()),
+        sha: stamp.sha.clone(),
+        short: stamp.short.clone(),
+        dirty: stamp.dirty,
+        branch: stamp.branch.clone(),
+        result: result.to_owned(),
+        at: stamp.deployed_at,
     })
-    .to_string()
+    .expect("a ledger entry always serializes")
 }
 
 /// The bash that appends one entry to the host deploy ledger with the given

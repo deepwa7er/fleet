@@ -5,7 +5,9 @@
 resolver = "2"
 members = [
     "breakwater",
+    "crates/fleet-api",
     "crates/fleet-common",
+    "crates/tugboat-ledger",
     "clothes",
     "driftword",
     "drydock",

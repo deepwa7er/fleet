@@ -1,0 +1,8 @@
+[package]
+name = "fleet-api"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-service API contracts shared by producer and consumer, so a field rename is a compile error in the same commit instead of a silent 'bad response'. First contract: source's code-search response, consumed by spyglass."
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }

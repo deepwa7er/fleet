@@ -49,7 +49,7 @@ pub struct Hit {
     pub title: String,
     /// Code: the matching line number.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub line: Option<u32>,
+    pub line: Option<u64>,
     /// The matching text (a code line, or a note snippet).
     pub snippet: String,
     /// Byte spans into `snippet` to highlight.
@@ -127,7 +127,7 @@ impl Engine {
     /// into hits, each linking to the file+line on GitHub.
     async fn fetch_code(&self, source: &SourceConfig, query: &str) -> Result<SourceResult, String> {
         let url = format!("{}/api/search", fetch_base(source)?);
-        let resp: CodeResponse = self
+        let resp: fleet_api::search::SearchResults = self
             .client
             .get(&url)
             .query(&[("q", query)])
@@ -385,43 +385,16 @@ fn spans_from_pairs(pairs: &[[usize; 2]]) -> Vec<Range> {
 /// A GitHub blob link to a file at a line, using `HEAD` so it resolves to the
 /// repo's default branch without hardcoding `main`. Fallback only — used when
 /// source's response carries no `blob_base` (a pre-monorepo source).
-fn github_blob(org: &str, repo: &str, path: &str, line: u32) -> String {
+fn github_blob(org: &str, repo: &str, path: &str, line: u64) -> String {
     format!("https://github.com/{org}/{repo}/blob/HEAD/{path}#L{line}")
 }
 
-// --- Upstream response shapes (only the fields we consume) ------------------
-
-#[derive(Debug, Deserialize)]
-struct CodeResponse {
-    #[serde(default)]
-    truncated: bool,
-    repos: Vec<CodeRepo>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CodeRepo {
-    repo: String,
-    /// GitHub blob-URL prefix at HEAD, from source (append `/<path>#L<line>`).
-    /// Derived from the repo's actual remote, so monorepo projects link into
-    /// `…/fleet/blob/HEAD/<dir>` without spyglass knowing the fleet's layout.
-    #[serde(default)]
-    blob_base: Option<String>,
-    files: Vec<CodeFile>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CodeFile {
-    path: String,
-    matches: Vec<CodeMatch>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CodeMatch {
-    line_number: u32,
-    text: String,
-    /// `[start, end]` byte offsets into `text`.
-    ranges: Vec<[usize; 2]>,
-}
+// --- Upstream response shapes ------------------------------------------------
+// source's search response comes from the shared fleet-api contract (see the
+// deserialize in fetch_code). The shapes below belong to EXTERNAL producers
+// (lagoon) or subset views of another service's domain (drydock tickets, the
+// docs catalog) — hand-mirrored by necessity, since their producers don't
+// compile against this workspace's types. Keep each in sync with its service.
 
 #[derive(Debug, Deserialize)]
 struct NoteMatch {

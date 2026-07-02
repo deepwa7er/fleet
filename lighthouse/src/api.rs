@@ -174,37 +174,29 @@ struct DaemonStatus {
     deployed_is_ancestor: Option<bool>,
 }
 
-/// One entry in tugboat's per-service deploy ledger (`<name>.jsonl`).
-#[derive(Debug, Deserialize, Clone)]
-struct LedgerEntry {
-    /// Schema version; ignored for now but lets the format evolve.
-    #[serde(default)]
-    #[allow(dead_code)]
-    v: u32,
-    /// Deploy id (`{at}-{short}`), naming the transcript file `<name>/<id>.log`.
-    /// Absent on pre-v2 entries, which have no saved transcript.
-    #[serde(default)]
-    id: Option<String>,
-    sha: String,
-    short: String,
-    #[serde(default)]
-    dirty: bool,
-    branch: Option<String>,
-    /// `deployed` (it came up healthy) or `rolled_back` (it didn't).
-    result: String,
-    /// Unix epoch seconds.
-    at: u64,
-}
+use tugboat_ledger::LedgerEntry;
 
-/// Read a service's deploy ledger, oldest entry first. Missing/unreadable → empty.
+/// Read a service's deploy ledger through the shared `tugboat-ledger` contract,
+/// oldest entry first. Missing/unreadable → empty. Entries written by a NEWER
+/// tugboat than this reader understands are skipped with a warning — better a
+/// visible gap than history silently misread.
 fn read_ledger(version_dir: &std::path::Path, deploy_name: &str) -> Vec<LedgerEntry> {
-    let path = version_dir.join(format!("{deploy_name}.jsonl"));
+    let path = tugboat_ledger::ledger_path(version_dir, deploy_name);
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
-    text.lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| serde_json::from_str(l).ok())
+    tugboat_ledger::parse_ledger(&text)
+        .into_iter()
+        .filter(|e| {
+            if !e.is_supported() {
+                eprintln!(
+                    "ledger entry for {deploy_name} has schema v{} (this reader understands v{}) — skipped; update lighthouse",
+                    e.v,
+                    tugboat_ledger::LEDGER_VERSION
+                );
+            }
+            e.is_supported()
+        })
         .collect()
 }
 
@@ -764,17 +756,10 @@ pub struct DeployLog {
     lines: Vec<String>,
 }
 
-/// A deploy id is `{at}-{short}` — all digits, a dash, then a lowercase
-/// alphanumeric sha (or `nogit`). Validating it before touching the filesystem
-/// both rejects malformed ids and makes path traversal impossible (no `/`, `.`).
+/// A valid deploy id (the shared contract's format) is also path-traversal
+/// safe — no `/`, no `.` — so it can name a file directly.
 fn valid_log_id(id: &str) -> bool {
-    let Some((at, rest)) = id.split_once('-') else {
-        return false;
-    };
-    !at.is_empty()
-        && at.bytes().all(|b| b.is_ascii_digit())
-        && !rest.is_empty()
-        && rest.bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
+    tugboat_ledger::valid_deploy_id(id)
 }
 
 /// `GET /api/services/{unit}/deploy-log/{id}` — the saved transcript of a past
@@ -793,7 +778,7 @@ pub async fn deploy_log(
         return Err(StatusCode::NOT_FOUND);
     }
     let deploy_name = state.config.deploy_name(&svc.unit);
-    let path = cfg.version_dir.join(&deploy_name).join(format!("{id}.log"));
+    let path = tugboat_ledger::transcript_path(&cfg.version_dir, &deploy_name, &id);
     let text = std::fs::read_to_string(&path).map_err(|_| StatusCode::NOT_FOUND)?;
     let lines = text.lines().map(str::to_owned).collect();
     Ok(Json(DeployLog { lines }))
@@ -877,8 +862,8 @@ pub async fn deploy_stream(
 mod tests {
     use super::{
         bucketize, changes_url, commit_url, current_probe, summarize, valid_log_id, worse,
-        LedgerEntry,
     };
+    use tugboat_ledger::LedgerEntry;
     use crate::store::{Probe, Sample};
 
     fn sample(at: i64, state: &str, mem: Option<i64>, probe: Option<Probe>) -> Sample {
