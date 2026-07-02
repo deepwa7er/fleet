@@ -1,0 +1,17 @@
+{{define "clip"}}
+<form hx-post="/clip" hx-target="#clip" hx-swap="innerHTML" class="clip-form">
+  <textarea name="text" rows="3" class="clip-text"
+            placeholder="Paste here, hit Save, grab from another device.">{{.Text}}</textarea>
+  <div class="clip-foot">
+    <span class="clip-meta">
+      {{if .HasUpdate}}{{if .UpdatedBy}}{{.UpdatedBy}} · {{end}}{{.UpdatedAtRel}}{{else}}empty{{end}}
+    </span>
+    <div class="btn-row">
+      <button type="button"
+              onclick="navigator.clipboard.writeText(this.closest('form').querySelector('textarea').value).then(()=>{this.textContent='Copied';setTimeout(()=>this.textContent='Copy',1200)})"
+              class="btn">Copy</button>
+      <button class="btn btn--primary">Save</button>
+    </div>
+  </div>
+</form>
+{{end}}

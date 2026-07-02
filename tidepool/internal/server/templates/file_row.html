@@ -1,0 +1,15 @@
+{{define "file_row"}}
+<tr id="file-{{.ID}}" class="file-row">
+  <td class="file-name"><a href="/files/{{.ID}}" title="{{.Name}}">{{.Name}}</a></td>
+  <td class="num">{{.SizeHuman}}</td>
+  <td class="col-from">{{.Uploader}}</td>
+  <td class="num">{{.ExpiresInRel}}</td>
+  <td class="act">
+    <button hx-delete="/files/{{.ID}}"
+            hx-target="#file-{{.ID}}"
+            hx-swap="outerHTML"
+            hx-confirm="Delete this file?"
+            class="btn-del">Delete</button>
+  </td>
+</tr>
+{{end}}

@@ -1,0 +1,68 @@
+{{define "index.html"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="tidepool">
+  <meta name="theme-color" content="#f4f3ee">
+  <title>tidepool</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://unpkg.com/htmx.org@2.0.3" defer></script>
+</head>
+<body>
+  <main class="app">
+    <div class="docbar">
+      <span>DOC. TP-001</span>
+      <span>RETENTION · 24H</span>
+      <span class="spacer">TRANSPORT · TAILNET</span>
+    </div>
+
+    <header class="masthead">
+      <h1>tidepool</h1>
+      <span class="note">files auto-delete after 24h</span>
+    </header>
+
+    <section class="panel">
+      <h2 class="panel-head">Clipboard</h2>
+      <div id="clip">{{template "clip" .Clip}}</div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-head">Upload</h2>
+      <form hx-post="/files"
+            hx-encoding="multipart/form-data"
+            hx-target="#files"
+            hx-swap="afterbegin"
+            hx-on::after-request="if(event.detail.successful){this.reset()}"
+            class="upload-form">
+        <input type="file" name="file" required class="file-input">
+        <button class="btn btn--primary">Upload</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-head">Files</h2>
+      <table class="files">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th class="num">Size</th>
+            <th class="col-from">From</th>
+            <th class="num">Expires</th>
+            <th class="act"></th>
+          </tr>
+        </thead>
+        <tbody id="files">
+          {{range .Files}}{{template "file_row" .}}{{else}}
+          <tr class="empty"><td colspan="5">No files yet.</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>
+{{end}}

@@ -1,0 +1,16 @@
+## Xcode build artifacts and per-user state.
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+## CocoaPods / SPM caches (not used today, but harmless to ignore).
+Pods/
+.build/
+.swiftpm/
+
+## macOS noise.
+.DS_Store
