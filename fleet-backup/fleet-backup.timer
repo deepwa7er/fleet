@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily fleet state backup (restic → offsite)
+
+[Timer]
+OnCalendar=daily
+# Spread the run so it isn't exactly at midnight; catch up if the box was off.
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

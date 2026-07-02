@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+#
+# Fleet state backup → restic (offsite object storage). Run by fleet-backup.timer.
+#
+# Backs up the small per-service state under /var/lib that ISN'T reproducible
+# from a tugboat deploy:
+#   - lagoon  : the notes SQLite DB (the most valuable thing on the box)
+#   - drydock : the ticket queue SQLite DB (autonomous fleet work + Q&A)
+#   - clothes : the wardrobe SQLite DB
+#   - ferry   : the live address-bar config (commands added via its web UI)
+#   - tugboat : deploy ledgers + transcripts
+#   - breakwater : the ACME cert cache (regenerable, but cheap to keep)
+#
+# restic credentials + repo come from the EnvironmentFile (see restic.env.example);
+# this script never contains secrets. The repo must already be `restic init`-ed.
+set -euo pipefail
+
+STAGE=/var/lib/fleet-backup/stage
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+
+# SQLite-backed services: take a CONSISTENT online snapshot of each DB rather
+# than copying the live file — a raw copy of a database being written (esp. in
+# WAL mode) can tear. `.backup` uses SQLite's online-backup API and is safe
+# during writes.
+for db in lagoon/lagoon.sqlite drydock/drydock.db clothes/clothes.db; do
+  if [ -f "/var/lib/$db" ]; then
+    mkdir -p "$STAGE/$(dirname "$db")"
+    sqlite3 "/var/lib/$db" ".backup '$STAGE/$db'"
+  fi
+done
+
+# The rest are small files (config, JSONL, certs); restic reads them in place.
+paths=("$STAGE")
+for d in ferry tugboat breakwater; do
+  [ -d "/var/lib/$d" ] && paths+=("/var/lib/$d")
+done
+
+restic backup --tag fleet --host deepwa7er "${paths[@]}"
+
+# Retain a sensible window; prune unreferenced data from the repo.
+restic forget --tag fleet --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune
+
+rm -rf "$STAGE"
+echo "fleet-backup: done"
