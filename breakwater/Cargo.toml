@@ -1,0 +1,47 @@
+[package]
+name = "breakwater"
+version = "0.1.0"
+edition = "2024"
+description = "Tailnet HTTPS front door — routes *.intern.deepwa7er.net to local services by host."
+
+[dependencies]
+anyhow = "1"
+bytes = "1"
+http = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+
+# Static-directory routes (e.g. the fleet docs site) are served straight from
+# disk by tower-http's ServeDir — audited path-traversal safety, MIME types, and
+# conditional/range handling — with a single-page-app fallback to index.html
+# layered on top. Both are pure Rust, so the static-musl cross-build stays intact.
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+toml = "0.8"
+
+# Enumerate local interface addresses to discover the host's Tailscale IPv4 at
+# startup (see src/tailscale.rs). Pure-Rust libc FFI over getifaddrs(3) — no C
+# build, so it cross-compiles to static musl like the rest of the tree.
+if-addrs = "0.13"
+
+# TLS + ACME. Every crypto-bearing dependency is pinned to the ring provider
+# (not the default aws-lc-rs) so the whole tree cross-compiles cleanly to musl
+# with no C/cmake toolchain, keeping the build-locally-ship-a-static-binary model.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls-pemfile = "2"
+webpki-roots = "0.26"
+arc-swap = "1"
+instant-acme = { version = "0.8", default-features = false, features = ["hyper-rustls", "ring", "rcgen"] }
+x509-parser = "0.16"
+hickory-resolver = { version = "0.24", default-features = false, features = ["tokio-runtime"] }
+
+[dev-dependencies]
+# Generate self-signed certs with known SAN names for the cert-cover tests.
+# Already in the tree via instant-acme's `rcgen` feature; dev-only, so it never
+# touches the static-musl release build.
+rcgen = "0.14"
