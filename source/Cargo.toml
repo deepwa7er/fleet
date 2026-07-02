@@ -1,0 +1,23 @@
+[package]
+name = "source"
+version = "0.1.0"
+edition = "2024"
+description = "Browse and search the deepwa7er fleet's source code from one tailnet page."
+
+[[bin]]
+name = "source"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "process", "io-util", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+tower-http = { version = "0.6", features = ["fs"] }
+anyhow = "1"
+
+[profile.release]
+strip = true
+lto = true
