@@ -1,0 +1,26 @@
+[package]
+name = "tugboat"
+version = "0.1.0"
+edition = "2021"
+description = "Manifest-driven deployer for personal VPS services"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+anyhow = "1"
+
+# Render the Markdown that `gomarkdoc` emits for Go services into HTML for the
+# docs site (`fleet docs`). Pure Rust.
+pulldown-cmark = "0.12"
+
+# Syntax-highlight the Go code blocks in those docs at generation time, so the
+# pages are self-contained (no client-side JS). `default-fancy` uses the pure-Rust
+# regex engine — no onig/C dependency.
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+
+# `tugboat serve` only.
+axum = "0.8"
+async-stream = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time"] }
