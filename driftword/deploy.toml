@@ -1,0 +1,23 @@
+# tugboat deploy manifest — github.com/deepwa7er/tugboat
+#   deploy:  tugboat deploy      (from this directory)
+#
+# One-time infra setup (service user, config, systemd unit) lives in
+# deploy/provision.sh — run that once before the first deploy.
+name = "driftword"
+host = "deepwa7er"
+
+[build]
+# Static musl cross-compile. driftword is pure Rust (no C deps), so only the
+# linker is needed — no target C toolchain like harbor's reqwest/ring build.
+cmd = "rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true; CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --target x86_64-unknown-linux-musl"
+
+[[artifacts]]
+src = "target/x86_64-unknown-linux-musl/release/driftword"
+dest = "/usr/local/bin/driftword"
+
+# driftword binds the tailnet IP (no loopback listener), so health is the unit's
+# active state (tugboat default: `systemctl is-active driftword`). An optional
+# end-to-end tailnet check can live in an untracked deploy.local.toml [verify].
+
+[lighthouse]
+enroll = true

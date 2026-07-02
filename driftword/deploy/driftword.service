@@ -1,0 +1,29 @@
+[Unit]
+Description=driftword — pronounceable fake-word generator
+Documentation=https://github.com/deepwa7er/driftword
+# Order after tailscaled so the Tailscale interface/IP exists before we bind.
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=driftword
+Group=driftword
+ExecStart=/usr/local/bin/driftword serve --config /etc/driftword/config.toml
+Restart=on-failure
+RestartSec=2
+
+# Hardening — the service only generates words from an embedded corpus and serves
+# static assets; it needs no filesystem, network privilege, or device access.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
