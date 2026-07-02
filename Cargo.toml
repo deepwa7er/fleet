@@ -17,6 +17,29 @@ members = [
     "tugboat",
 ]
 
+# Dependencies shared by two or more members. Versions live here; each member
+# declares `{ workspace = true }` and keeps its own feature list, so feature
+# choices (e.g. rusqlite "bundled", per-service tokio features) stay local.
+# reqwest carries default-features = false because every member that uses it
+# disables the default TLS backends to keep the static-musl builds clean.
+[workspace.dependencies]
+anyhow = "1"
+axum = "0.8"
+chrono = "0.4"
+clap = "4"
+pulldown-cmark = "0.12"
+reqwest = { version = "0.12", default-features = false }
+rusqlite = "0.32"
+serde = "1"
+serde_json = "1"
+thiserror = "2"
+tokio = "1"
+toml = "0.8"
+tower-http = "0.6"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+ureq = "2"
+
 # Release profile for the whole fleet (member profiles are ignored in a
 # workspace). strip+lto were already the norm in the individual repos.
 [profile.release]

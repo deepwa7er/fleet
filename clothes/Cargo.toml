@@ -5,19 +5,19 @@ edition = "2021"
 description = "Wardrobe organizer — a single binary serving a web view and JSON API over one SQLite store, for cataloguing clothes by category while building a classic wardrobe."
 
 [dependencies]
-axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
-tower-http = { version = "0.6", features = ["fs", "trace"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-clap = { version = "4", features = ["derive"] }
-thiserror = "2"
-chrono = { version = "0.4", features = ["serde"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal"] }
+tower-http = { workspace = true, features = ["fs", "trace"] }
+rusqlite = { workspace = true, features = ["bundled"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 # Best-effort link-metadata fetch (og: tags) so pasting a product URL can
 # pre-fill title/store/image/price. Blocking HTTP + HTML parse, run off the
 # async runtime via spawn_blocking.
-ureq = "2"
+ureq = { workspace = true }
 scraper = "0.20"

@@ -5,15 +5,15 @@ edition = "2024"
 description = "Address-bar redirect front door for the deepwa7er fleet — `b mail` → mail."
 
 [dependencies]
-anyhow = "1"
-axum = "0.8"
+anyhow = { workspace = true }
+axum = { workspace = true }
 percent-encoding = "2"
 # Plain-HTTP client for the note-capture POST to the notes app on loopback. No
 # TLS feature: the target is 127.0.0.1, and dropping TLS keeps the static-musl
 # build free of a crypto backend.
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-toml = "0.8"
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+toml = { workspace = true }
 toml_edit = "0.22"
