@@ -1,0 +1,130 @@
+mod alerts;
+mod api;
+mod collector;
+mod config;
+mod fleet;
+mod store;
+mod systemd;
+
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use anyhow::Context;
+use axum::Router;
+use axum::routing::{get, post};
+use clap::Parser;
+use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
+
+use crate::config::Config;
+
+const DEFAULT_CONFIG_PATH: &str = "/etc/lighthouse/config.toml";
+
+/// Lighthouse — a dashboard for the status and logs of systemd services.
+#[derive(Debug, Parser)]
+#[command(version, about)]
+struct Cli {
+    /// Path to the configuration file. Created from the baseline if absent.
+    #[arg(short, long, default_value = DEFAULT_CONFIG_PATH)]
+    config: PathBuf,
+}
+
+/// Shared, read-only application state.
+pub struct AppState {
+    pub config: Config,
+    /// HTTP client for relaying deploy requests to the tugboat daemon.
+    pub http: reqwest::Client,
+    /// Health-history database, when collection is enabled and it opened. `None`
+    /// leaves the dashboard fully functional minus the history view.
+    pub history: Option<Arc<store::Store>>,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+
+    // Load up front so a broken config fails at startup, and to learn the
+    // listen address, port, and static directory.
+    let config = Config::load_or_create(&cli.config)?;
+    let addr = SocketAddr::new(config.bind, config.port);
+    // The frontend does client-side path routing (e.g. /services/<unit>), so a
+    // direct navigation or refresh on such a path must return the SPA shell
+    // rather than 404. `/` and real asset paths are served as files; every
+    // other non-API path falls back to index.html so the app can route.
+    let serve_dir = ServeDir::new(&config.static_dir)
+        .fallback(ServeFile::new(config.static_dir.join("index.html")));
+
+    // Start the alert watcher in the background (it no-ops if no [alerts] config).
+    if config.alerts.is_some() {
+        tokio::spawn(alerts::run(config.clone()));
+    }
+
+    // Open the health-history store and start the collector. A failure here
+    // (e.g. an unwritable data dir before the unit is reprovisioned with
+    // StateDirectory) disables history but never the dashboard.
+    let history = if config.history.enabled {
+        match store::Store::open(&config.history.db_path) {
+            Ok(store) => Some(Arc::new(store)),
+            Err(err) => {
+                eprintln!("history collection disabled: {err:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(store) = &history {
+        tokio::spawn(collector::run(config.clone(), store.clone()));
+    }
+
+    let state = Arc::new(AppState {
+        config,
+        http: reqwest::Client::new(),
+        history,
+    });
+
+    // The pilot docs site (a static page on another tailnet origin) reads the
+    // fleet's live status from this dashboard's API. Allow cross-origin GETs from
+    // anywhere: lighthouse is tailnet-only and unauthenticated already, so this
+    // exposes nothing new — and restricting to GET keeps the control endpoints
+    // (POST start/stop/deploy) same-origin only.
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([axum::http::Method::GET]);
+
+    let app = Router::new()
+        .route("/api/services", get(api::list_services))
+        .route("/api/services/{unit}/logs", get(api::get_logs))
+        .route("/api/services/{unit}/logs/stream", get(api::stream_logs))
+        .route(
+            "/api/services/{unit}/control/{action}",
+            post(api::control_service),
+        )
+        .route("/api/deploy-status", get(api::deploy_status))
+        .route(
+            "/api/services/{unit}/deploy-history",
+            get(api::deploy_history),
+        )
+        .route(
+            "/api/services/{unit}/deploy-log/{id}",
+            get(api::deploy_log),
+        )
+        .route("/api/services/{unit}/changelog", get(api::changelog))
+        .route("/api/services/{unit}/history", get(api::health_history))
+        .route("/api/services/{unit}/deploy", post(api::deploy_service))
+        .route(
+            "/api/services/{unit}/deploy/{job}/stream",
+            get(api::deploy_stream),
+        )
+        .fallback_service(serve_dir)
+        .layer(cors)
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("failed to bind {addr}"))?;
+    println!("lighthouse listening on http://{addr}");
+    axum::serve(listener, app).await.context("server error")?;
+    Ok(())
+}

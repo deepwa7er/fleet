@@ -1,0 +1,73 @@
+# Lighthouse configuration.
+#
+# `bind` is the address the dashboard listens on. It binds loopback; the
+# breakwater reverse proxy is the tailnet front door and serves it at
+# https://lighthouse.intern.deepwa7er.net (nothing is exposed publicly).
+bind = "127.0.0.1"
+port = 8080
+
+# Directory containing the built frontend (index.html + assets). The deploy
+# script installs the React build here.
+static_dir = "/opt/lighthouse/web"
+
+# The fleet docs' generated fleet.json, read to enrich each service on the home
+# view with its description, public URL, and docs link (joined by unit name).
+# Best-effort: if the file is absent the dashboard shows live status only.
+# Defaults to the pilot docs site's path on this host; override if it differs.
+# fleet_path = "/opt/pilot/web/fleet.json"
+
+# Services to monitor are discovered automatically: any service that is a member
+# of this systemd target shows up on the dashboard. Enroll one with
+#   systemctl add-wants lighthouse.target <unit>
+# or add `WantedBy=lighthouse.target` to the unit's [Install] section. Display
+# labels default to the prettified unit name (sonar-discovery → "Sonar Discovery").
+target = "lighthouse.target"
+
+# Optional override layer. Leave empty for pure discovery. Use it to rename a
+# discovered service's label, or to pin an extra unit that isn't a target member:
+#
+#   [[services]]
+#   unit = "nginx.service"   # pinned even though it's not in the target
+#   name = "Web (nginx)"     # custom label; omit `name` to use the default
+
+# Optional alerting. When present, a background watcher polls each monitored
+# service and POSTs a notification (e.g. to an ntfy topic your phone is
+# subscribed to) when one enters the failed state or starts crash-looping, and
+# once more when it recovers. Omit this section to disable alerting.
+#
+#   [alerts]
+#   notify_url = "https://ntfy.sh/your-secret-topic"
+#   interval_secs = 30   # how often to poll (optional; default 30)
+
+# Optional deploy integration. When present, the dashboard shows a Deploy button
+# for each monitored service that maps to a deployable member of a `tugboat
+# serve` daemon — typically running on your dev machine and reached over the
+# tailnet. Clicking it relays the deploy to that daemon (which builds the current
+# working tree and ships it) and streams the live transcript back. Omit this
+# section to hide all Deploy buttons. See tugboat's README ("Serving deploys").
+#
+#   [deploy]
+#   tugboat_url = "http://100.x.y.z:7878"   # the daemon's tailnet address
+#   token = "…"                             # its TUGBOAT_SERVE_TOKEN (secret)
+#
+# A unit deploys as its stem by default (ferry.service → "ferry", matching
+# tugboat's fleet labels). Override per service with `deploy_name`:
+#
+#   [[services]]
+#   unit = "sonar-discovery.service"
+#   deploy_name = "sonar"
+
+# Health history. A background collector samples each monitored service's systemd
+# state and memory, plus an OUT-OF-LOOPBACK reachability probe (an HTTPS GET of
+# the service's public URL through breakwater — real TLS + host routing, so a cert
+# mismatch or misroute shows up where the loopback health-check can't). The
+# service detail page then shows an uptime/reachability timeline and a memory
+# sparkline. ON BY DEFAULT — this whole block is optional and shown only to
+# document the knobs. The db lives under the unit's StateDirectory.
+#
+#   [history]
+#   enabled = true
+#   db_path = "/var/lib/lighthouse/history.db"
+#   interval_secs = 60        # how often to sample
+#   retention_days = 30       # older samples are pruned
+#   probe_timeout_secs = 10   # per-service probe timeout
