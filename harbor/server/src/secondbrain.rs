@@ -87,6 +87,38 @@ pub fn load_fleet_stats(path: &Path) -> Option<FleetStats> {
     Some(FleetStats { total_loc: parsed.total_loc })
 }
 
+/// Launchable links for every routed fleet service, from the docs'
+/// `fleet.json`. The Apps card stays complete by construction — the catalog is
+/// generated from the fleet's deploy manifests — so `[[external_links]]`
+/// config is only for destinations *outside* the fleet. Best-effort: no
+/// catalog, no links.
+pub fn load_fleet_links(path: &Path) -> Vec<crate::config::ExternalLink> {
+    #[derive(Deserialize)]
+    struct FleetJson {
+        #[serde(default)]
+        services: Vec<Service>,
+    }
+    #[derive(Deserialize)]
+    struct Service {
+        name: String,
+        #[serde(default)]
+        url: Option<String>,
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(parsed) = serde_json::from_str::<FleetJson>(&text) else {
+        return Vec::new();
+    };
+    let mut links: Vec<crate::config::ExternalLink> = parsed
+        .services
+        .into_iter()
+        .filter_map(|s| s.url.map(|url| crate::config::ExternalLink { name: s.name, url }))
+        .collect();
+    links.sort_by(|a, b| a.name.cmp(&b.name));
+    links
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Source {
     pub dir: String,

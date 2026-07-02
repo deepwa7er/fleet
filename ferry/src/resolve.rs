@@ -1,5 +1,7 @@
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
+use std::collections::BTreeMap;
+
 use crate::config::{Config, QUERY_PLACEHOLDER};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -28,11 +30,13 @@ pub enum Resolution {
 ///   - parameterized command (template contains `{query}` or `{1}`..`{9}`):
 ///     substitute the (encoded) argument(s)
 ///   - command with no placeholders and no argument: redirect to it directly
+/// - a bare fleet service name from `services` (label → URL, read from
+///   fleet.json): jump to the service — `b drydock` needs no command entry
 /// - the `:port` shorthand (unless shadowed by an explicit command of that name):
 ///   `:3000` or `:3000/path` jumps to `http://localhost:3000[/path]`
-/// - anything else (unknown command, or argument given to a command that
-///   takes none): treat the whole input as a fallback search
-pub fn resolve(config: &Config, input: &str) -> Resolution {
+/// - anything else (unknown command, a service name *with* an argument, or an
+///   argument given to a command that takes none): fallback search
+pub fn resolve(config: &Config, services: &BTreeMap<String, String>, input: &str) -> Resolution {
     let input = input.trim();
     if input.is_empty() {
         return Resolution::ListPage;
@@ -79,6 +83,13 @@ pub fn resolve(config: &Config, input: &str) -> Resolution {
             open: action.open.as_ref().map(|open| fill(open, args)),
         };
     }
+
+    // A bare fleet service name (with an argument it stays a search — `b rust
+    // tokio` must not jump to a hypothetical `rust` service).
+    if args.is_empty()
+        && let Some(url) = services.get(name) {
+            return Resolution::Redirect(url.clone());
+        }
 
     if let Some(url) = localhost_redirect(name) {
         return Resolution::Redirect(url);
@@ -182,26 +193,26 @@ mod tests {
 
     #[test]
     fn static_command_redirects() {
-        assert_eq!(resolve(&config(), "mail"), redirect("https://mail.example/"));
+        assert_eq!(resolve(&config(), &BTreeMap::new(), "mail"), redirect("https://mail.example/"));
     }
 
     #[test]
     fn parameterized_command_encodes_argument() {
         assert_eq!(
-            resolve(&config(), "gh hyper tls"),
+            resolve(&config(), &BTreeMap::new(), "gh hyper tls"),
             redirect("https://github.com/search?q=hyper%20tls"),
         );
     }
 
     #[test]
     fn parameterized_command_accepts_empty_argument() {
-        assert_eq!(resolve(&config(), "gh"), redirect("https://github.com/search?q="));
+        assert_eq!(resolve(&config(), &BTreeMap::new(), "gh"), redirect("https://github.com/search?q="));
     }
 
     #[test]
     fn unknown_input_falls_back_to_search() {
         assert_eq!(
-            resolve(&config(), "what is a monad"),
+            resolve(&config(), &BTreeMap::new(), "what is a monad"),
             redirect("https://search.example/?q=what%20is%20a%20monad"),
         );
     }
@@ -209,20 +220,20 @@ mod tests {
     #[test]
     fn argument_to_static_command_falls_back_to_search() {
         assert_eq!(
-            resolve(&config(), "mail compose"),
+            resolve(&config(), &BTreeMap::new(), "mail compose"),
             redirect("https://search.example/?q=mail%20compose"),
         );
     }
 
     #[test]
     fn empty_input_shows_list_page() {
-        assert_eq!(resolve(&config(), "  "), Resolution::ListPage);
+        assert_eq!(resolve(&config(), &BTreeMap::new(), "  "), Resolution::ListPage);
     }
 
     #[test]
     fn positional_args_substituted_independently() {
         assert_eq!(
-            resolve(&config(), "svc navidrome restart"),
+            resolve(&config(), &BTreeMap::new(), "svc navidrome restart"),
             redirect("https://dash.example/services/navidrome?action=restart"),
         );
     }
@@ -231,7 +242,7 @@ mod tests {
     fn missing_positional_arg_is_empty() {
         // `svc navidrome` with no action → `{2}` resolves to empty.
         assert_eq!(
-            resolve(&config(), "svc navidrome"),
+            resolve(&config(), &BTreeMap::new(), "svc navidrome"),
             redirect("https://dash.example/services/navidrome?action="),
         );
     }
@@ -239,7 +250,7 @@ mod tests {
     #[test]
     fn positional_args_are_encoded() {
         assert_eq!(
-            resolve(&config(), "svc a/b c d"),
+            resolve(&config(), &BTreeMap::new(), "svc a/b c d"),
             // only {1} and {2} are used; the third arg is ignored
             redirect("https://dash.example/services/a%2Fb?action=c"),
         );
@@ -247,17 +258,17 @@ mod tests {
 
     #[test]
     fn colon_port_jumps_to_localhost() {
-        assert_eq!(resolve(&config(), ":3000"), redirect("http://localhost:3000"));
+        assert_eq!(resolve(&config(), &BTreeMap::new(), ":3000"), redirect("http://localhost:3000"));
     }
 
     #[test]
     fn colon_port_carries_path_query_and_fragment() {
         assert_eq!(
-            resolve(&config(), ":3000/admin"),
+            resolve(&config(), &BTreeMap::new(), ":3000/admin"),
             redirect("http://localhost:3000/admin"),
         );
         assert_eq!(
-            resolve(&config(), ":8080/search?q=hi#top"),
+            resolve(&config(), &BTreeMap::new(), ":8080/search?q=hi#top"),
             redirect("http://localhost:8080/search?q=hi#top"),
         );
     }
@@ -267,7 +278,7 @@ mod tests {
         // Not a port → ordinary fallback search, colon and all.
         for input in [":", ":abc", ":99999", ":0", "::1", ":3000abc"] {
             assert_eq!(
-                resolve(&config(), input),
+                resolve(&config(), &BTreeMap::new(), input),
                 redirect(&fill("https://search.example/?q={query}", input)),
                 "{input:?} should fall through to search",
             );
@@ -280,21 +291,21 @@ mod tests {
         config
             .commands
             .insert(":3000".to_string(), "https://override.example/".to_string());
-        assert_eq!(resolve(&config, ":3000"), redirect("https://override.example/"));
+        assert_eq!(resolve(&config, &BTreeMap::new(), ":3000"), redirect("https://override.example/"));
     }
 
     #[test]
     fn bare_list_shows_list_page_unless_configured() {
         let mut config = config();
-        assert_eq!(resolve(&config, "list"), redirect("https://lists.example/"));
+        assert_eq!(resolve(&config, &BTreeMap::new(), "list"), redirect("https://lists.example/"));
         config.commands.remove("list");
-        assert_eq!(resolve(&config, "list"), Resolution::ListPage);
+        assert_eq!(resolve(&config, &BTreeMap::new(), "list"), Resolution::ListPage);
     }
 
     #[test]
     fn capture_keyword_with_text_captures() {
         assert_eq!(
-            resolve(&config_with_capture(), "lg buy oat milk"),
+            resolve(&config_with_capture(), &BTreeMap::new(), "lg buy oat milk"),
             Resolution::Capture {
                 api: "http://127.0.0.1:8092/api/thoughts".to_string(),
                 text: "buy oat milk".to_string(),
@@ -306,13 +317,13 @@ mod tests {
     #[test]
     fn bare_capture_keyword_opens_notes_app() {
         // Nothing to capture → just open the notes app.
-        assert_eq!(resolve(&config_with_capture(), "lg"), redirect("https://notes.example/"));
+        assert_eq!(resolve(&config_with_capture(), &BTreeMap::new(), "lg"), redirect("https://notes.example/"));
     }
 
     #[test]
     fn capture_text_is_raw_not_url_encoded() {
         // The text becomes a JSON body, so it must NOT be percent-encoded here.
-        match resolve(&config_with_capture(), "lg a & b?") {
+        match resolve(&config_with_capture(), &BTreeMap::new(), "lg a & b?") {
             Resolution::Capture { text, .. } => assert_eq!(text, "a & b?"),
             other => panic!("expected capture, got {other:?}"),
         }
@@ -329,7 +340,7 @@ mod tests {
     #[test]
     fn action_with_args_posts_to_filled_url() {
         assert_eq!(
-            resolve(&config(), "tug lighthouse"),
+            resolve(&config(), &BTreeMap::new(), "tug lighthouse"),
             action(
                 "https://tugboat.example/deploy/lighthouse",
                 Some("FERRY_TUGBOAT_TOKEN"),
@@ -341,7 +352,7 @@ mod tests {
     #[test]
     fn action_arguments_are_encoded() {
         assert_eq!(
-            resolve(&config(), "tug a/b"),
+            resolve(&config(), &BTreeMap::new(), "tug a/b"),
             action(
                 "https://tugboat.example/deploy/a%2Fb",
                 Some("FERRY_TUGBOAT_TOKEN"),
@@ -354,14 +365,14 @@ mod tests {
     fn bare_action_keyword_opens_its_open_url() {
         // `b tug` with no service is a shortcut to the dashboard, not a POST to
         // an empty path.
-        assert_eq!(resolve(&config(), "tug"), redirect("https://lighthouse.example/"));
+        assert_eq!(resolve(&config(), &BTreeMap::new(), "tug"), redirect("https://lighthouse.example/"));
     }
 
     #[test]
     fn bare_action_without_open_posts_to_url() {
         // `ping` has no `open`, so the bare keyword fires the (placeholder-free)
         // POST directly.
-        assert_eq!(resolve(&config(), "ping"), action("https://svc.example/ping", None, None));
+        assert_eq!(resolve(&config(), &BTreeMap::new(), "ping"), action("https://svc.example/ping", None, None));
     }
 
     #[test]
@@ -372,7 +383,7 @@ mod tests {
             .insert("tug".to_string(), "https://override.example/?q={query}".to_string());
         // The explicit command wins; the action never fires.
         assert_eq!(
-            resolve(&config, "tug lighthouse"),
+            resolve(&config, &BTreeMap::new(), "tug lighthouse"),
             redirect("https://override.example/?q=lighthouse"),
         );
     }
@@ -384,6 +395,28 @@ mod tests {
             .commands
             .insert("lg".to_string(), "https://override.example/?q={query}".to_string());
         // The explicit command wins; capture never triggers.
-        assert_eq!(resolve(&config, "lg note"), redirect("https://override.example/?q=note"));
+        assert_eq!(resolve(&config, &BTreeMap::new(), "lg note"), redirect("https://override.example/?q=note"));
+    }
+
+    /// A bare fleet-service name jumps to the service; with an argument it
+    /// stays a search, and an explicit command shadows the service name.
+    #[test]
+    fn fleet_service_names_resolve_without_command_entries() {
+        let services: BTreeMap<String, String> =
+            [("drydock".to_string(), "https://drydock.x.example".to_string())].into();
+
+        assert_eq!(
+            resolve(&config(), &services, "drydock"),
+            redirect("https://drydock.x.example")
+        );
+        // With an argument it is a search, not a service jump.
+        assert_eq!(
+            resolve(&config(), &services, "drydock tickets"),
+            redirect("https://search.example/?q=drydock%20tickets")
+        );
+        // An explicit command wins over a service of the same name.
+        let mut shadowing = services.clone();
+        shadowing.insert("mail".to_string(), "https://mail-service.x.example".to_string());
+        assert_eq!(resolve(&config(), &shadowing, "mail"), redirect("https://mail.example/"));
     }
 }

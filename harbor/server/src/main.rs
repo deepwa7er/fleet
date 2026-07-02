@@ -131,8 +131,16 @@ impl Updater {
 
         self.attach_recent(&mut state.projects).await;
 
-        // Static, config-declared links to other tailnet services.
-        state.external_links = self.config.external_links.clone();
+        // Launchable links: every routed fleet service from the generated
+        // catalog, plus config-declared extras for non-fleet destinations
+        // (config wins a name collision, so a hand-tuned entry can override).
+        let mut links = self.config.external_links.clone();
+        for link in secondbrain::load_fleet_links(&self.config.fleet_json_path) {
+            if !links.iter().any(|l| l.name.eq_ignore_ascii_case(&link.name)) {
+                links.push(link);
+            }
+        }
+        state.external_links = links;
 
         if let Some(url) = self.config.lighthouse_url.as_deref() {
             match lighthouse::services(&self.http, url).await {

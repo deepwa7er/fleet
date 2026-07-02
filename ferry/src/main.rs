@@ -532,7 +532,8 @@ async fn handle_query(
         Ok(config) => config,
         Err(response) => return response,
     };
-    match resolve::resolve(&config, &params.q) {
+    let services = load_services(&config);
+    match resolve::resolve(&config, &services, &params.q) {
         Resolution::Redirect(url) => Redirect::temporary(&url).into_response(),
         Resolution::Capture { api, text, open } => {
             capture_note(&state.http, &api, &text, &open).await
@@ -923,6 +924,33 @@ fn load_config(state: &AppState) -> Result<Config, Response> {
     Config::load(&state.config_path).map_err(|err| {
         (StatusCode::INTERNAL_SERVER_ERROR, format!("ferry config error: {err:#}")).into_response()
     })
+}
+
+/// The fleet's routed services (name → URL) from the published catalog —
+/// pilot's fleet.json on this same box, generated from the deploy manifests.
+/// Read per request like the config, and best-effort: a missing or malformed
+/// catalog just means no service shortcuts, never an error page.
+fn load_services(config: &Config) -> std::collections::BTreeMap<String, String> {
+    let Some(path) = &config.fleet_json else {
+        return Default::default();
+    };
+    #[derive(serde::Deserialize)]
+    struct Catalog {
+        services: Vec<Entry>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Entry {
+        name: String,
+        #[serde(default)]
+        url: Option<String>,
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Default::default();
+    };
+    let Ok(catalog) = serde_json::from_str::<Catalog>(&text) else {
+        return Default::default();
+    };
+    catalog.services.into_iter().filter_map(|s| Some((s.name, s.url?))).collect()
 }
 
 /// A one-off banner shown above the command form (a success confirmation or a

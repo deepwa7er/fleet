@@ -24,6 +24,14 @@ pub struct Config {
     #[serde(default)]
     pub commands: BTreeMap<String, String>,
 
+    /// Path to the published fleet catalog (pilot's fleet.json — on the same
+    /// box, so a plain file read). When set, every routed service's name is an
+    /// address-bar shortcut (`b drydock` → its URL) with nothing to register:
+    /// the catalog is generated from the fleet's deploy manifests. Explicit
+    /// commands shadow service names. Omit to disable.
+    #[serde(default)]
+    pub fleet_json: Option<std::path::PathBuf>,
+
     /// Optional note-capture command: `<keyword> <text>` POSTs the text to a
     /// notes app instead of redirecting. Omit the section to disable it.
     #[serde(default)]
