@@ -19,20 +19,40 @@ use crate::{deploy, git, manifest};
 #[derive(Debug, Clone, Deserialize)]
 pub struct Fleet {
     /// Base directory the member `path`s are relative to. A leading `~/`
-    /// expands to the home directory. Defaults to `~/code`.
-    #[serde(default = "default_root")]
-    root: String,
+    /// expands to the home directory. Defaults to the directory `fleet.toml`
+    /// itself lives in — the monorepo root — which keeps the manifest
+    /// relocatable (a CI checkout and a dev box resolve the same file with no
+    /// hardcoded path).
+    #[serde(default)]
+    root: Option<String>,
+    /// Where the loaded manifest lives; the `root` default. Set by [`load`].
+    #[serde(skip)]
+    manifest_dir: PathBuf,
     #[serde(default)]
     pub members: Vec<Member>,
     /// Optional configuration for `tugboat fleet docs` — where the docs frontend
     /// lives, how to build it, and where the assembled site is served.
     #[serde(default)]
     pub docs: Option<DocsConfig>,
-}
-fn default_root() -> String {
-    "~/code".into()
+    /// Backup-set additions for state that no in-repo `deploy.toml` can
+    /// declare (see [`BackupExtras`]); merged by `tugboat fleet gen`.
+    #[serde(default)]
+    pub backup: BackupExtras,
 }
 
+/// State the fleet backup must cover but which no in-monorepo `deploy.toml`
+/// declares: tugboat's own ledger (it isn't a deployed service, so it has no
+/// manifest) and external members' databases (their manifests live outside
+/// this repo, where `fleet gen --check` in CI can't read them).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BackupExtras {
+    /// `<dir>/<file>` SQLite databases under `/var/lib`, snapshotted online.
+    #[serde(default)]
+    pub sqlite: Vec<String>,
+    /// `/var/lib` subdirectories backed up in place.
+    #[serde(default)]
+    pub dirs: Vec<String>,
+}
 /// The `[docs]` table: how `tugboat fleet docs` builds and ships the fleet
 /// documentation site. The site is process-less static files (built from the
 /// `repo` frontend plus the harvested model and per-repo rustdoc) served by
@@ -172,9 +192,13 @@ pub fn deployables(fleet: &Fleet) -> Result<Vec<Deployable>> {
 }
 
 impl Fleet {
-    /// The fleet root as an absolute path (a leading `~/` expanded).
+    /// The fleet root as an absolute path: the explicit `root` (`~/` expanded)
+    /// when set, else the directory the manifest was loaded from.
     pub fn root_dir(&self) -> PathBuf {
-        expand_tilde(&self.root)
+        match &self.root {
+            Some(root) => expand_tilde(root),
+            None => self.manifest_dir.clone(),
+        }
     }
 
     /// Absolute path to a member's checkout. A `~/…` or absolute member path
@@ -237,8 +261,15 @@ pub fn resolve_manifest(explicit: Option<&Path>) -> Result<PathBuf> {
 pub fn load(path: &Path) -> Result<Fleet> {
     let text =
         fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let fleet: Fleet =
+    let mut fleet: Fleet =
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    // The manifest's own directory is the default fleet root.
+    fleet.manifest_dir = path
+        .canonicalize()
+        .with_context(|| format!("resolving {}", path.display()))?
+        .parent()
+        .context("fleet.toml has no parent directory")?
+        .to_path_buf();
 
     if fleet.members.is_empty() {
         bail!("fleet: at least one [[members]] entry is required");
@@ -280,7 +311,7 @@ pub fn load(path: &Path) -> Result<Fleet> {
 /// `fleet list` — show the configured members and whether each is a deployable
 /// service (has a `deploy.toml`) or clone-only.
 pub fn list(fleet: &Fleet) {
-    println!("Fleet ({} members, root {}):\n", fleet.members.len(), fleet.root);
+    println!("Fleet ({} members, root {}):\n", fleet.members.len(), fleet.root_dir().display());
     for m in &fleet.members {
         let tag = if fleet.dir(m).join("deploy.toml").is_file() {
             "deploy"

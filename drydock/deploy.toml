@@ -8,6 +8,13 @@
 # https://drydock.intern.deepwa7er.net (add the route in breakwater.toml).
 name = "drydock"
 host = "deepwa7er"
+# Loopback port the service binds; breakwater\'s route is GENERATED from this
+# (`tugboat fleet gen`).
+port = 8093
+
+[state]
+# The ticket queue DB — snapshotted by fleet-backup (list is generated).
+db = "drydock.db"
 
 [build]
 # Frontend (bun) then a static musl cross-compile. Unlike the pure-Rust services,

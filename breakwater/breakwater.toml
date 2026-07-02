@@ -55,61 +55,53 @@ cache_dir = "/var/lib/breakwater/acme"
 # loopback (127.0.0.1:<port>), so breakwater is their only tailnet-facing entry
 # point. (tidepool is the exception: not routed here at all — it's its own
 # Tailscale node and serves HTTPS itself.)
-[[routes]]
-label = "lighthouse"
-upstream = "127.0.0.1:8080"
+# ── BEGIN GENERATED ROUTES (tugboat fleet gen) ──
+# One route per fleet service declaring `port` in its deploy.toml — derived
+# by `tugboat fleet gen`; CI verifies with --check. Don't edit inside the
+# markers: change the service's deploy.toml and re-run the generator.
+# Hand-written routes (sonar's units, docs, source, external members)
+# live outside this block.
 
 [[routes]]
-label = "harbor"
-upstream = "127.0.0.1:8090"
+label = "clothes"
+upstream = "127.0.0.1:8099"
 
 [[routes]]
 label = "driftword"
 upstream = "127.0.0.1:8091"
 
 [[routes]]
-label = "lagoon"
-upstream = "127.0.0.1:8092"
+label = "drydock"
+upstream = "127.0.0.1:8093"
 
 [[routes]]
 label = "ferry"
 upstream = "127.0.0.1:7777"
 
 [[routes]]
-label = "music"
-upstream = "127.0.0.1:4533"
+label = "harbor"
+upstream = "127.0.0.1:8090"
 
 [[routes]]
-label = "discovery"
-upstream = "127.0.0.1:8765"
+label = "lighthouse"
+upstream = "127.0.0.1:8080"
 
-[[routes]]
-label = "slskd"
-upstream = "127.0.0.1:5030"
-
-# Drydock — the fleet ticket queue. Serves both the web view and the worker CLI's
-# API; the worker on the Mac reaches it through here over the tailnet.
-[[routes]]
-label = "drydock"
-upstream = "127.0.0.1:8093"
-
-# Fleet-wide settings (tide) — the shared dark/light theme. ferry's `b dark` /
-# `b light` redirect to its /set; every fleet UI reads /theme cross-origin.
-[[routes]]
-label = "tide"
-upstream = "127.0.0.1:8094"
-
-# Federated fleet search (spyglass) — one box that fans a query out to the fleet's
-# search services (source for code, lagoon for notes) and groups the results.
 [[routes]]
 label = "spyglass"
 upstream = "127.0.0.1:8095"
 
-# Wardrobe organizer (clothes) — clothes by category with product links, tracked
-# wishlist -> ordered -> owned against per-category targets.
 [[routes]]
-label = "clothes"
-upstream = "127.0.0.1:8099"
+label = "tide"
+upstream = "127.0.0.1:8094"
+
+# ── END GENERATED ROUTES ──
+
+# lagoon — capture-first notes. An EXTERNAL member (its repo isn't in the fleet
+# monorepo, so `fleet gen` can't read its deploy.toml in CI); its route is the
+# one fleet service maintained by hand here.
+[[routes]]
+label = "lagoon"
+upstream = "127.0.0.1:8092"
 
 # The fleet documentation site (pilot) — process-less static files, so breakwater
 # serves the directory directly instead of proxying an upstream. `tugboat fleet

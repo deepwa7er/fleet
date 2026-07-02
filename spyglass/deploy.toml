@@ -5,6 +5,9 @@
 # deploy/provision.sh — run that once before the first deploy.
 name = "spyglass"
 host = "deepwa7er"
+# Loopback port the service binds; breakwater\'s route is GENERATED from this
+# (`tugboat fleet gen`).
+port = 8095
 description = "Federated fleet search — one box over code (source) and notes (lagoon)."
 
 [build]

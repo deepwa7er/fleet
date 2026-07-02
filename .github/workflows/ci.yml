@@ -22,6 +22,8 @@ jobs:
         run: cargo test --workspace
       - name: Clippy (warnings are errors)
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Generated registries match declarations
+        run: TUGBOAT_FLEET=$PWD/fleet.toml cargo run -q -p tugboat -- fleet gen --check
 
   web:
     runs-on: ubuntu-latest

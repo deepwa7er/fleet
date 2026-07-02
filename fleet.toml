@@ -15,12 +15,8 @@
 # it visible to `tugboat serve`, `fleet deploy`, and lighthouse — nothing to
 # register when adding a service.
 #
-# NOTE (migration phase 4 pending): the docs harvest still iterates members, so
-# `fleet docs` does not yet document the monorepo's services — do not reship the
-# docs site until the harvest is reworked. See
-# secondbrain/projects/fleet-monorepo.md.
-
-root = "~/code/fleet"
+# `root` defaults to this file's own directory — the monorepo root — so the
+# manifest works from any checkout location (dev box, fedora, CI).
 
 # ── repos outside the monorepo (clone/pull/status only) ──────────────────────
 
@@ -43,6 +39,15 @@ repo = "git@github.com:deepwa7er/pilot.git"
 # the laptop — standardized here as ~/code/sonar.
 path = "~/code/sonar"
 repo = "git@github.com:deepwa7er/sonar.git"
+
+# ── backup-set extras ─────────────────────────────────────────────────────────
+# State no in-monorepo deploy.toml can declare: lagoon is an external member
+# (its manifest isn't readable in CI), and tugboat's VPS ledger belongs to a
+# tool, not a deployed service. Everything else declares [state] in its own
+# deploy.toml; `tugboat fleet gen` merges both into fleet-backup/state.sh.
+[backup]
+sqlite = ["lagoon/lagoon.sqlite"]
+dirs = ["tugboat"]
 
 # ── the fleet documentation site ─────────────────────────────────────────────
 # `tugboat fleet docs` builds the `pilot` frontend, overlays the harvested model

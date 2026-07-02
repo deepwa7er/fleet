@@ -7,6 +7,9 @@
 # membership) is deploy/provision.sh — re-run it when you enroll a new service.
 name = "lighthouse"
 host = "deepwa7er"
+# Loopback port the service binds; breakwater\'s route is GENERATED from this
+# (`tugboat fleet gen`).
+port = 8080
 
 [build]
 # Frontend (bun) then a static musl cross-compile of the backend. No Node/Rust

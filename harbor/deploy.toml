@@ -6,6 +6,9 @@
 # server/deploy/setup-vps.sh and server/deploy/harbor.service (see README).
 name = "harbor"
 host = "deepwa7er"
+# Loopback port the service binds; breakwater\'s route is GENERATED from this
+# (`tugboat fleet gen`).
+port = 8090
 
 [build]
 # 1. Pack + sign the extension (build/harbor.crx + build/updates.xml).

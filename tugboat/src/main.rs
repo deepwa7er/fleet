@@ -12,6 +12,7 @@ mod agent;
 mod deploy;
 mod docs;
 mod fleet;
+mod gen;
 mod git;
 mod hooks;
 mod manifest;
@@ -168,6 +169,9 @@ enum FleetAction {
     Clone,
     /// Fast-forward-only pull every clean member checkout.
     Pull,
+    /// Regenerate the derived registries (breakwater routes, backup state)
+    /// from each service's deploy.toml declarations.
+    Gen(GenArgs),
     /// Show a git summary per member.
     Status,
     /// Deploy each deployable member in listed order.
@@ -176,6 +180,14 @@ enum FleetAction {
     Docs(FleetDocsArgs),
     /// Install/remove the git hooks that auto-refresh the docs on commit.
     Hooks(FleetHooksArgs),
+}
+
+#[derive(Parser)]
+struct GenArgs {
+    /// Verify instead of write: exit non-zero when any generated registry
+    /// doesn't match the declarations (CI runs this).
+    #[arg(long)]
+    check: bool,
 }
 
 #[derive(Parser)]
@@ -307,6 +319,7 @@ fn run_fleet(args: FleetArgs) -> Result<()> {
     let manifest_path = fleet::resolve_manifest(args.manifest.as_deref())?;
     let fleet = fleet::load(&manifest_path)?;
     match args.action {
+        FleetAction::Gen(g) => gen::run(&fleet, g.check),
         FleetAction::List => {
             fleet::list(&fleet);
             Ok(())

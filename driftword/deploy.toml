@@ -5,6 +5,9 @@
 # deploy/provision.sh — run that once before the first deploy.
 name = "driftword"
 host = "deepwa7er"
+# Loopback port the service binds; breakwater\'s route is GENERATED from this
+# (`tugboat fleet gen`).
+port = 8091
 
 [build]
 # Static musl cross-compile. driftword is pure Rust (no C deps), so only the

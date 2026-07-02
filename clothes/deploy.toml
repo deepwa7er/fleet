@@ -8,6 +8,13 @@
 # https://clothes.intern.deepwa7er.net (add the route in breakwater.toml).
 name = "clothes"
 host = "deepwa7er"
+# Loopback port the service binds; breakwater\'s route is GENERATED from this
+# (`tugboat fleet gen`).
+port = 8099
+
+[state]
+# The wardrobe DB — snapshotted by fleet-backup (list is generated).
+db = "clothes.db"
 
 [build]
 # Frontend (bun) then a static musl cross-compile. clothes bundles SQLite's C

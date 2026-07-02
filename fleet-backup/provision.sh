@@ -15,8 +15,11 @@ REMOTE=/opt/fleet-backup/provision
 
 echo ">> Syncing units + script to $HOST ..."
 ssh "$HOST" "mkdir -p '$REMOTE'"
+# state.sh is the GENERATED backup set (`tugboat fleet gen`); the script
+# refuses to run without it, so provisioning must ship it too.
 rsync -az \
   "$SCRIPT_DIR/fleet-backup" \
+  "$SCRIPT_DIR/state.sh" \
   "$SCRIPT_DIR/fleet-backup.service" \
   "$SCRIPT_DIR/fleet-backup.timer" \
   "$HOST:$REMOTE/"

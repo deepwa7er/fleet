@@ -2,6 +2,13 @@
 #   deploy:  tugboat deploy      (from this directory)
 name = "ferry"
 host = "deepwa7er"
+# Loopback port the service binds; breakwater\'s route is GENERATED from this
+# (`tugboat fleet gen`).
+port = 7777
+
+[state]
+# The live address-bar config (commands added via the web UI).
+files = true
 
 [build]
 # Static musl release build for the VPS. The target is installed on demand so a

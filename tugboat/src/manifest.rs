@@ -23,6 +23,18 @@ pub struct Manifest {
     /// overlay, `--host`, or `TUGBOAT_HOST`.
     #[serde(default)]
     pub host: Option<String>,
+    /// Loopback port the service listens on. THE port authority: `tugboat
+    /// fleet gen` derives breakwater's route from it and `fleet docs` publishes
+    /// it in fleet.json. Omit for services breakwater doesn't proxy (breakwater
+    /// itself, tidepool's own-node HTTPS).
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// The service's durable state under `/var/lib/<name>` on the host,
+    /// declared so the fleet backup set is generated (`tugboat fleet gen`)
+    /// instead of hand-maintained — the omission that once left two databases
+    /// unprotected.
+    #[serde(default)]
+    pub state: Option<StateDecl>,
     pub build: Build,
     pub artifacts: Vec<Artifact>,
     /// On-host health gate after restart. Omit to default to `systemctl
@@ -35,6 +47,18 @@ pub struct Manifest {
     pub verify: Option<Verify>,
     #[serde(default)]
     pub lighthouse: Lighthouse,
+}
+
+/// What of `/var/lib/<name>` the fleet backup preserves.
+#[derive(Debug, Deserialize, Clone)]
+pub struct StateDecl {
+    /// A SQLite database file inside the state dir, snapshotted with SQLite's
+    /// online-backup API (a raw copy of a live WAL database can tear).
+    #[serde(default)]
+    pub db: Option<String>,
+    /// Back up the state dir's plain files in place (configs, JSONL, caches).
+    #[serde(default)]
+    pub files: bool,
 }
 
 #[derive(Debug, Deserialize)]

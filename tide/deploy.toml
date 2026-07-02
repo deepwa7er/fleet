@@ -5,6 +5,9 @@
 # deploy/provision.sh — run that once before the first deploy.
 name = "tide"
 host = "deepwa7er"
+# Loopback port the service binds; breakwater\'s route is GENERATED from this
+# (`tugboat fleet gen`).
+port = 8094
 description = "Fleet-wide settings — the shared dark/light theme every service honors."
 
 [build]

@@ -581,7 +581,10 @@ fn build_service_doc(
     // route host's first DNS label is the service it fronts.
     let route = routes.get(&name).or_else(|| routes.get(&label));
     let url = route.map(|r| r.url.clone());
-    let port = route.and_then(|r| r.port);
+    // The deploy.toml `port` declaration is the authority (breakwater's route
+    // is generated from it); the route's parsed upstream covers services that
+    // don't declare one (external members, hand-written routes).
+    let port = manifest.as_ref().and_then(|m| m.port).or_else(|| route.and_then(|r| r.port));
 
     // A member is a deployable service iff it has a deploy.toml.
     let deployed = manifest.is_some();

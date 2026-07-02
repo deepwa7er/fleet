@@ -10,6 +10,10 @@
 name = "breakwater"
 host = "deepwa7er"
 
+[state]
+# The ACME cert cache (regenerable, but cheap to keep).
+files = true
+
 [build]
 # Static musl release build for the VPS. The target is installed on demand so a
 # fresh dev machine works; the musl linker must be on PATH (see README).
