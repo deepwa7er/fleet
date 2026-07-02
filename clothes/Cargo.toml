@@ -21,6 +21,3 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # async runtime via spawn_blocking.
 ureq = "2"
 scraper = "0.20"
-
-[profile.release]
-strip = true

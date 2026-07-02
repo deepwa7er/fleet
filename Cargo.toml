@@ -1,0 +1,24 @@
+# The fleet workspace: one lockfile, one target dir, one dependency stack.
+# Service crates live in top-level directories (tugboat discovers deployables
+# by deploy.toml presence there); shared library crates live under crates/.
+[workspace]
+resolver = "2"
+members = [
+    "breakwater",
+    "clothes",
+    "driftword",
+    "drydock",
+    "ferry",
+    "harbor/server",
+    "lighthouse",
+    "source",
+    "spyglass",
+    "tide",
+    "tugboat",
+]
+
+# Release profile for the whole fleet (member profiles are ignored in a
+# workspace). strip+lto were already the norm in the individual repos.
+[profile.release]
+strip = true
+lto = true
