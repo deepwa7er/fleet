@@ -122,9 +122,9 @@ impl Updater {
         let mut state = tokio::task::spawn_blocking(move || -> Result<State> {
             if let Some(remote) = remote.as_deref() {
                 git::sync(&source_dir, remote, &branch)
-                    .with_context(|| format!("syncing {source_dir:?} from {remote}"))?;
+                    .with_context(|| format!("syncing {} from {remote}", source_dir.display()))?;
             }
-            secondbrain::build(&source_dir, remote.as_deref())
+            Ok(secondbrain::build(&source_dir, remote.as_deref()))
         })
         .await
         .context("refresh task panicked")??;
@@ -248,13 +248,13 @@ fn config_path_from_args() -> PathBuf {
         .map_or_else(|| Path::new("harbor.toml").to_path_buf(), PathBuf::from)
 }
 
-/// Serve the packed extension as a plain file download. ServeDir labels
+/// Serve the packed extension as a plain file download. `ServeDir` labels
 /// `harbor.crx` as `application/x-chrome-extension`, which Chromium-family
 /// browsers intercept as an inline extension install — and refuse, for a
 /// self-hosted crx — instead of downloading it ("Failed - No file"). The manual
 /// install page links here, where we force a generic type + attachment
 /// disposition so the file just downloads. The force-install poller is
-/// unaffected: it keeps fetching `/extension/harbor.crx` from ServeDir.
+/// unaffected: it keeps fetching `/extension/harbor.crx` from `ServeDir`.
 async fn download_crx(path: PathBuf) -> axum::response::Response {
     use axum::http::{StatusCode, header};
     use axum::response::IntoResponse;

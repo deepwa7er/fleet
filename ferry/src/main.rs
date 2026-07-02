@@ -916,6 +916,9 @@ fn internal_error(err: anyhow::Error) -> Response {
 
 /// The config is re-read on every request so edits take effect immediately.
 /// At address-bar request rates that costs nothing and keeps the server stateless.
+// The Err variant IS the HTTP response the caller hands straight back; boxing
+// it to shrink the Result would buy nothing at address-bar request rates.
+#[allow(clippy::result_large_err)]
 fn load_config(state: &AppState) -> Result<Config, Response> {
     Config::load(&state.config_path).map_err(|err| {
         (StatusCode::INTERNAL_SERVER_ERROR, format!("ferry config error: {err:#}")).into_response()

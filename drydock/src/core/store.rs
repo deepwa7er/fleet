@@ -277,6 +277,10 @@ impl Store {
 
     /// Apply a single legal transition atomically: guard the current state,
     /// update the row, append an optional comment, and record the event.
+    // Each argument is one facet of a transition; the public state-machine
+    // methods pass mostly None. Bundling them into a struct would add a level
+    // of indirection without adding meaning — the arity is the domain's.
+    #[allow(clippy::too_many_arguments)]
     fn transition(
         &self,
         id: i64,

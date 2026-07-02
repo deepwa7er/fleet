@@ -99,7 +99,7 @@ pub struct Source {
 ///
 /// A file that fails to parse is skipped with a warning rather than failing the
 /// whole snapshot — one malformed file should not blank the dashboard.
-pub fn build(source_dir: &Path, remote: Option<&str>) -> Result<State> {
+pub fn build(source_dir: &Path, remote: Option<&str>) -> State {
     let mut note_paths = HashMap::new();
     let mut projects = read_dir(&source_dir.join("projects"), &mut note_paths);
     let mut areas = read_dir(&source_dir.join("areas"), &mut note_paths);
@@ -115,7 +115,7 @@ pub fn build(source_dir: &Path, remote: Option<&str>) -> Result<State> {
         t
     });
 
-    Ok(State {
+    State {
         generated_at: now_unix(),
         source: Source {
             dir: source_dir.display().to_string(),
@@ -129,7 +129,7 @@ pub fn build(source_dir: &Path, remote: Option<&str>) -> Result<State> {
         topology,
         fleet_stats: None,
         note_paths,
-    })
+    }
 }
 
 /// Parse every `*.md` file in `dir` into an [`Entry`], skipping unparseable ones.
@@ -199,11 +199,10 @@ fn next_items(text: &str) -> Vec<String> {
         // Collect until the next heading at the same or higher level.
         let mut end = i + 1;
         while end < lines.len() {
-            if let Some((lvl, _)) = heading(lines[end]) {
-                if lvl <= level {
+            if let Some((lvl, _)) = heading(lines[end])
+                && lvl <= level {
                     break;
                 }
-            }
             end += 1;
         }
         return lines[i + 1..end]

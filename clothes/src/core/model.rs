@@ -48,6 +48,10 @@ str_enum! {
     }
 }
 
+// `Status` is declared by `str_enum!`, which has no way to carry
+// `#[derive(Default)]` + a `#[default]` variant marker; the manual impl is
+// the macro's escape hatch.
+#[allow(clippy::derivable_impls)]
 impl Default for Status {
     fn default() -> Self {
         Status::Wishlist

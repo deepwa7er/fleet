@@ -137,9 +137,9 @@ pub async fn run(repos: &[Repo], query: &str, regex: bool) -> Result<SearchResul
     let status = child.wait().await.context("waiting on ripgrep")?;
     // ripgrep exits 1 when there are simply no matches — that's success here.
     // A real failure (bad regex, etc.) is code 2; surface its stderr.
-    if !truncated && total == 0 {
-        if let Some(code) = status.code() {
-            if code >= 2 {
+    if !truncated && total == 0
+        && let Some(code) = status.code()
+            && code >= 2 {
                 let mut err = String::new();
                 if let Some(mut stderr) = child.stderr.take() {
                     use tokio::io::AsyncReadExt;
@@ -147,8 +147,6 @@ pub async fn run(repos: &[Repo], query: &str, regex: bool) -> Result<SearchResul
                 }
                 anyhow::bail!("ripgrep error: {}", err.trim());
             }
-        }
-    }
 
     let repos_out = by_repo
         .into_iter()
