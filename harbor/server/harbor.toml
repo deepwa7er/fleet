@@ -1,0 +1,54 @@
+# harbor-server configuration (VPS baseline).
+#
+# secondbrain is hosted on GitHub (private). harbor keeps its own checkout on the
+# VPS by pulling from GitHub on each refresh, then reads it. The VPS authenticates
+# with a read-only deploy key provisioned by deploy/setup-vps.sh (the systemd unit
+# points git at it via GIT_SSH_COMMAND).
+#
+# For local development, copy this to `harbor.local.toml`, point `source_dir` at
+# your local secondbrain checkout, drop `git_remote`, and bind to 127.0.0.1.
+# Run with:  harbor-server harbor.local.toml
+
+# Binds loopback; breakwater is the tailnet front door and serves harbor at
+# https://harbor.intern.deepwa7er.net (no public exposure).
+bind = "127.0.0.1"
+port = 8090
+
+# harbor's own checkout of secondbrain (created on first run by cloning
+# git_remote). harbor only ever reads it.
+source_dir = "/srv/harbor/secondbrain"
+
+# Private secondbrain repo. harbor clones it if source_dir is missing and
+# hard-resets to origin/<branch> on each refresh. Auth is the read-only deploy
+# key (see deploy/setup-vps.sh).
+git_remote = "git@github.com:deepwa7er/secondbrain.git"
+branch = "main"
+
+# How often to pull + re-parse (seconds).
+refresh_secs = 60
+
+# Live VPS service health: harbor fetches lighthouse's /api/services. lighthouse
+# binds loopback on the same host, so reach it there.
+lighthouse_url = "http://127.0.0.1:8080"
+
+# Optional: a GitHub token so PRIVATE repos (lighthouse, sonar) also show commit
+# activity. Public repos work without it. Use a fine-grained, read-only token.
+# github_token = "github_pat_…"
+
+# How long a fetched commit-activity entry stays fresh (seconds).
+activity_ttl_secs = 600
+
+# Read-only, tailnet-bound service: "*" is fine. Set a specific extension
+# origin (chrome-extension://<id>) to lock it down.
+allow_origin = "*"
+
+# Self-hosted extension distribution: harbor serves harbor.crx + updates.xml from
+# this dir (relative to WorkingDirectory=/srv/harbor) at /extension, so tailnet
+# devices force-install + auto-update. tugboat ships the artifacts here.
+extension_dir = "dist"
+
+# Launchable links to other tailnet services, shown as an "Apps" card on the
+# new-tab page.
+[[external_links]]
+name = "driftword"
+url = "https://driftword.intern.deepwa7er.net"

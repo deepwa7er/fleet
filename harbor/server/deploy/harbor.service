@@ -1,0 +1,32 @@
+[Unit]
+Description=harbor — secondbrain new-tab API
+Documentation=https://github.com/deepwa7er (harbor)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Reads /etc/harbor/harbor.toml; binds the tailnet IP on :8090.
+ExecStart=/usr/local/bin/harbor-server /etc/harbor/harbor.toml
+WorkingDirectory=/srv/harbor
+Restart=on-failure
+RestartSec=2
+
+# Pull the private secondbrain repo using the read-only deploy key, with GitHub's
+# host key pinned (both provisioned by deploy/setup-vps.sh).
+Environment=HOME=/srv/harbor
+# Quoted: systemd splits Environment= values on whitespace, so the whole
+# command (with its -o options) must be a single double-quoted token.
+Environment="GIT_SSH_COMMAND=ssh -i /etc/harbor/deploy_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/etc/harbor/known_hosts -o StrictHostKeyChecking=yes"
+
+# Least privilege: an unprivileged service account. It clones/pulls into
+# /srv/harbor and otherwise writes nothing.
+User=harbor
+Group=harbor
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/harbor
+
+[Install]
+WantedBy=multi-user.target
