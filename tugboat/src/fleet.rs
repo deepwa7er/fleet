@@ -149,6 +149,28 @@ pub fn discover_deployables(root: &Path) -> Result<Vec<Deployable>> {
     Ok(found)
 }
 
+/// Every deployable service the fleet knows: the directories under the fleet
+/// root with a `deploy.toml` ([`discover_deployables`]), plus any external
+/// member whose checkout carries one (e.g. lagoon — deployable, but not part
+/// of the monorepo). A root directory wins a name collision. Sorted by name.
+pub fn deployables(fleet: &Fleet) -> Result<Vec<Deployable>> {
+    let mut found = discover_deployables(&fleet.root_dir())?;
+    for member in &fleet.members {
+        let dir = fleet.dir(member);
+        let manifest_path = dir.join("deploy.toml");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let name = member.label().to_string();
+        if found.iter().any(|d| d.name == name) {
+            continue;
+        }
+        found.push(Deployable { name, dir, manifest_path });
+    }
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(found)
+}
+
 impl Fleet {
     /// The fleet root as an absolute path (a leading `~/` expanded).
     pub fn root_dir(&self) -> PathBuf {
@@ -362,7 +384,7 @@ pub fn deploy(
     continue_on_error: bool,
 ) -> Result<()> {
     let root = fleet.root_dir();
-    let mut deployables = discover_deployables(&root)?;
+    let mut deployables = self::deployables(fleet)?;
 
     if let Some(only) = only {
         let wanted: Vec<&str> = only.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
@@ -421,6 +443,32 @@ fn fmt_list(items: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// External members with a deploy.toml stay deployable (lagoon) — the
+    /// daemon and `fleet deploy` must see root directories AND such members.
+    #[test]
+    fn deployables_merges_members_with_manifests() {
+        let tmp = std::env::temp_dir().join(format!("tugboat-deployables-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let root = tmp.join("fleet");
+        let ext = tmp.join("external");
+        fs::create_dir_all(root.join("svc")).unwrap();
+        fs::write(root.join("svc/deploy.toml"), "name = \"svc\"\n").unwrap();
+        fs::create_dir_all(&ext).unwrap();
+        fs::write(ext.join("deploy.toml"), "name = \"external\"\n").unwrap();
+
+        let manifest = format!(
+            "root = \"{}\"\n\n[[members]]\npath = \"{}\"\nrepo = \"git@example.com:x.git\"\n",
+            root.display(),
+            ext.display()
+        );
+        let fleet: Fleet = toml::from_str(&manifest).unwrap();
+        let names: Vec<String> =
+            super::deployables(&fleet).unwrap().into_iter().map(|d| d.name).collect();
+        assert_eq!(names, ["external", "svc"], "root dirs and manifest-bearing members, sorted");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
 
     #[test]
     fn discovers_only_dirs_with_a_deploy_toml() {

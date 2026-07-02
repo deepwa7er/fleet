@@ -323,8 +323,7 @@ async fn health(State(state): State<Arc<ServeState>>) -> Json<HealthInfo> {
 
 /// `GET /services` — the deployable fleet members.
 async fn list_services(State(state): State<Arc<ServeState>>) -> Json<Vec<ServiceInfo>> {
-    let root = state.fleet().root_dir();
-    let services = fleet::discover_deployables(&root)
+    let services = fleet::deployables(&state.fleet())
         .unwrap_or_default()
         .into_iter()
         .map(|d| ServiceInfo {
@@ -396,8 +395,7 @@ async fn list_status(
     Query(query): Query<StatusQuery>,
 ) -> Json<Vec<StatusInfo>> {
     let deployed = parse_deployed(&query.deployed);
-    let root = state.fleet().root_dir();
-    let infos = fleet::discover_deployables(&root)
+    let infos = fleet::deployables(&state.fleet())
         .unwrap_or_default()
         .into_iter()
         .map(|d| {
@@ -500,8 +498,7 @@ async fn changelog(
         return Err((StatusCode::BAD_REQUEST, "from/to must be git shas".to_owned()));
     }
 
-    let root = state.fleet().root_dir();
-    let dir = fleet::discover_deployables(&root)
+    let dir = fleet::deployables(&state.fleet())
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?
         .into_iter()
         .find(|d| d.name == name)
@@ -554,8 +551,9 @@ async fn deploy_service(
     // Validate fully before reserving the in-flight slot, so a rejected request
     // never leaves a service marked busy. Discovery guarantees the manifest
     // exists, so finding the service by name yields a ready-to-use manifest path.
-    let root = state.fleet().root_dir();
-    let manifest_path = fleet::discover_deployables(&root)
+    let fleet = state.fleet();
+    let root = fleet.root_dir();
+    let manifest_path = fleet::deployables(&fleet)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?
         .into_iter()
         .find(|d| d.name == name)
@@ -726,8 +724,7 @@ async fn fetch_keeper(state: Arc<ServeState>) {
     let mut ticker = tokio::time::interval(FETCH_INTERVAL);
     loop {
         ticker.tick().await;
-        let root = state.fleet().root_dir();
-        let dirs: Vec<PathBuf> = fleet::discover_deployables(&root)
+        let dirs: Vec<PathBuf> = fleet::deployables(&state.fleet())
             .unwrap_or_default()
             .into_iter()
             .map(|d| d.dir)
