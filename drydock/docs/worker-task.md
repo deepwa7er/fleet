@@ -17,10 +17,11 @@ strip those steps out; they are what makes the worker behave like you.
 
 ## Task configuration (in the Desktop UI)
 
-- **Working folder:** `~/code` — not a single repo, so the worker can reach every
-  service repo *and* `~/secondbrain`. (Desktop's per-run git-worktree isolation
-  targets a single repo and therefore doesn't apply here; the worker isolates work
-  with a per-ticket branch inside each target repo instead.)
+- **Working folder:** `~/code` — not a single repo, so the worker can reach the
+  fleet monorepo (`~/code/fleet`), the external repos, *and* `~/secondbrain`.
+  (Desktop's per-run git-worktree isolation targets a single repo and therefore
+  doesn't apply here; the worker isolates each ticket in its own git worktree
+  under `~/code/.drydock/` instead — see step 4.)
 - **Auto-memory:** **ON** — surfaces your project/feedback memories.
 - **Interval:** ~20–30 min, and long enough that one run finishes before the next
   fires (avoid overlapping runs touching the same repo working tree).
@@ -84,12 +85,25 @@ steps below call out where. You learn the type from step 1's output.
    Read the goal, criteria/constraints, AND the whole thread — including any
    answers you previously asked for. This is how a resumed ticket carries history.
 
-4. PREPARE — locate the target repo via PORTFOLIO.md.
-   FEATURE: pull its default branch. If branch ticket/<id>-<slug> already EXISTS,
-     check it out and CONTINUE (resumed ticket); else create it from the default
-     branch. Read the repo's CLAUDE.md / conventions BEFORE writing any code.
-   INVESTIGATE: read the repo — and logs / ssh / the lighthouse dashboard as
-     needed. Do NOT create a branch or modify anything: investigation is READ-ONLY.
+4. PREPARE — locate the target via PORTFOLIO.md. The fleet is a MONOREPO at
+   ~/code/fleet: every service is a top-level directory there (a few projects,
+   like lagoon, still live in their own repos at ~/code/<name> — PORTFOLIO.md
+   says which).
+   FEATURE: NEVER work in the shared checkout — isolate in a per-ticket
+     worktree, then work inside it (in the service's directory for a monorepo
+     ticket):
+       cd ~/code/fleet && git fetch origin
+       # fresh ticket (branch doesn't exist yet):
+       git worktree add ~/code/.drydock/ticket-<id>-<slug> -b ticket/<id>-<slug> origin/main
+       # resumed ticket (branch exists — use origin/ticket/... if it's only remote):
+       git worktree add ~/code/.drydock/ticket-<id>-<slug> ticket/<id>-<slug>
+     For a ticket on an external repo, use the same worktree pattern against
+     that repo's checkout. Read the target's CLAUDE.md / conventions BEFORE
+     writing any code. Builds and tests run inside the worktree (it is a full
+     workspace checkout).
+   INVESTIGATE: read the code — and logs / ssh / the lighthouse dashboard as
+     needed. Do NOT create a branch, worktree, or modify anything:
+     investigation is READ-ONLY.
 
 5. WORK.
    FEATURE: build toward the acceptance criteria, matching conventions; run the
@@ -120,11 +134,11 @@ steps below call out where. You learn the type from step 1's output.
       recommendation. Pass the whole report as one quoted argument.
       Run: drydock report <id> "<your findings>"
 
-7. CLEAN UP — FEATURE only: return the repo to its default branch so the working
-   tree isn't parked on the ticket branch (tugboat deploys the working tree):
-     git checkout <default-branch>   (e.g. main)
-   The branch is already pushed, so nothing is lost; a resumed ticket re-checks it
-   out in step 4. INVESTIGATE created no branch — nothing to clean up.
+7. CLEAN UP — FEATURE only: the branch is pushed, so remove the worktree
+   (nothing is lost; a resumed ticket re-creates it in step 4):
+     cd ~/code/fleet && git worktree remove --force ~/code/.drydock/ticket-<id>-<slug>
+   The shared checkout was never touched. INVESTIGATE created nothing — no
+   cleanup.
 
 HARD RULES
 - One ticket per run.
@@ -132,8 +146,9 @@ HARD RULES
   no mutating ssh) — read-only inspection during an investigation is fine. Your
   terminal state is in-review; the human acts on it.
 - INVESTIGATE is READ-ONLY: never modify a repo or the fleet while investigating.
-- FEATURE: never commit to a repo's default branch (work branch only, no
-  force-push); end the run on the default branch.
+- FEATURE: never commit to a repo's default branch (ticket branch only, no
+  force-push), and never touch the shared checkout — all work happens inside
+  the ticket's worktree.
 - NEVER introduce a hack to reach 'done'. Use `drydock block` instead.
 - Do ONLY what the ticket asks. Note unrelated problems in the thread (a follow-up
   ticket), don't fix them.
