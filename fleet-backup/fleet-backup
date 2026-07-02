@@ -5,6 +5,8 @@
 # Backs up the small per-service state under /var/lib that ISN'T reproducible
 # from a tugboat deploy:
 #   - lagoon  : the notes SQLite DB (the most valuable thing on the box)
+#   - drydock : the ticket queue SQLite DB (autonomous fleet work + Q&A)
+#   - clothes : the wardrobe SQLite DB
 #   - ferry   : the live address-bar config (commands added via its web UI)
 #   - tugboat : deploy ledgers + transcripts
 #   - breakwater : the ACME cert cache (regenerable, but cheap to keep)
@@ -17,13 +19,16 @@ STAGE=/var/lib/fleet-backup/stage
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
 
-# lagoon: take a CONSISTENT online snapshot of the SQLite DB rather than copying
-# the live file — a raw copy of a database being written (esp. in WAL mode) can
-# tear. `.backup` uses SQLite's online-backup API and is safe during writes.
-if [ -f /var/lib/lagoon/lagoon.sqlite ]; then
-  mkdir -p "$STAGE/lagoon"
-  sqlite3 /var/lib/lagoon/lagoon.sqlite ".backup '$STAGE/lagoon/lagoon.sqlite'"
-fi
+# SQLite-backed services: take a CONSISTENT online snapshot of each DB rather
+# than copying the live file — a raw copy of a database being written (esp. in
+# WAL mode) can tear. `.backup` uses SQLite's online-backup API and is safe
+# during writes.
+for db in lagoon/lagoon.sqlite drydock/drydock.db clothes/clothes.db; do
+  if [ -f "/var/lib/$db" ]; then
+    mkdir -p "$STAGE/$(dirname "$db")"
+    sqlite3 "/var/lib/$db" ".backup '$STAGE/$db'"
+  fi
+done
 
 # The rest are small files (config, JSONL, certs); restic reads them in place.
 paths=("$STAGE")
