@@ -14,12 +14,11 @@
 # this script never contains secrets. The repo must already be `restic init`-ed.
 set -euo pipefail
 
-STATE_SH="$(dirname "$0")/state.sh"
+STATE_SH=/etc/fleet-backup/state.sh
 if [ ! -r "$STATE_SH" ]; then
   echo "fleet-backup: missing generated backup set at $STATE_SH — run \`tugboat fleet gen\` and re-provision" >&2
   exit 1
 fi
-# shellcheck source=state.sh
 . "$STATE_SH"
 
 STAGE=/var/lib/fleet-backup/stage

@@ -39,8 +39,10 @@ fi
 sudo mkdir -p /etc/fleet-backup /var/lib/fleet-backup /var/cache/fleet-backup
 sudo chmod 700 /etc/fleet-backup
 
-# Script + units.
+# Script + units + the generated backup set (read from /etc/fleet-backup,
+# alongside restic.env — it is config, not code).
 sudo install -m755 "$P/fleet-backup" /usr/local/bin/fleet-backup
+sudo install -m644 "$P/state.sh" /etc/fleet-backup/state.sh
 sudo install -m644 "$P/fleet-backup.service" /etc/systemd/system/fleet-backup.service
 sudo install -m644 "$P/fleet-backup.timer"   /etc/systemd/system/fleet-backup.timer
 sudo systemctl daemon-reload
