@@ -14,7 +14,7 @@ host = "deepwa7er"
 cmd = "(cd web && bun install && bun run build) && CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --target x86_64-unknown-linux-musl"
 
 [[artifacts]]
-src = "target/x86_64-unknown-linux-musl/release/lighthouse"
+src = "{workspace}/target/x86_64-unknown-linux-musl/release/lighthouse"
 dest = "/usr/local/bin/lighthouse"
 
 [[artifacts]]

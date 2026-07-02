@@ -116,19 +116,32 @@ impl Drop for WorktreeGuard {
 
 /// The clean checkout a default-branch deploy builds from.
 struct Prepared {
-    /// The worktree directory to build in.
+    /// The directory to build in: the service's directory inside the worktree
+    /// (the worktree root itself when the service is its own repository).
     build_dir: PathBuf,
+    /// The worktree root — the repository checkout containing `build_dir`, and
+    /// what `{workspace}` expands to. For fleet monorepo members this is the
+    /// cargo workspace root, where `target/` lives.
+    checkout_root: PathBuf,
     /// The ledger stamp for the checked-out default-branch commit.
     stamp: Stamp,
     /// Removes the worktree when dropped; held for the deploy's lifetime.
     guard: WorktreeGuard,
 }
 
+/// Serializes `git fetch` across concurrent deploys. Monorepo members share one
+/// repository, and concurrent fetches of the same remote can contend on git's
+/// ref locks; a fetch is brief next to a build, so taking them one at a time
+/// costs nothing.
+static FETCH_LOCK: Mutex<()> = Mutex::new(());
+
 /// Fetch origin and check its default branch out into a fresh detached worktree,
 /// so the deploy builds exactly what's on the canonical branch — not whatever the
 /// shared checkout is parked on (which the drydock worker, or a stray `git
-/// checkout`, can leave on a feature branch). The worktree is removed when the
-/// returned guard drops.
+/// checkout`, can leave on a feature branch). The worktree checks out the whole
+/// repository; the returned `build_dir` is the service's directory within it, so
+/// a monorepo member builds inside a full workspace checkout. The worktree is
+/// removed when the returned guard drops.
 fn prepare_default_branch(project_dir: &Path, at: u64, log: &dyn LogSink) -> Result<Prepared> {
     if !git::state(project_dir).is_repo {
         bail!(
@@ -137,23 +150,45 @@ fn prepare_default_branch(project_dir: &Path, at: u64, log: &dyn LogSink) -> Res
             project_dir.display()
         );
     }
+    // The service's path inside its repository — empty for a standalone repo,
+    // e.g. `drydock` for a fleet monorepo member. Canonicalize both sides so
+    // symlinked paths (macOS /tmp, ~ aliases) can't break the prefix match.
+    let toplevel = git::toplevel(project_dir)?
+        .canonicalize()
+        .context("resolving the repository root")?;
+    let rel = project_dir
+        .canonicalize()
+        .context("resolving the service directory")?
+        .strip_prefix(&toplevel)
+        .map(Path::to_path_buf)
+        .with_context(|| {
+            format!(
+                "{} is not under its repository root {}",
+                project_dir.display(),
+                toplevel.display()
+            )
+        })?;
+
     let branch = git::default_branch(project_dir).context("resolving origin's default branch")?;
     step(log, "FETCH", &format!("origin ({branch})"));
-    git::fetch(project_dir)?;
+    {
+        let _serialized = FETCH_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        git::fetch(project_dir)?;
+    }
 
     let target = format!("origin/{branch}");
     let sha = git::rev_parse(project_dir, &target)?
         .with_context(|| format!("{target} not found after fetch"))?;
 
-    // Per-repo path (the dir's final component) so concurrent deploys of *different*
+    // Per-service path (the dir's final component) so concurrent deploys of *different*
     // services in one daemon don't collide; same-service deploys are serialized.
     let name = project_dir.file_name().and_then(|s| s.to_str()).unwrap_or("repo");
     let path = std::env::temp_dir().join(format!("tugboat-src-{name}-{}", std::process::id()));
     // Clear any worktree a previous interrupted deploy may have left at this path.
-    git::remove_worktree(project_dir, &path);
-    git::add_worktree(project_dir, &path, &sha)?;
+    git::remove_worktree(&toplevel, &path);
+    git::add_worktree(&toplevel, &path, &sha)?;
     let guard = WorktreeGuard {
-        repo: project_dir.to_path_buf(),
+        repo: toplevel,
         path: path.clone(),
     };
     step(log, "CHECKOUT", &format!("{target} @ {}", git::short(&sha)));
@@ -166,7 +201,8 @@ fn prepare_default_branch(project_dir: &Path, at: u64, log: &dyn LogSink) -> Res
         deployed_at: at,
     };
     Ok(Prepared {
-        build_dir: path,
+        build_dir: path.join(&rel),
+        checkout_root: path,
         stamp,
         guard,
     })
@@ -184,10 +220,13 @@ pub fn run(
     let workdir = std::env::temp_dir()
         .join(format!("tugboat-{}-{}", manifest.name, std::process::id()));
     let workdir_str = workdir.to_string_lossy().into_owned();
-    let build_cmd = subst(&manifest.build.cmd, &workdir_str);
 
     if dry_run {
-        print_plan(manifest, project_dir, &source, &build_cmd, &workdir_str, log);
+        // For display, expand {workspace} against the on-disk checkout; a real
+        // default-branch deploy expands it to the corresponding path inside its
+        // throwaway worktree.
+        let checkout = git::toplevel(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+        print_plan(manifest, project_dir, &source, &workdir_str, &checkout, log);
         return Ok(());
     }
 
@@ -204,23 +243,28 @@ pub fn run(
     // checks it out into a throwaway worktree, so the build is reproducible and
     // can't be perturbed by whatever branch the shared checkout is parked on. The
     // worktree guard lives to the end of this function, removing it after the ship.
-    let (build_dir, stamp, skip_build, _worktree) = match &source {
+    let (build_dir, checkout_root, stamp, skip_build, _worktree) = match &source {
         Source::WorkingTree { skip_build } => {
-            (project_dir.to_path_buf(), build_stamp(project_dir, at), *skip_build, None)
+            // {workspace} in a working-tree deploy is the on-disk repository
+            // root (the directory itself for a non-git deploy).
+            let root = git::toplevel(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+            (project_dir.to_path_buf(), root, build_stamp(project_dir, at), *skip_build, None)
         }
         Source::DefaultBranch => {
-            let prepared = prepare_default_branch(project_dir, at, log)?;
-            (prepared.build_dir, Some(prepared.stamp), false, Some(prepared.guard))
+            let p = prepare_default_branch(project_dir, at, log)?;
+            (p.build_dir, p.checkout_root, Some(p.stamp), false, Some(p.guard))
         }
     };
+    let checkout_str = checkout_root.to_string_lossy().into_owned();
+    let build_cmd = subst(&manifest.build.cmd, &workdir_str, &checkout_str);
     let id = deploy_id(at, stamp.as_ref());
 
     // Resolve artifact sources (relative paths are relative to the build dir; an
-    // absolute path, e.g. one under {workdir}, is used as-is).
+    // absolute path, e.g. one under {workdir} or {workspace}, is used as-is).
     let artifacts: Vec<(PathBuf, &crate::manifest::Artifact)> = manifest
         .artifacts
         .iter()
-        .map(|a| (build_dir.join(subst(&a.src, &workdir_str)), a))
+        .map(|a| (build_dir.join(subst(&a.src, &workdir_str, &checkout_str)), a))
         .collect();
 
     std::fs::create_dir_all(&workdir)
@@ -298,8 +342,13 @@ pub fn run(
     install.context("remote install failed (the host rolled back to the previous binary)")
 }
 
-fn subst(input: &str, workdir: &str) -> String {
-    input.replace("{workdir}", workdir)
+/// Expand manifest placeholders: `{workdir}` (the deploy's fresh temp dir) and
+/// `{workspace}` (the repository checkout root being built — the cargo
+/// workspace root for fleet members, where the shared `target/` lives).
+fn subst(input: &str, workdir: &str, workspace: &str) -> String {
+    input
+        .replace("{workdir}", workdir)
+        .replace("{workspace}", workspace)
 }
 
 /// Run a child process, capturing its stdout and stderr and forwarding every
@@ -663,10 +712,12 @@ fn print_plan(
     manifest: &Manifest,
     project_dir: &Path,
     source: &Source,
-    build_cmd: &str,
     workdir_str: &str,
+    checkout: &Path,
     log: &dyn LogSink,
 ) {
+    let checkout_str = checkout.to_string_lossy();
+    let build_cmd = subst(&manifest.build.cmd, workdir_str, &checkout_str);
     log.line(&format!("DRY RUN — plan for {} → {}\n", manifest.name, manifest.host()));
     log.line("  source:");
     match source {
@@ -682,10 +733,10 @@ fn print_plan(
     log.line("  build:");
     log.line(&format!("    {build_cmd}"));
     log.line("  ship:");
-    // Artifact sources are shown relative to the project dir; a default-branch
+    // Artifact sources are shown against the on-disk checkout; a default-branch
     // deploy builds the same relative paths inside its worktree.
     for artifact in &manifest.artifacts {
-        let src = project_dir.join(subst(&artifact.src, workdir_str));
+        let src = project_dir.join(subst(&artifact.src, workdir_str, &checkout_str));
         match artifact.kind {
             ArtifactKind::File => log.line(&format!(
                 "    {} → {} (file, mode {})",
@@ -786,6 +837,77 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["result"], "rolled_back");
         assert_eq!(v["id"], "1718900000-1a2b3c4d");
+    }
+
+    /// Placeholders: {workdir} is the deploy temp dir, {workspace} the checkout
+    /// root — the paths a monorepo member's artifacts are anchored to.
+    #[test]
+    fn subst_expands_workdir_and_workspace() {
+        assert_eq!(
+            subst("{workspace}/target/release/svc", "/wd", "/checkout"),
+            "/checkout/target/release/svc"
+        );
+        assert_eq!(subst("{workdir}/bundle.tar", "/wd", "/checkout"), "/wd/bundle.tar");
+        assert_eq!(subst("web/dist", "/wd", "/checkout"), "web/dist");
+    }
+
+    /// Run git with a deterministic identity (mirrors git.rs's test helper).
+    fn git(dir: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.email=t@example.com", "-c", "user.name=Test", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .status()
+            .expect("spawn git");
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    /// A default-branch deploy of a monorepo member checks out the whole
+    /// repository and builds in the member's directory within it: `build_dir`
+    /// is `<checkout_root>/<member>`, with the member's files present. A deploy
+    /// of the repository root keeps the two equal (the standalone-repo case).
+    #[test]
+    fn prepares_monorepo_member_inside_full_checkout() {
+        let base = std::env::temp_dir().join(format!("tugboat-mono-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+
+        // A bare origin with one commit containing svc/hello.txt, and a clone —
+        // the shape of the dev box's fleet checkout.
+        let origin = base.join("origin.git");
+        std::fs::create_dir_all(&origin).unwrap();
+        git(&origin, &["init", "-q", "--bare", "-b", "main"]);
+        let clone = base.join("clone");
+        git(&base, &["clone", "-q", "origin.git", "clone"]);
+        std::fs::create_dir_all(clone.join("svc")).unwrap();
+        std::fs::write(clone.join("svc/hello.txt"), "hi").unwrap();
+        git(&clone, &["add", "."]);
+        git(&clone, &["commit", "-q", "-m", "init"]);
+        git(&clone, &["push", "-q", "origin", "main"]);
+
+        struct Quiet;
+        impl LogSink for Quiet {
+            fn line(&self, _: &str) {}
+        }
+
+        // Member deploy: builds in <worktree>/svc of a full checkout.
+        let prepared = prepare_default_branch(&clone.join("svc"), 42, &Quiet).unwrap();
+        assert_eq!(prepared.build_dir, prepared.checkout_root.join("svc"));
+        assert!(prepared.build_dir.join("hello.txt").is_file());
+        assert!(prepared.checkout_root.join(".git").exists(), "worktree root is the checkout");
+        assert_eq!(prepared.stamp.branch.as_deref(), Some("main"));
+        let worktree = prepared.checkout_root.clone();
+        drop(prepared);
+        assert!(!worktree.exists(), "worktree removed when the guard drops");
+
+        // Repo-root deploy: the standalone case, build_dir == checkout_root.
+        let prepared = prepare_default_branch(&clone, 42, &Quiet).unwrap();
+        assert_eq!(prepared.build_dir, prepared.checkout_root);
+        assert!(prepared.build_dir.join("svc/hello.txt").is_file());
+        drop(prepared);
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// CapturingSink forwards to its inner sink and accumulates the transcript.

@@ -13,7 +13,7 @@ description = "Federated fleet search — one box over code (source) and notes (
 cmd = "rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true; CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --target x86_64-unknown-linux-musl"
 
 [[artifacts]]
-src = "target/x86_64-unknown-linux-musl/release/spyglass"
+src = "{workspace}/target/x86_64-unknown-linux-musl/release/spyglass"
 dest = "/usr/local/bin/spyglass"
 
 # The runtime config (the [[sources]] list) ships with the code so adding a source

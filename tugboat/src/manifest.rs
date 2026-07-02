@@ -40,7 +40,9 @@ pub struct Manifest {
 #[derive(Debug, Deserialize)]
 pub struct Build {
     /// Shell command run locally, in the manifest's directory. `{workdir}`
-    /// expands to a fresh temp directory for build output.
+    /// expands to a fresh temp directory for build output; `{workspace}` to the
+    /// repository checkout root being built (the cargo workspace root, where
+    /// `target/` lives — the manifest's own directory for a standalone repo).
     pub cmd: String,
 }
 
@@ -56,7 +58,9 @@ pub enum ArtifactKind {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Artifact {
-    /// Local path produced by the build. `{workdir}` is expanded.
+    /// Local path produced by the build, relative to the manifest's directory.
+    /// `{workdir}` and `{workspace}` are expanded (a cargo binary in the fleet
+    /// workspace lives under `{workspace}/target/…`).
     pub src: String,
     /// Absolute remote path. Installed via an atomic rename, with the previous
     /// file/dir backed up and restored if the deploy fails its health check.

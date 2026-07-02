@@ -13,7 +13,7 @@ description = "Fleet-wide settings — the shared dark/light theme every service
 cmd = "rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true; CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --target x86_64-unknown-linux-musl"
 
 [[artifacts]]
-src = "target/x86_64-unknown-linux-musl/release/tide"
+src = "{workspace}/target/x86_64-unknown-linux-musl/release/tide"
 dest = "/usr/local/bin/tide"
 
 # tide binds loopback, so health is a real HTTP check on it.

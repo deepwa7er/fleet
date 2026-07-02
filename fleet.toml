@@ -1,0 +1,79 @@
+# fleet.toml — the deepwa7er fleet's operational manifest.
+#
+# Since 2026-07-01 the fleet is a MONOREPO: every service lives in a top-level
+# directory of this repository (git@github.com:deepwa7er/fleet.git). Getting
+# the fleet onto a new box is a plain `git clone`; `fleet clone/pull/status`
+# exist for the repos that stayed OUTSIDE the monorepo, listed as members
+# below.
+#
+#   tugboat fleet list      # show members (and which are deployable)
+#   tugboat fleet deploy    # deploy every discovered deployable
+#   tugboat fleet docs      # build + ship the docs site (pilot)
+#
+# DEPLOYABILITY IS DISCOVERED, NOT DECLARED HERE. A directory under `root` is a
+# deployable service iff it contains a `deploy.toml`. That presence alone makes
+# it visible to `tugboat serve`, `fleet deploy`, and lighthouse — nothing to
+# register when adding a service.
+#
+# NOTE (migration phase 4 pending): the docs harvest still iterates members, so
+# `fleet docs` does not yet document the monorepo's services — do not reship the
+# docs site until the harvest is reworked. See
+# secondbrain/projects/fleet-monorepo.md.
+
+root = "~/code/fleet"
+
+# ── repos outside the monorepo (clone/pull/status only) ──────────────────────
+
+[[members]]
+# Capture-first notes app (Rust workspace + iOS + web). Its own release rhythm;
+# deliberately not merged into the fleet monorepo (revisit after the dust
+# settles).
+path = "~/code/lagoon"
+repo = "git@github.com:deepwa7er/lagoon.git"
+
+[[members]]
+# The fleet documentation site's React frontend. Ships as static files via
+# `tugboat fleet docs` (see [docs] below), served by breakwater.
+path = "~/code/pilot"
+repo = "git@github.com:deepwa7er/pilot.git"
+
+[[members]]
+# Heaviest VPS tenant: a multi-unit backend (sonar-discovery + navidrome +
+# slskd), deployed outside tugboat. Historically lived at ~/code/apple/sonar on
+# the laptop — standardized here as ~/code/sonar.
+path = "~/code/sonar"
+repo = "git@github.com:deepwa7er/sonar.git"
+
+# ── the fleet documentation site ─────────────────────────────────────────────
+# `tugboat fleet docs` builds the `pilot` frontend, overlays the harvested model
+# (fleet.json) and each repo's rustdoc, and ships the assembled static site to
+# `dest` on `host`, where breakwater serves it (a serve_dir route) at `url`.
+[docs]
+repo = "pilot"
+build = "cd web && bun install && bun run build"
+dist = "web/dist"
+host = "deepwa7er"
+dest = "/opt/pilot/web"
+url = "https://docs.intern.deepwa7er.net"
+
+# Claude guidance documents for pilot's Guidance section. Each member's CLAUDE.md
+# is auto-included; these add the global doctrine, the worker prompt, the skills,
+# and the cross-session memory notes. A `path` is a file or a directory of `.md`
+# (a dir also picks up each `*/SKILL.md`); `~/…` and absolute paths are allowed.
+[[docs.guidance]]
+category = "Doctrine"
+label = "Global CLAUDE.md"
+path = "~/.claude/CLAUDE.md"
+
+[[docs.guidance]]
+category = "Worker prompt"
+label = "Drydock worker-task"
+path = "drydock/docs/worker-task.md"
+
+[[docs.guidance]]
+category = "Skills"
+path = "~/.claude/skills"
+
+[[docs.guidance]]
+category = "Memory"
+path = "~/.claude/projects/-Users-deepwater-code/memory"

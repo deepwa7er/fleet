@@ -86,7 +86,7 @@ pub fn run(args: SelfDeployArgs) -> Result<()> {
         Some(u) => u.clone(),
         None => derive_health_url(args.port)?,
     };
-    let new_bin = repo.join("target/release/tugboat");
+    let new_bin = target_dir(&repo)?.join("release/tugboat");
 
     if args.dry_run {
         println!("DRY RUN — plan for self-deploy\n");
@@ -303,6 +303,31 @@ fn uid() -> Result<u32> {
 }
 
 /// Fail unless `repo` is a checkout of the tugboat crate itself.
+/// The cargo target directory for `repo`, from `cargo metadata`. Inside the
+/// fleet workspace this is the workspace root's `target/`, not `<repo>/target/`,
+/// so the built binary's location can't be assumed from the crate directory.
+fn target_dir(repo: &Path) -> Result<PathBuf> {
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .current_dir(repo)
+        .output()
+        .context("running cargo metadata")?;
+    if !output.status.success() {
+        bail!(
+            "cargo metadata failed in {}: {}",
+            repo.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    #[derive(Deserialize)]
+    struct Metadata {
+        target_directory: PathBuf,
+    }
+    let meta: Metadata =
+        serde_json::from_slice(&output.stdout).context("parsing cargo metadata output")?;
+    Ok(meta.target_directory)
+}
+
 fn verify_tugboat_repo(repo: &Path) -> Result<()> {
     #[derive(Deserialize)]
     struct CargoToml {

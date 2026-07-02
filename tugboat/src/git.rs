@@ -2,7 +2,7 @@
 //! deploy-status endpoint). Everything is best-effort and read-only except
 //! [`run`], which is used for the fetch/merge that `fleet pull` performs.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
@@ -28,10 +28,30 @@ pub struct RepoState {
     pub upstream_behind: u32,
 }
 
+/// Whether `dir` is inside a git working tree. Unlike testing for a `.git`
+/// directory, this is true for a directory *within* a checkout (a monorepo
+/// member) and for linked worktrees (whose `.git` is a file).
+pub fn is_work_tree(dir: &Path) -> bool {
+    out(dir, &["rev-parse", "--is-inside-work-tree"])
+        .ok()
+        .flatten()
+        .is_some_and(|s| s == "true")
+}
+
+/// The root of the working tree containing `dir` (`git rev-parse
+/// --show-toplevel`). For a service directory inside the fleet monorepo this is
+/// the repository root; for a standalone checkout it is the checkout itself.
+pub fn toplevel(dir: &Path) -> Result<PathBuf> {
+    let Some(path) = out(dir, &["rev-parse", "--show-toplevel"])? else {
+        bail!("{} is not inside a git working tree", dir.display());
+    };
+    Ok(PathBuf::from(path))
+}
+
 /// Gather the [`RepoState`] for a checkout. Never errors: a non-repo or a git
 /// hiccup just yields a sparsely-populated state.
 pub fn state(dir: &Path) -> RepoState {
-    if !dir.join(".git").is_dir() {
+    if !is_work_tree(dir) {
         return RepoState::default();
     }
     let mut st = RepoState {
@@ -352,6 +372,45 @@ mod tests {
         assert!(log_range(&dir, "0000000000000000000000000000000000000000", &third, 10).is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Repo detection must hold from a directory *inside* a checkout — a fleet
+    /// monorepo member has no `.git` of its own — and `toplevel` must name the
+    /// containing repository root.
+    #[test]
+    fn detects_work_tree_and_toplevel_from_a_subdirectory() {
+        let dir: PathBuf =
+            std::env::temp_dir().join(format!("tugboat-toplevel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let svc = dir.join("svc");
+        std::fs::create_dir_all(&svc).unwrap();
+        git(&dir, &["init", "-q"]);
+        std::fs::write(svc.join("f"), "x").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+
+        assert!(super::is_work_tree(&dir));
+        assert!(super::is_work_tree(&svc));
+        // Compare canonicalized: git resolves symlinks (macOS /tmp → /private/tmp).
+        let root = dir.canonicalize().unwrap();
+        assert_eq!(super::toplevel(&svc).unwrap().canonicalize().unwrap(), root);
+        assert_eq!(super::toplevel(&dir).unwrap().canonicalize().unwrap(), root);
+
+        // A subdirectory reports its repository's state, not "not a repo".
+        let state = super::state(&svc);
+        assert!(state.is_repo);
+        assert!(state.head_sha.is_some());
+
+        // Outside any repo: cleanly negative.
+        let stray = std::env::temp_dir().join(format!("tugboat-norepo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&stray);
+        std::fs::create_dir_all(&stray).unwrap();
+        assert!(!super::is_work_tree(&stray));
+        assert!(!super::state(&stray).is_repo);
+        assert!(super::toplevel(&stray).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&stray);
     }
 
     #[test]
