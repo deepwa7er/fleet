@@ -133,10 +133,13 @@ pub fn uninstall(fleet: &Fleet) -> Result<()> {
     Ok(())
 }
 
-/// The repos whose commits should refresh the docs: every fleet member (the
-/// deployer included — it's a member too). Returned as (label, checkout dir) pairs.
+/// The repos whose commits should refresh the docs: the fleet monorepo itself
+/// (where every service now lives) plus the external members. Returned as
+/// (label, checkout dir) pairs.
 fn hooked_repos(fleet: &Fleet) -> Vec<(String, PathBuf)> {
-    fleet.members.iter().map(|m| (m.label().to_owned(), fleet.dir(m))).collect()
+    let mut repos = vec![("fleet".to_owned(), fleet.root_dir())];
+    repos.extend(fleet.members.iter().map(|m| (m.label().to_owned(), fleet.dir(m))));
+    repos
 }
 
 /// Derive the serve daemon URL from the host's tailnet IP (the daemon binds it so

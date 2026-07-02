@@ -25,7 +25,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::deploy;
-use crate::fleet::{DocsConfig, Fleet, Member};
+use crate::fleet::{DocsConfig, Fleet};
 use crate::git;
 use crate::manifest::{self, ArtifactKind};
 
@@ -189,21 +189,34 @@ fn assemble(fleet: &Fleet, opts: &Options, out: &Path) -> Result<()> {
         build_frontend(fleet, docs, opts.skip_build, out)?;
     }
 
-    println!("==> harvesting {} fleet members", fleet.members.len());
+    let targets = documentables(fleet)?;
+    let workspace = workspace_docs(&fleet.root_dir())?;
+    println!("==> harvesting {} fleet projects", targets.len());
     let mut services = Vec::new();
     let mut docs_built = Vec::new();
     let mut docs_failed = Vec::new();
 
-    for m in &fleet.members {
-        let label = m.label().to_string();
-        let member_docs = harvest_docs(&fleet.dir(m), &label)
-            .with_context(|| format!("harvesting docs for {label}"))?;
-        let language = detect_language(&fleet.dir(m), &member_docs);
+    for d in &targets {
+        let label = d.label.clone();
+        // A monorepo Rust project's facts come from its slice of the workspace
+        // metadata (harvesting it standalone would see the whole workspace);
+        // everything else — external repos, Go/config-only dirs — is harvested
+        // from its own directory.
+        let ws_packages = workspace
+            .as_ref()
+            .filter(|_| d.in_monorepo)
+            .and_then(|ws| ws.packages_by_dir.get(&label));
+        let member_docs = match ws_packages {
+            Some(packages) => workspace_member_docs(packages, &label),
+            None => harvest_docs(&d.dir, &label)
+                .with_context(|| format!("harvesting docs for {label}"))?,
+        };
+        let language = detect_language(&d.dir, &member_docs);
 
         // Render the repo's README to an HTML fragment for the service's detail
         // page, shipped at /readme/<name>.html (fetched lazily by pilot).
-        let readme_html = read_readme(&fleet.dir(m)).map(|md| render_markdown_body(&md));
-        let service = build_service_doc(fleet, m, &routes, &member_docs, language, readme_html.is_some())
+        let readme_html = read_readme(&d.dir).map(|md| render_markdown_body(&md));
+        let service = build_service_doc(fleet, d, &routes, &member_docs, language, readme_html.is_some())
             .with_context(|| format!("describing {label}"))?;
         if let Some(html) = &readme_html {
             let readme_dir = out.join("readme");
@@ -217,7 +230,9 @@ fn assemble(fleet: &Fleet, opts: &Options, out: &Path) -> Result<()> {
         let docs_wanted = !opts.skip_rustdoc
             && opts.only.as_ref().is_none_or(|names| names.iter().any(|n| n == &label));
         if docs_wanted {
-            // Rust members are documented with `cargo doc`, one bundle per root.
+            // External Rust members are documented with `cargo doc`, one bundle
+            // per root (monorepo projects have no roots of their own — the
+            // workspace is documented once, below).
             for root in &member_docs.roots {
                 println!("==> cargo doc: {label} ({})", root.manifest_path.display());
                 match build_rustdoc(&root.manifest_path) {
@@ -254,8 +269,36 @@ fn assemble(fleet: &Fleet, opts: &Options, out: &Path) -> Result<()> {
         services.push(service);
     }
 
-    // The fleet total is the sum across every member (including non-deployed
-    // fleet repos like the deployer itself, which are members and documented).
+    // The monorepo's crates are documented in one shared workspace bundle at
+    // /doc/fleet/ — every fleet crate's rustdoc, cross-linked, built once.
+    if let Some(ws) = &workspace {
+        let ws_wanted = !opts.skip_rustdoc
+            && !ws.packages_by_dir.is_empty()
+            && opts.only.as_ref().is_none_or(|names| {
+                names.iter().any(|n| n == "fleet" || ws.packages_by_dir.contains_key(n))
+            });
+        if ws_wanted {
+            println!("==> cargo doc: fleet workspace ({})", ws.manifest_path.display());
+            match build_rustdoc(&ws.manifest_path) {
+                Ok(()) if ws.target_doc.is_dir() => {
+                    copy_dir_all(&ws.target_doc, &doc_root.join("fleet"))
+                        .context("copying the workspace rustdoc bundle")?;
+                    docs_built.push("fleet workspace".to_string());
+                }
+                Ok(()) => {
+                    eprintln!("    warning: no rustdoc output at {}", ws.target_doc.display());
+                    docs_failed.push("fleet workspace".to_string());
+                }
+                Err(err) => {
+                    eprintln!("    warning: cargo doc failed for the fleet workspace: {err:#}");
+                    docs_failed.push("fleet workspace".to_string());
+                }
+            }
+        }
+    }
+
+    // The fleet total is the sum across every project (including non-deployed
+    // fleet code like the deployer itself, which is documented like the rest).
     let total_loc: u64 = services.iter().map(|s| s.loc).sum();
     let model = FleetDoc {
         docs_url: fleet.docs.as_ref().and_then(|d| d.url.clone()),
@@ -440,19 +483,17 @@ fn print_plan(fleet: &Fleet, opts: &Options) -> Result<()> {
 
 // ── change detection (for auto-refresh) ─────────────────────────────────────
 
-/// A fingerprint of every fleet member's committed state — each member's git
-/// HEAD sha. It changes on any commit, amend, rebase, or pull in any member, and
-/// is the signal that the published docs are stale. (Members with no checkout
-/// contribute `none`, so a missing repo is stable, not noisy.)
+/// A fingerprint of the fleet's committed state — the monorepo's git HEAD plus
+/// each external member's. It changes on any commit, amend, rebase, or pull,
+/// and is the signal that the published docs are stale. (A missing checkout
+/// contributes `none`, so an absent repo is stable, not noisy.)
 pub fn fleet_fingerprint(fleet: &Fleet) -> String {
-    let entries: Vec<String> = fleet
-        .members
-        .iter()
-        .map(|m| {
-            let head = git::state(&fleet.dir(m)).head_sha.unwrap_or_else(|| "none".into());
-            format!("{}:{head}", m.label())
-        })
-        .collect();
+    let root_head = git::state(&fleet.root_dir()).head_sha.unwrap_or_else(|| "none".into());
+    let mut entries = vec![format!("fleet:{root_head}")];
+    entries.extend(fleet.members.iter().map(|m| {
+        let head = git::state(&fleet.dir(m)).head_sha.unwrap_or_else(|| "none".into());
+        format!("{}:{head}", m.label())
+    }));
     entries.join("\n")
 }
 
@@ -503,18 +544,19 @@ impl Drop for WorkDir {
     }
 }
 
-/// Assemble one service's [`ServiceDoc`] from its member entry, its `deploy.toml`
-/// (when present), the routing table, and its harvested Cargo facts.
+/// Assemble one service's [`ServiceDoc`] from its project entry, its
+/// `deploy.toml` (when present), the routing table, and its harvested Cargo
+/// facts.
 fn build_service_doc(
-    fleet: &Fleet,
-    member: &Member,
+    _fleet: &Fleet,
+    project: &Documentable,
     routes: &HashMap<String, RouteInfo>,
     docs: &MemberDocs,
     language: Option<String>,
     has_readme: bool,
 ) -> Result<ServiceDoc> {
-    let label = member.label().to_string();
-    let manifest_path = fleet.dir(member).join("deploy.toml");
+    let label = project.label.clone();
+    let manifest_path = project.dir.join("deploy.toml");
     let manifest = if manifest_path.is_file() {
         Some(manifest::parse(&manifest_path)?)
     } else {
@@ -554,7 +596,7 @@ fn build_service_doc(
     Ok(ServiceDoc {
         name,
         description: description.to_string(),
-        repo: member.repo.clone(),
+        repo: project.repo.clone(),
         deployed,
         unit,
         relationships: Relationships {
@@ -567,7 +609,7 @@ fn build_service_doc(
         health,
         build_cmd,
         lighthouse_enrolled: enrolled,
-        loc: count_loc(&fleet.dir(member)),
+        loc: count_loc(&project.dir),
         language,
         crates: docs.crates.clone(),
         has_readme,
@@ -575,16 +617,17 @@ fn build_service_doc(
     })
 }
 
-/// Infer a repo's primary language from what the doc harvest found (which locates
-/// Cargo manifests even in subdirs, e.g. harbor's `server/`): Rust if it has any
-/// Cargo root, Go if it's a Go module, else TypeScript when a `package.json` sits
-/// at the root or under `web/` (a frontend-only/static repo like pilot). `None`
-/// when none apply.
+/// Infer a project's primary language from what the doc harvest found (which
+/// locates Cargo manifests even in subdirs, e.g. harbor's `server/`): Go if
+/// it's a Go module, Rust if the harvest found any crate (a monorepo project's
+/// workspace slice, or an external repo's own Cargo roots), else TypeScript
+/// when a `package.json` sits at the root or under `web/` (a frontend-only
+/// repo like pilot). `None` when none apply.
 fn detect_language(dir: &Path, docs: &MemberDocs) -> Option<String> {
-    if !docs.roots.is_empty() {
-        Some("Rust".to_string())
-    } else if docs.go_module.is_some() {
+    if docs.go_module.is_some() {
         Some("Go".to_string())
+    } else if !docs.crates.is_empty() || !docs.roots.is_empty() {
+        Some("Rust".to_string())
     } else if dir.join("package.json").is_file() || dir.join("web/package.json").is_file() {
         Some("TypeScript".to_string())
     } else {
@@ -650,13 +693,18 @@ struct BreakwaterRoute {
 }
 
 /// Read breakwater's routing table, keyed by each route's label (the service
-/// name). Best-effort: if breakwater isn't a member or its config can't be read,
-/// services simply carry no URL.
+/// name). breakwater lives in the monorepo; a member entry is honored as a
+/// fallback for a split fleet. Best-effort: if neither exists or the config
+/// can't be read, services simply carry no URL.
 fn load_routes(fleet: &Fleet) -> HashMap<String, RouteInfo> {
-    let Some(breakwater) = fleet.find("breakwater") else {
+    let in_root = fleet.root_dir().join("breakwater/breakwater.toml");
+    let path = if in_root.is_file() {
+        in_root
+    } else if let Some(member) = fleet.find("breakwater") {
+        fleet.dir(member).join("breakwater.toml")
+    } else {
         return HashMap::new();
     };
-    let path = fleet.dir(breakwater).join("breakwater.toml");
     let Ok(text) = std::fs::read_to_string(&path) else {
         return HashMap::new();
     };
@@ -834,6 +882,169 @@ fn harvest_dependencies(packages: &[MetaPackage]) -> Dependencies {
     }
 }
 
+/// A documentable fleet project: a top-level directory of the fleet monorepo,
+/// or an external member repo listed in `fleet.toml`.
+struct Documentable {
+    /// The docs key: the directory name (monorepo) or member label (external).
+    label: String,
+    dir: PathBuf,
+    /// Where the project's source lives — a GitHub tree URL into the monorepo,
+    /// or the external member's remote.
+    repo: String,
+    /// Monorepo projects share one workspace rustdoc bundle (`/doc/fleet/`).
+    in_monorepo: bool,
+}
+
+/// Top-level monorepo directories that aren't fleet projects: shared library
+/// code, documented as part of the workspace rustdoc bundle rather than as
+/// services of their own.
+const NON_PROJECT_DIRS: &[&str] = &["crates", "web"];
+
+/// Enumerate everything the docs site covers: every *committed* top-level
+/// directory of the fleet monorepo (via `git ls-tree`, so ignored build output
+/// can't appear), then the external members. A member whose label collides
+/// with a monorepo directory is skipped — the monorepo wins.
+fn documentables(fleet: &Fleet) -> Result<Vec<Documentable>> {
+    let root = fleet.root_dir();
+    let repo_web = origin_web_url(&root);
+    let mut list = Vec::new();
+
+    for name in toplevel_dirs(&root)? {
+        if NON_PROJECT_DIRS.contains(&name.as_str()) {
+            continue;
+        }
+        let repo = repo_web
+            .as_ref()
+            .map(|web| format!("{web}/tree/HEAD/{name}"))
+            .unwrap_or_default();
+        list.push(Documentable {
+            label: name.clone(),
+            dir: root.join(&name),
+            repo,
+            in_monorepo: true,
+        });
+    }
+
+    for m in &fleet.members {
+        let label = m.label().to_string();
+        if list.iter().any(|d| d.label == label) {
+            eprintln!("    warning: member `{label}` shadows a fleet directory; skipping the member");
+            continue;
+        }
+        list.push(Documentable {
+            label,
+            dir: fleet.dir(m),
+            repo: m.repo.clone(),
+            in_monorepo: false,
+        });
+    }
+    Ok(list)
+}
+
+/// The committed top-level directories of the repo at `root`, sorted.
+fn toplevel_dirs(root: &Path) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-tree", "--name-only", "HEAD"])
+        .output()
+        .context("running git ls-tree at the fleet root")?;
+    if !output.status.success() {
+        bail!(
+            "git ls-tree failed at {} — is the fleet root a git checkout?",
+            root.display()
+        );
+    }
+    let mut dirs: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_owned)
+        .filter(|name| root.join(name).is_dir())
+        .collect();
+    dirs.sort();
+    Ok(dirs)
+}
+
+/// The GitHub web URL of `dir`'s origin remote, if it has a GitHub one.
+fn origin_web_url(dir: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    git::github_web_url(String::from_utf8_lossy(&output.stdout).trim())
+}
+
+/// The fleet workspace's packages grouped by owning top-level directory, plus
+/// where its shared rustdoc lands. `None` when the fleet root isn't a cargo
+/// workspace (a split, pre-monorepo fleet).
+struct WorkspaceDocs {
+    /// Top-level directory name → the packages whose manifests live under it.
+    packages_by_dir: HashMap<String, Vec<MetaPackage>>,
+    /// The workspace's `Cargo.toml`, for the single `cargo doc` run.
+    manifest_path: PathBuf,
+    /// `<target-directory>/doc` — the tree that one run writes.
+    target_doc: PathBuf,
+}
+
+fn workspace_docs(root: &Path) -> Result<Option<WorkspaceDocs>> {
+    let manifest_path = root.join("Cargo.toml");
+    if !manifest_path.is_file() {
+        return Ok(None);
+    }
+    let metadata = cargo_metadata(&manifest_path)
+        .with_context(|| format!("cargo metadata for {}", manifest_path.display()))?;
+    let canonical_root = root
+        .canonicalize()
+        .with_context(|| format!("resolving {}", root.display()))?;
+    let mut packages_by_dir: HashMap<String, Vec<MetaPackage>> = HashMap::new();
+    for package in metadata.packages {
+        let Ok(rel) = Path::new(&package.manifest_path).strip_prefix(&canonical_root) else {
+            // A path dependency outside the root (an external member's crate)
+            // is not a fleet directory's package.
+            continue;
+        };
+        let Some(dir) = rel.components().next() else {
+            continue;
+        };
+        packages_by_dir
+            .entry(dir.as_os_str().to_string_lossy().into_owned())
+            .or_default()
+            .push(package);
+    }
+    Ok(Some(WorkspaceDocs {
+        packages_by_dir,
+        manifest_path,
+        target_doc: PathBuf::from(&metadata.target_directory).join("doc"),
+    }))
+}
+
+/// Doc facts for a monorepo Rust project, from its slice of the workspace's
+/// packages. Its crates link into the shared workspace bundle (`/doc/fleet/`),
+/// and no per-project `cargo doc` root is emitted — the workspace is documented
+/// once for all of them.
+fn workspace_member_docs(packages: &[MetaPackage], label: &str) -> MemberDocs {
+    let crates = packages
+        .iter()
+        .filter_map(|p| {
+            primary_doc_dir(p).map(|doc_dir| CrateDoc {
+                name: p.name.clone(),
+                doc_path: format!("/doc/fleet/{doc_dir}/"),
+            })
+        })
+        .collect();
+    MemberDocs {
+        description: choose_description(packages, label),
+        crates,
+        roots: Vec::new(),
+        go_module: None,
+        dependencies: harvest_dependencies(packages),
+    }
+}
+
 /// Find the Cargo root(s) inside a member: the repo-root `Cargo.toml` if present
 /// (which is the workspace/package root Cargo resolves from), otherwise any
 /// `Cargo.toml` one directory down (e.g. harbor's crate lives in `server/`).
@@ -865,6 +1076,9 @@ struct MetaPackage {
     name: String,
     #[serde(default)]
     description: Option<String>,
+    /// Absolute path of the package's Cargo.toml — how a workspace package is
+    /// attributed to the fleet directory that owns it.
+    manifest_path: String,
     targets: Vec<MetaTarget>,
     /// Declared dependencies (present even with `--no-deps`; no transitive graph).
     #[serde(default)]
@@ -1429,6 +1643,7 @@ mod tests {
         MetaPackage {
             name: name.into(),
             description: description.map(Into::into),
+            manifest_path: format!("/x/{name}/Cargo.toml"),
             targets,
             dependencies: Vec::new(),
         }
@@ -1444,6 +1659,7 @@ mod tests {
             MetaPackage {
                 name: "svc-server".into(),
                 description: None,
+                manifest_path: "/x/svc-server/Cargo.toml".into(),
                 targets: vec![],
                 dependencies: vec![
                     dep("svc-core", None),       // internal edge
@@ -1454,6 +1670,7 @@ mod tests {
             MetaPackage {
                 name: "svc-core".into(),
                 description: None,
+                manifest_path: "/x/svc-core/Cargo.toml".into(),
                 targets: vec![],
                 dependencies: vec![dep("serde", None)],
             },

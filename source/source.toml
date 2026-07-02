@@ -9,8 +9,9 @@
 bind = "100.74.202.93"
 port = 7879
 
-# The fleet manifest whose members are the repos to serve.
-fleet = "~/code/tugboat/fleet.toml"
+# The fleet manifest: the monorepo's top-level directories are the repos to
+# serve, plus any external members it lists.
+fleet = "~/code/fleet/fleet.toml"
 
 # The built frontend. `cd web && bun run build` produces web/dist.
-web_dir = "~/code/source/web/dist"
+web_dir = "~/code/fleet/source/web/dist"

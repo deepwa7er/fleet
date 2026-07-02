@@ -144,17 +144,24 @@ impl Engine {
         for repo in &resp.repos {
             for file in &repo.files {
                 for m in &file.matches {
+                    // Prefer the blob base source derives from the repo's actual
+                    // remote (monorepo-aware); compose from github_org only when
+                    // an older source doesn't send one.
+                    let url = match &repo.blob_base {
+                        Some(base) => format!("{base}/{}#L{}", file.path, m.line_number),
+                        None => github_blob(
+                            &self.config.github_org,
+                            &repo.repo,
+                            &file.path,
+                            m.line_number,
+                        ),
+                    };
                     hits.push(Hit {
                         title: format!("{}/{}", repo.repo, file.path),
                         line: Some(m.line_number),
                         snippet: m.text.clone(),
                         ranges: spans_from_pairs(&m.ranges),
-                        url: Some(github_blob(
-                            &self.config.github_org,
-                            &repo.repo,
-                            &file.path,
-                            m.line_number,
-                        )),
+                        url: Some(url),
                         at: None,
                     });
                 }
@@ -376,7 +383,8 @@ fn spans_from_pairs(pairs: &[[usize; 2]]) -> Vec<Range> {
 }
 
 /// A GitHub blob link to a file at a line, using `HEAD` so it resolves to the
-/// repo's default branch without hardcoding `main`.
+/// repo's default branch without hardcoding `main`. Fallback only — used when
+/// source's response carries no `blob_base` (a pre-monorepo source).
 fn github_blob(org: &str, repo: &str, path: &str, line: u32) -> String {
     format!("https://github.com/{org}/{repo}/blob/HEAD/{path}#L{line}")
 }
@@ -393,6 +401,11 @@ struct CodeResponse {
 #[derive(Debug, Deserialize)]
 struct CodeRepo {
     repo: String,
+    /// GitHub blob-URL prefix at HEAD, from source (append `/<path>#L<line>`).
+    /// Derived from the repo's actual remote, so monorepo projects link into
+    /// `…/fleet/blob/HEAD/<dir>` without spyglass knowing the fleet's layout.
+    #[serde(default)]
+    blob_base: Option<String>,
     files: Vec<CodeFile>,
 }
 

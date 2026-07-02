@@ -35,7 +35,7 @@
     <string>__TOKEN__</string>
     <!-- Which fleet the daemon serves (so it doesn't depend on a working dir). -->
     <key>TUGBOAT_FLEET</key>
-    <string>__HOME__/code/tugboat/fleet.toml</string>
+    <string>__HOME__/code/fleet/fleet.toml</string>
   </dict>
 
   <key>RunAtLoad</key>

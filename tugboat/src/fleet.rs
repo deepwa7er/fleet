@@ -79,7 +79,9 @@ pub struct GuidanceSource {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Member {
-    /// Repo directory, relative to the fleet `root` (also the `clone` target).
+    /// Repo directory (also the `clone` target): absolute, `~/…`, or relative
+    /// to the fleet `root` — the same forms `[[docs.guidance]]` paths accept.
+    /// External repos (outside the monorepo) use `~/…` paths.
     pub path: String,
     /// Git remote, used by `fleet clone`.
     pub repo: String,
@@ -153,9 +155,15 @@ impl Fleet {
         expand_tilde(&self.root)
     }
 
-    /// Absolute path to a member's checkout.
+    /// Absolute path to a member's checkout. A `~/…` or absolute member path
+    /// stands alone; a relative one is anchored at the fleet root.
     pub fn dir(&self, member: &Member) -> PathBuf {
-        expand_tilde(&self.root).join(&member.path)
+        let path = expand_tilde(&member.path);
+        if path.is_absolute() {
+            path
+        } else {
+            self.root_dir().join(path)
+        }
     }
 
     /// Find a member by its label (the repo directory's final component).

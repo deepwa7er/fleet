@@ -41,6 +41,10 @@ pub struct FileMatches {
 #[derive(Debug, Serialize)]
 pub struct RepoMatches {
     pub repo: String,
+    /// GitHub blob-URL prefix for this repo's files at HEAD (append
+    /// `/<path>#L<line>`); `None` when the remote isn't GitHub. Lets consumers
+    /// (spyglass) deep-link without knowing the fleet's repo layout.
+    pub blob_base: Option<String>,
     pub files: Vec<FileMatches>,
 }
 
@@ -146,7 +150,16 @@ pub async fn run(repos: &[Repo], query: &str, regex: bool) -> Result<SearchResul
         }
     }
 
-    let repos_out = by_repo.into_iter().map(|(repo, files)| RepoMatches { repo, files }).collect();
+    let repos_out = by_repo
+        .into_iter()
+        .map(|(repo, files)| {
+            let blob_base = repos
+                .iter()
+                .find(|r| r.name == repo)
+                .and_then(|r| r.blob_base.clone());
+            RepoMatches { repo, blob_base, files }
+        })
+        .collect();
     Ok(SearchResults { query: query.to_string(), truncated, total, repos: repos_out })
 }
 
