@@ -441,6 +441,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "fleet-common",
  "rusqlite",
  "scraper",
  "serde",
@@ -600,6 +601,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "fleet-common",
  "rusqlite",
  "serde",
  "serde_json",
@@ -712,6 +714,19 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+]
+
+[[package]]
+name = "fleet-common"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "rusqlite",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

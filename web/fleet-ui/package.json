@@ -1,0 +1,17 @@
+{
+  "name": "@fleet/ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared fleet UI plumbing: the tide theme client and the fleet JSON API fetch wrapper. Plain ES modules (no build step) so Vite apps, embedded pages, and the harbor extension can all consume one copy.",
+  "type": "module",
+  "exports": {
+    "./theme": {
+      "types": "./theme.d.ts",
+      "default": "./theme.js"
+    },
+    "./api": {
+      "types": "./api.d.ts",
+      "default": "./api.js"
+    }
+  }
+}

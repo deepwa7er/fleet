@@ -5,6 +5,7 @@ edition = "2021"
 description = "Wardrobe organizer — a single binary serving a web view and JSON API over one SQLite store, for cataloguing clothes by category while building a classic wardrobe."
 
 [dependencies]
+fleet-common = { path = "../crates/fleet-common" }
 axum = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal"] }
 tower-http = { workspace = true, features = ["fs", "trace"] }

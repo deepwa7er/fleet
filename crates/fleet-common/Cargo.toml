@@ -1,0 +1,14 @@
+[package]
+name = "fleet-common"
+version = "0.1.0"
+edition = "2021"
+description = "Shared scaffolding for fleet services: SQLite open/migrate with the FK-off bracket and migration hashing, the uniform {\"error\"} JSON contract, /healthz, SPA serving, and small env/path/time helpers."
+
+[dependencies]
+axum = { workspace = true }
+rusqlite = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tower-http = { workspace = true, features = ["fs", "trace"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

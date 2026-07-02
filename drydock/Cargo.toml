@@ -5,6 +5,7 @@ edition = "2021"
 description = "Ticket queue for autonomous fleet work — single binary serving a web view and a worker CLI over one SQLite store."
 
 [dependencies]
+fleet-common = { path = "../crates/fleet-common" }
 axum = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal"] }
 tower-http = { workspace = true, features = ["fs", "trace"] }

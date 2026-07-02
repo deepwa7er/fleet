@@ -8,17 +8,15 @@ use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
 use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
-use serde_json::json;
-use tower_http::services::{ServeDir, ServeFile};
+use fleet_common::http::{api_not_found, healthz, spa};
 use tower_http::trace::TraceLayer;
 
 use crate::core::model::{Category, Item, Status};
 use crate::core::{NewCategory, NewItem, Store, UpdateCategory, UpdateItem};
-use crate::error::{Error, Result};
+use fleet_common::{Error, Result};
 
 use self::meta::LinkMeta;
 
@@ -35,10 +33,8 @@ pub struct ServerConfig {
 pub async fn run(store: Arc<Store>, config: ServerConfig) -> std::io::Result<()> {
     let state = AppState { store };
 
-    let index = config.web_dir.join("index.html");
-    let static_files = ServeDir::new(&config.web_dir).fallback(ServeFile::new(index));
-
     let app = Router::new()
+        .route("/healthz", get(healthz))
         .route("/api/categories", get(list_categories).post(create_category))
         .route(
             "/api/categories/{id}",
@@ -53,7 +49,7 @@ pub async fn run(store: Arc<Store>, config: ServerConfig) -> std::io::Result<()>
         .route("/api/fetch-meta", post(fetch_meta))
         // Unknown /api paths must 404 as JSON, not fall through to the SPA shell.
         .route("/api/{*rest}", any(api_not_found))
-        .fallback_service(static_files)
+        .fallback_service(spa(&config.web_dir))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -104,13 +100,6 @@ struct FetchMetaReq {
 }
 
 // ---- helpers --------------------------------------------------------------
-
-async fn api_not_found() -> impl IntoResponse {
-    (
-        StatusCode::NOT_FOUND,
-        Json(json!({ "error": "unknown endpoint" })),
-    )
-}
 
 fn require(field: &str, value: &str) -> Result<()> {
     if value.trim().is_empty() {

@@ -1,5 +1,4 @@
 mod core;
-mod error;
 mod server;
 
 use std::net::SocketAddr;
@@ -7,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
+use fleet_common::util::{default_db_path, env_or};
 
 use core::Store;
 
@@ -23,21 +23,6 @@ enum Command {
     Serve,
 }
 
-fn env_or(key: &str, default: impl Into<String>) -> String {
-    std::env::var(key).unwrap_or_else(|_| default.into())
-}
-
-/// Default DB path: $XDG_DATA_HOME/clothes/clothes.db (falling back to
-/// ~/.local/share).
-fn default_db_path() -> PathBuf {
-    let base = std::env::var("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            PathBuf::from(home).join(".local/share")
-        });
-    base.join("clothes").join("clothes.db")
-}
 
 #[tokio::main]
 async fn main() {
@@ -54,16 +39,11 @@ async fn main() {
 }
 
 async fn run_serve() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "clothes=info,tower_http=info".into()),
-        )
-        .init();
+    fleet_common::http::init_tracing("clothes=info,tower_http=info");
 
     let db_path = std::env::var("CLOTHES_DB")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| default_db_path());
+        .unwrap_or_else(|_| default_db_path("clothes", "clothes.db"));
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
     }

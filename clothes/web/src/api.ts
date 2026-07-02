@@ -1,3 +1,5 @@
+import { req } from "@fleet/ui/api";
+
 export type Status = "wishlist" | "ordered" | "owned" | "skipped";
 
 export const STATUSES: Status[] = ["wishlist", "ordered", "owned", "skipped"];
@@ -51,26 +53,6 @@ export interface LinkMeta {
   store: string | null;
   image_url: string | null;
   price_cents: number | null;
-}
-
-async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method,
-    headers: body !== undefined ? { "content-type": "application/json" } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    let message = `request failed (${res.status})`;
-    try {
-      const data = await res.json();
-      if (data?.error) message = data.error;
-    } catch {
-      /* keep default */
-    }
-    throw new Error(message);
-  }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
 }
 
 export const api = {

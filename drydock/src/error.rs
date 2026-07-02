@@ -1,7 +1,5 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
-use serde_json::json;
 
 use crate::core::model::State;
 
@@ -30,6 +28,22 @@ pub enum Error {
 
     #[error(transparent)]
     Db(#[from] rusqlite::Error),
+
+    /// A startup-time integrity failure surfaced by fleet-common (e.g. an
+    /// edited applied migration). Never produced by a request handler.
+    #[error("{0}")]
+    Startup(String),
+}
+
+/// fleet-common's store errors fold into the domain error so `Store::open`
+/// composes; the Db case keeps its type, everything else is a startup failure.
+impl From<fleet_common::Error> for Error {
+    fn from(e: fleet_common::Error) -> Self {
+        match e {
+            fleet_common::Error::Db(e) => Error::Db(e),
+            other => Error::Startup(other.to_string()),
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -42,16 +56,17 @@ impl Error {
             Error::Conflict(_) => StatusCode::CONFLICT,
             Error::BadRequest(_) => StatusCode::BAD_REQUEST,
             Error::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::Startup(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        let status = self.status();
         if let Error::Db(ref e) = self {
             tracing::error!("database error: {e}");
         }
-        (status, Json(json!({ "error": self.to_string() }))).into_response()
+        // The fleet's uniform {"error": …} body.
+        fleet_common::http::error_response(self.status(), self)
     }
 }

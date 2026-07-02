@@ -8,13 +8,12 @@ use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
 use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tower_http::services::{ServeDir, ServeFile};
+use fleet_common::http::{api_not_found, healthz, spa};
 use tower_http::trace::TraceLayer;
 
 use crate::core::model::{Priority, Pulse, State as TicketState, Ticket, TicketDetail, TicketType};
@@ -39,10 +38,8 @@ pub async fn run(store: Arc<Store>, config: ServerConfig) -> std::io::Result<()>
         stale_hours: config.stale_hours,
     };
 
-    let index = config.web_dir.join("index.html");
-    let static_files = ServeDir::new(&config.web_dir).fallback(ServeFile::new(index));
-
     let app = Router::new()
+        .route("/healthz", get(healthz))
         .route("/api/tickets", get(list).post(create))
         .route("/api/tickets/next", get(next))
         .route("/api/tickets/{id}", get(detail))
@@ -59,7 +56,7 @@ pub async fn run(store: Arc<Store>, config: ServerConfig) -> std::io::Result<()>
         .route("/api/worker/heartbeat", post(heartbeat))
         // Unknown /api paths must 404 as JSON, not fall through to the SPA shell.
         .route("/api/{*rest}", any(api_not_found))
-        .fallback_service(static_files)
+        .fallback_service(spa(&config.web_dir))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -117,13 +114,6 @@ struct UnblockReq {
 }
 
 // ---- handlers -------------------------------------------------------------
-
-async fn api_not_found() -> impl IntoResponse {
-    (
-        StatusCode::NOT_FOUND,
-        Json(json!({ "error": "unknown endpoint" })),
-    )
-}
 
 fn require(field: &str, value: &str) -> Result<()> {
     if value.trim().is_empty() {

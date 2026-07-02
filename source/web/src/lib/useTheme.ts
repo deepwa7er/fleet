@@ -3,7 +3,7 @@
 // it — the Shiki-highlighted file view — re-render on a live theme change.
 
 import { useEffect, useState } from "react";
-import { currentTheme, type Theme } from "./theme";
+import { currentTheme, type Theme } from "@fleet/ui/theme";
 
 export function useTheme(): Theme {
   const [theme, setTheme] = useState<Theme>(currentTheme);

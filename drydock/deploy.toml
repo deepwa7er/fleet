@@ -24,8 +24,10 @@ kind = "dir"
 src = "web/dist"
 dest = "/opt/drydock/web"
 
-# drydock binds loopback (see deploy/drydock.service), so health is the unit's
-# active state. (default health = `systemctl is-active drydock`)
+# drydock binds loopback, so health is a real HTTP check on it (the shared
+# /healthz from fleet-common).
+[health]
+url = "http://127.0.0.1:8093/healthz"
 
 [lighthouse]
 # Monitor drydock from the fleet dashboard (status + logs).

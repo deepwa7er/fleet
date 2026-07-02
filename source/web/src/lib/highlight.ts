@@ -8,7 +8,7 @@ import {
   type BundledLanguage,
   type BundledTheme,
 } from "shiki";
-import type { Theme } from "./theme";
+import type { Theme } from "@fleet/ui/theme";
 
 // Muted, low-contrast themes that sit well with the fleet's terminal aesthetic.
 const THEMES: Record<Theme, BundledTheme> = {

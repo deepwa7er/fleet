@@ -9,8 +9,9 @@ use chrono::{SecondsFormat, Utc};
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
+use fleet_common::{Error, Result};
+
 use super::model::*;
-use crate::error::{Error, Result};
 
 const CATEGORY_COLS: &str = "id, name, note, target_count, sort_order, created_at";
 const ITEM_COLS: &str = "id, category_id, url, title, store, price_cents, \
@@ -113,39 +114,14 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/002_seed_categories.sql"),
 ];
 
-/// Apply every migration whose index is at or beyond the DB's recorded
-/// `user_version`, bumping it after each. A new DB starts at version 0 and gets
-/// them all; an existing DB only runs the ones it hasn't seen. Each migration
-/// and its version bump commit together, so a crash mid-migration can never
-/// leave a half-applied schema.
-fn migrate(conn: &mut Connection) -> Result<()> {
-    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    for (i, sql) in MIGRATIONS.iter().enumerate() {
-        if (i as i64) < version {
-            continue;
-        }
-        let tx = conn.transaction()?;
-        tx.execute_batch(sql)?;
-        // PRAGMA values can't be bound; `i + 1` is a controlled integer.
-        // `user_version` is part of the DB header and is transactional, so it
-        // rolls back with the rest if the commit never lands.
-        tx.execute_batch(&format!("PRAGMA user_version = {};", i + 1))?;
-        tx.commit()?;
-    }
-    Ok(())
-}
-
 impl Store {
     /// Open (creating if needed) the database at `path` and apply any pending
-    /// schema migrations.
+    /// schema migrations. fleet-common owns the open/migrate invariants (WAL,
+    /// the FK-off bracket during migration, migration fingerprinting); foreign
+    /// keys are ON afterwards, enforcing ON DELETE CASCADE (deleting a
+    /// category removes its items).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let mut conn = Connection::open(path)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        migrate(&mut conn)?;
-        // Enforce ON DELETE CASCADE (deleting a category removes its items) for
-        // normal operation. None of the migrations rebuild tables, so this can
-        // stay on throughout.
-        conn.pragma_update(None, "foreign_keys", "ON")?;
+        let conn = fleet_common::store::open_migrated(path, MIGRATIONS)?;
         Ok(Store {
             conn: Mutex::new(conn),
         })

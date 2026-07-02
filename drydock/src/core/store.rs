@@ -98,50 +98,15 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/004_worker_pulse.sql"),
 ];
 
-/// Apply every migration whose index is at or beyond the DB's recorded
-/// `user_version`, bumping it after each. A new DB starts at version 0 and gets
-/// them all; an existing DB only runs the ones it hasn't seen.
-///
-/// Each migration and its `user_version` bump commit together in one
-/// transaction, so a crash mid-migration can never leave a half-applied schema:
-/// either the whole migration lands and the version advances, or neither does
-/// and it re-runs cleanly on the next start. Foreign keys must already be OFF on
-/// `conn` (see [`Store::open`]) — the table-rebuild migrations drop and recreate
-/// `tickets`, which would otherwise cascade-delete `comments`/`events`, and
-/// `PRAGMA foreign_keys` is a no-op inside a transaction so it cannot be toggled
-/// here.
-fn migrate(conn: &mut Connection) -> Result<()> {
-    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    for (i, sql) in MIGRATIONS.iter().enumerate() {
-        if (i as i64) < version {
-            continue;
-        }
-        let tx = conn.transaction()?;
-        tx.execute_batch(sql)?;
-        // PRAGMA values can't be bound; `i + 1` is a controlled integer.
-        // `user_version` is part of the DB header and is transactional, so it
-        // rolls back with the rest if the commit never lands.
-        tx.execute_batch(&format!("PRAGMA user_version = {};", i + 1))?;
-        tx.commit()?;
-    }
-    Ok(())
-}
-
 impl Store {
     /// Open (creating if needed) the database at `path` and apply any pending
-    /// schema migrations.
+    /// schema migrations. fleet-common owns the open/migrate invariants — WAL
+    /// mode, foreign keys OFF across the whole migration pass (the
+    /// table-rebuild migrations drop and recreate `tickets`, and an enabled FK
+    /// would cascade that drop into `comments`/`events`), migration
+    /// fingerprinting, and FKs back ON for normal operation.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let mut conn = Connection::open(path)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        // Foreign keys stay OFF across migration: the table-rebuild migrations
-        // drop and recreate `tickets`, and an enabled FK would cascade that drop
-        // into `comments`/`events`. `PRAGMA foreign_keys` is ignored inside a
-        // transaction, so it must be set here — before `migrate` opens its
-        // per-migration transactions — and re-enabled for normal operation
-        // once every migration has committed.
-        conn.pragma_update(None, "foreign_keys", "OFF")?;
-        migrate(&mut conn)?;
-        conn.pragma_update(None, "foreign_keys", "ON")?;
+        let conn = fleet_common::store::open_migrated(path, MIGRATIONS)?;
         Ok(Store {
             conn: Mutex::new(conn),
         })

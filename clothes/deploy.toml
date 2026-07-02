@@ -24,8 +24,10 @@ kind = "dir"
 src = "web/dist"
 dest = "/opt/clothes/web"
 
-# clothes binds loopback (see deploy/clothes.service), so health is the unit's
-# active state. (default health = `systemctl is-active clothes`)
+# clothes binds loopback, so health is a real HTTP check on it (the shared
+# /healthz from fleet-common).
+[health]
+url = "http://127.0.0.1:8099/healthz"
 
 [lighthouse]
 # Monitor clothes from the fleet dashboard (status + logs).
