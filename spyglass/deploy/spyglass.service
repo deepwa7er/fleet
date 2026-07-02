@@ -1,0 +1,30 @@
+[Unit]
+Description=spyglass — federated fleet search
+Documentation=https://github.com/deepwa7er/spyglass
+# Order after tailscaled so the network is up before we bind (and before we can
+# reach the upstream search services over the tailnet).
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=spyglass
+Group=spyglass
+ExecStart=/usr/local/bin/spyglass serve --config /etc/spyglass/config.toml
+Restart=on-failure
+RestartSec=2
+
+# Hardening — spyglass holds no state; it only reads its config and makes
+# outbound HTTP queries to the upstream search services.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

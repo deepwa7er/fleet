@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>spyglass</title>
+  <!-- First-paint theme: honor the fleet theme cookie tide sets, before CSS, so
+       there's no flash. app.js then reconciles with tide and keeps it in sync. -->
+  <script>
+    (function () {
+      var m = document.cookie.match(/(?:^|;\s*)fleet_theme=(dark|light)/);
+      document.documentElement.dataset.theme = m ? m[1] : "dark";
+    })();
+  </script>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <main class="sheet">
+    <div class="docbar">
+      <span>DOC. SPY-001</span>
+      <span>REV. 0.1.0</span>
+      <span class="spacer">CLASSIFICATION · PERSONAL</span>
+      <span id="sources">SOURCES · —</span>
+    </div>
+
+    <header class="masthead">
+      <div class="brand-id">
+        <h1>spyglass</h1>
+        <div class="ident">Federated fleet search · code + notes</div>
+      </div>
+    </header>
+
+    <form id="search" class="searchbar" autocomplete="off">
+      <input
+        id="q"
+        type="search"
+        name="q"
+        placeholder="Search the fleet — code (source) + notes (lagoon)…"
+        spellcheck="false"
+        autofocus
+      >
+      <button type="submit" class="btn btn--primary">SEARCH</button>
+    </form>
+
+    <div id="status" class="status">Enter a query to search across the fleet.</div>
+
+    <section id="results" class="results"></section>
+
+    <footer class="waterline">
+      <span id="footstatus">ready</span>
+      <span class="ver">spyglass v0.1.0 · deepwa7er fleet</span>
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

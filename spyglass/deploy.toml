@@ -1,0 +1,32 @@
+# tugboat deploy manifest — github.com/deepwa7er/tugboat
+#   deploy:  tugboat deploy      (from this directory)
+#
+# One-time infra setup (service user, config, systemd unit) lives in
+# deploy/provision.sh — run that once before the first deploy.
+name = "spyglass"
+host = "deepwa7er"
+description = "Federated fleet search — one box over code (source) and notes (lagoon)."
+
+[build]
+# Static musl cross-compile. spyglass is pure Rust (reqwest with no TLS backend),
+# so only the linker is needed — no target C toolchain.
+cmd = "rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true; CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --target x86_64-unknown-linux-musl"
+
+[[artifacts]]
+src = "target/x86_64-unknown-linux-musl/release/spyglass"
+dest = "/usr/local/bin/spyglass"
+
+# The runtime config (the [[sources]] list) ships with the code so adding a source
+# deploys — it carries no secrets, so it's fine world-readable. provision.sh still
+# installs a baseline first-time so the service can start before the first deploy.
+[[artifacts]]
+src = "deploy/spyglass.toml"
+dest = "/etc/spyglass/config.toml"
+mode = "0644"
+
+# spyglass binds loopback, so health is a real HTTP check on it.
+[health]
+url = "http://127.0.0.1:8095/healthz"
+
+[lighthouse]
+enroll = true

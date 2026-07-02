@@ -1,0 +1,45 @@
+# spyglass runtime config (installed to /etc/spyglass/config.toml).
+#
+# bind is loopback; breakwater is the tailnet front door at
+# https://spyglass.intern.deepwa7er.net (no auth — the tailnet is the boundary).
+bind = "127.0.0.1"
+port = 8095
+
+# GitHub org the fleet's repos live under, for building code deep-links.
+github_org = "deepwa7er"
+
+# The upstream search services to federate over, queried in parallel at their
+# real addresses over plain HTTP. A source that's down is isolated — its group
+# shows "unavailable" and the others still return.
+
+# Code search — the `source` service runs on the dev box, reached over the
+# tailnet (so its results need the dev box awake; it degrades gracefully if not).
+[[sources]]
+name = "source"
+kind = "code"
+url = "http://100.74.202.93:7879"
+
+# Notes search — the `lagoon` service on this VPS (loopback, same box as breakwater
+# routes it to).
+[[sources]]
+name = "lagoon"
+kind = "notes"
+url = "http://127.0.0.1:8092"
+
+# Ticket search — the `drydock` service on this VPS (loopback). Hits link to the
+# ticket on the drydock web UI (`?t=<id>`).
+[[sources]]
+name = "drydock"
+kind = "tickets"
+url = "http://127.0.0.1:8093"
+web_url = "https://drydock.intern.deepwa7er.net"
+
+# Docs search — the `pilot` site is process-less static files on this box, so it's
+# read straight from disk (its published service catalog + guidance index). Hits
+# deep-link into the docs site.
+[[sources]]
+name = "pilot"
+kind = "docs"
+label = "Docs"
+path = "/opt/pilot/web"
+web_url = "https://docs.intern.deepwa7er.net"
