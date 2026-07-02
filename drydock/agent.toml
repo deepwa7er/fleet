@@ -1,0 +1,16 @@
+# Installs the drydock CLI on the dev machines that run the worker, via
+# `tugboat agent deploy`. drydock is one binary (serve + the worker CLI
+# subcommands); the VPS runs `drydock serve` (shipped by deploy.toml), while the
+# worker invokes the CLI subcommands locally against it. This keeps that local CLI
+# current.
+#
+# A native build (no goos/goarch) and no daemon to restart (a plain CLI on PATH),
+# so the target sets neither launchd nor systemd_user.
+
+name = "drydock"
+build = "cargo build --release && cp target/release/drydock {out}"
+
+[[targets]]
+name = "mac"
+local = true
+dest = "~/.cargo/bin/drydock"
