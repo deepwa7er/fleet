@@ -1,0 +1,9 @@
+# Pin the fleet to one toolchain so local builds, CI, and deploys agree —
+# clippy lints shift between stable releases, and CI denies warnings, so a
+# floating `stable` means CI can fail on code that was clean locally. Bump
+# deliberately: update the version here, fix whatever the new clippy flags,
+# and land both in one commit.
+[toolchain]
+channel = "1.96.0"
+components = ["clippy", "rustfmt"]
+targets = ["x86_64-unknown-linux-musl"]

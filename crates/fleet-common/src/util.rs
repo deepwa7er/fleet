@@ -29,8 +29,7 @@ pub fn default_db_path(service: &str, file: &str) -> PathBuf {
 pub fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// Durably replace `path` with `contents`: write a sibling temp file, fsync

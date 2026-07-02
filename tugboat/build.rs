@@ -16,8 +16,7 @@ fn main() {
     let dirty = git(&["status", "--porcelain"]).map(|s| !s.is_empty()).unwrap_or(false);
     let build_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
 
     println!("cargo:rustc-env=TUGBOAT_GIT_SHA={sha}");
     println!("cargo:rustc-env=TUGBOAT_GIT_DIRTY={dirty}");

@@ -218,8 +218,7 @@ pub fn run(args: ServeArgs) -> Result<()> {
 
     let started_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
 
     let state = Arc::new(ServeState {
         fleet: RwLock::new(fleet),
@@ -825,6 +824,5 @@ async fn docs_keeper(state: Arc<ServeState>) {
 fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
