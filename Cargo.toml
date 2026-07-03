@@ -14,6 +14,7 @@ members = [
     "ferry",
     "harbor/server",
     "lighthouse",
+    "regatta",
     "source",
     "spyglass",
     "tide",

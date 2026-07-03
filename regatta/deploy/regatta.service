@@ -1,0 +1,34 @@
+[Unit]
+Description=Regatta sequence-voting game
+Documentation=https://github.com/deepwa7er/fleet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=regatta
+Group=regatta
+# Creates /var/lib/regatta (owned by regatta, writable under ProtectSystem=strict)
+# where the SQLite database lives — and which fleet-backup ships to R2.
+StateDirectory=regatta
+Environment=REGATTA_DB=/var/lib/regatta/regatta.db
+Environment=REGATTA_ADDR=127.0.0.1:8096
+Environment=REGATTA_WEB_DIR=/opt/regatta/web
+ExecStart=/usr/local/bin/regatta serve
+Restart=on-failure
+RestartSec=2
+
+# Hardening — the service only reads its web dir and writes its state dir; it
+# makes no outbound requests.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
