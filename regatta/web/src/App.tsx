@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   api,
-  COURSE_TOTAL,
+  COURSE_STEPS,
   type Activity,
   type Category,
   type Proposal,
@@ -95,7 +95,7 @@ export function App() {
     <div className="app">
       <header>
         <h1>Regatta</h1>
-        <span className="subtitle">courses that add up to ten — the crew votes</span>
+        <span className="subtitle">10 of one thing, 9 of another — the crew votes</span>
         <div className="header-right">
           <label className="voter">
             <span>voting as</span>
@@ -133,7 +133,7 @@ export function App() {
         <main className="main">
           {proposals.length === 0 && (
             <div className="empty-board">
-              No proposals yet. Chart the first course that adds up to ten.
+              No proposals yet. Chart the first countdown.
             </div>
           )}
           {proposals.map((p, i) => (
@@ -228,21 +228,10 @@ function ProposalCard(props: {
 
 // ── the course builder ───────────────────────────────────────────────────────
 
-interface DraftStep {
-  activity_id: number | null;
-  quantity: string;
-}
+/** The quantity a countdown row demands: row 0 → 10, row 9 → 1. */
+const quantityFor = (index: number) => COURSE_STEPS - index;
 
-const emptyStep = (): DraftStep => ({ activity_id: null, quantity: "" });
-
-const emptyDraft = (): DraftStep[] => Array.from({ length: 3 }, emptyStep);
-
-/** A draft quantity as whole units, or null if it isn't a whole number from 1
- * to the budget. */
-const toUnits = (quantity: string): number | null => {
-  const q = Number(quantity);
-  return Number.isInteger(q) && q >= 1 && q <= COURSE_TOTAL ? q : null;
-};
+const emptyDraft = (): (number | null)[] => Array.from({ length: COURSE_STEPS }, () => null);
 
 function Builder(props: {
   categories: Category[];
@@ -253,7 +242,7 @@ function Builder(props: {
 }) {
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState(props.author);
-  const [steps, setSteps] = useState<DraftStep[]>(emptyDraft);
+  const [picks, setPicks] = useState<(number | null)[]>(emptyDraft);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -268,19 +257,16 @@ function Builder(props: {
     [props.categories, props.activities],
   );
 
-  const setStep = (i: number, patch: Partial<DraftStep>) =>
-    setSteps((prev) => prev.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  const setPick = (i: number, id: number | null) =>
+    setPicks((prev) => prev.map((p, j) => (j === i ? id : p)));
 
-  const addStep = () => setSteps((prev) => [...prev, emptyStep()]);
-
-  const removeStep = (i: number) => setSteps((prev) => prev.filter((_, j) => j !== i));
-
-  const units = steps.map((s) => toUnits(s.quantity));
-  const spent = units.reduce<number>((sum, u) => sum + (u ?? 0), 0);
-  const remaining = COURSE_TOTAL - spent;
-  const stepsValid = steps.every((s, i) => s.activity_id !== null && units[i] !== null);
+  const chosen = new Set(picks.filter((p): p is number => p !== null));
+  const distinct = chosen.size === picks.filter((p) => p !== null).length;
   const complete =
-    title.trim() !== "" && author.trim() !== "" && stepsValid && spent === COURSE_TOTAL;
+    title.trim() !== "" &&
+    author.trim() !== "" &&
+    picks.every((p) => p !== null) &&
+    distinct;
 
   const unitFor = (id: number | null) => props.activities.find((a) => a.id === id)?.unit ?? "";
 
@@ -291,7 +277,7 @@ function Builder(props: {
       const created = await api.createProposal({
         title: title.trim(),
         author: author.trim(),
-        steps: steps.map((s) => ({ activity_id: s.activity_id!, quantity: Number(s.quantity) })),
+        activities: picks as number[],
       });
       props.onCreated(created);
     } catch (e) {
@@ -303,7 +289,7 @@ function Builder(props: {
   return (
     <div className="modal-backdrop" onClick={props.onClose}>
       <div className="modal builder" onClick={(e) => e.stopPropagation()}>
-        <h2>Propose a course — spend exactly {COURSE_TOTAL}</h2>
+        <h2>Propose a course — the countdown</h2>
         <div className="field-row">
           <label className="field">
             <span>Title</span>
@@ -321,72 +307,34 @@ function Builder(props: {
         </div>
 
         <div className="draft-steps">
-          {steps.map((s, i) => (
+          {picks.map((pick, i) => (
             <div className="draft-step" key={i}>
-              <span className="pos">{i + 1}</span>
-              <input
-                className="qty-input"
-                type="number"
-                min="1"
-                max={COURSE_TOTAL}
-                step="1"
-                inputMode="numeric"
-                value={s.quantity}
-                onChange={(e) => setStep(i, { quantity: e.target.value })}
-                placeholder="qty"
-                aria-label={`step ${i + 1} quantity`}
-              />
-              <span className="unit">{unitFor(s.activity_id) || "—"}</span>
+              <span className="countdown-qty">{quantityFor(i)} ×</span>
               <select
-                value={s.activity_id ?? ""}
-                onChange={(e) =>
-                  setStep(i, { activity_id: e.target.value ? Number(e.target.value) : null })
-                }
-                aria-label={`step ${i + 1} activity`}
+                value={pick ?? ""}
+                onChange={(e) => setPick(i, e.target.value ? Number(e.target.value) : null)}
+                aria-label={`activity done ${quantityFor(i)} times`}
               >
                 <option value="">pick an activity…</option>
                 {grouped.map((c) => (
                   <optgroup key={c.id} label={c.name}>
                     {c.activities.map((a) => (
-                      <option key={a.id} value={a.id}>
+                      <option key={a.id} value={a.id} disabled={a.id !== pick && chosen.has(a.id)}>
                         {a.name}
                       </option>
                     ))}
                   </optgroup>
                 ))}
               </select>
-              <button
-                className="ghost danger-hover"
-                onClick={() => removeStep(i)}
-                disabled={steps.length === 1}
-                title="remove step"
-                aria-label={`remove step ${i + 1}`}
-              >
-                ✕
-              </button>
+              <span className="unit">{unitFor(pick) || "—"}</span>
             </div>
           ))}
-        </div>
-
-        <div className="budget-row">
-          <button className="ghost" onClick={addStep}>
-            + add step
-          </button>
-          <span className={`budget${spent === COURSE_TOTAL ? " spent" : ""}`}>
-            {spent} / {COURSE_TOTAL}
-            {remaining !== 0 && (
-              <small>
-                {" "}
-                ({remaining > 0 ? `${remaining} left` : `${-remaining} over`})
-              </small>
-            )}
-          </span>
         </div>
 
         {error && <div className="banner error">{error}</div>}
         <div className="modal-actions">
           <span className="hint spacer">
-            whole-number quantities that add up to exactly {COURSE_TOTAL}
+            ten different activities — the first is done 10 times, the last once
           </span>
           <button onClick={props.onClose}>Cancel</button>
           <button className="primary" disabled={!complete || busy} onClick={() => void submit()}>

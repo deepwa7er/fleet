@@ -26,19 +26,14 @@ pub struct NewActivity {
     pub unit: String,
 }
 
-/// One step of a new proposal; its position is its index in the list.
-pub struct NewStep {
-    pub activity_id: i64,
-    pub quantity: i64,
-}
-
-/// Fields for a new proposal. `steps` must be non-empty and its quantities —
-/// positive whole units — must add up to exactly [`COURSE_TOTAL`]; the store
-/// rejects anything else.
+/// Fields for a new proposal. `activities` is the countdown in order — the
+/// first is done ten times, the last once — and must hold exactly
+/// [`COURSE_STEPS`] distinct existing activities; the store rejects anything
+/// else.
 pub struct NewProposal {
     pub title: String,
     pub author: String,
-    pub steps: Vec<NewStep>,
+    pub activities: Vec<i64>,
 }
 
 fn now() -> String {
@@ -73,6 +68,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/003_user_categories.sql"),
     include_str!("../../migrations/004_sum_to_ten.sql"),
     include_str!("../../migrations/005_whole_units.sql"),
+    include_str!("../../migrations/006_countdown.sql"),
 ];
 
 impl Store {
@@ -268,25 +264,17 @@ impl Store {
     }
 
     pub fn create_proposal(&self, input: NewProposal) -> Result<Proposal> {
-        if input.steps.is_empty() {
-            return Err(Error::BadRequest("a course needs at least one step".into()));
-        }
-        let mut total: i64 = 0;
-        for (i, step) in input.steps.iter().enumerate() {
-            // The per-step ceiling is implied by the budget, but checking it
-            // here keeps the sum overflow-proof against absurd inputs.
-            if step.quantity < 1 || step.quantity > COURSE_TOTAL {
-                return Err(Error::BadRequest(format!(
-                    "step {} quantity must be a whole number from 1 to {COURSE_TOTAL}",
-                    i + 1
-                )));
-            }
-            total += step.quantity;
-        }
-        if total != COURSE_TOTAL {
+        if input.activities.len() != COURSE_STEPS {
             return Err(Error::BadRequest(format!(
-                "step quantities must add up to exactly {COURSE_TOTAL}; got {total}"
+                "a course is a countdown over exactly {COURSE_STEPS} activities; got {}",
+                input.activities.len()
             )));
+        }
+        let distinct: HashSet<i64> = input.activities.iter().copied().collect();
+        if distinct.len() != COURSE_STEPS {
+            return Err(Error::BadRequest(
+                "each countdown step must be a different activity".into(),
+            ));
         }
         let mut conn = self.lock();
         let tx = conn.transaction()?;
@@ -295,12 +283,11 @@ impl Store {
             params![input.title, input.author, now()],
         )?;
         let id = tx.last_insert_rowid();
-        for (i, step) in input.steps.iter().enumerate() {
-            Self::require_activity(&tx, step.activity_id)?;
+        for (i, activity_id) in input.activities.iter().enumerate() {
+            Self::require_activity(&tx, *activity_id)?;
             tx.execute(
-                "INSERT INTO steps (proposal_id, position, activity_id, quantity)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![id, (i + 1) as i64, step.activity_id, step.quantity],
+                "INSERT INTO steps (proposal_id, position, activity_id) VALUES (?1, ?2, ?3)",
+                params![id, (i + 1) as i64, activity_id],
             )?;
         }
         tx.commit()?;
@@ -399,7 +386,7 @@ impl Store {
         {
             let mut stmt = conn.prepare(
                 "SELECT s.proposal_id, s.position, s.activity_id,
-                        a.name, c.name, a.unit, s.quantity
+                        a.name, c.name, a.unit
                  FROM steps s
                  JOIN activities a ON a.id = s.activity_id
                  JOIN categories c ON c.id = a.category_id
@@ -408,13 +395,14 @@ impl Store {
             )?;
             let rows = stmt.query_map([only], |row| {
                 let proposal_id: i64 = row.get(0)?;
+                let position: i64 = row.get(1)?;
                 let step = Step {
-                    position: row.get(1)?,
+                    position,
                     activity_id: row.get(2)?,
                     activity: row.get(3)?,
                     category: row.get(4)?,
                     unit: row.get(5)?,
-                    quantity: row.get(6)?,
+                    quantity: quantity_for(position),
                 };
                 Ok((proposal_id, step))
             })?;
@@ -468,26 +456,17 @@ mod tests {
         Store::open(":memory:").expect("open in-memory store")
     }
 
-    /// Steps over the seeded catalog with the given quantities (one step per
-    /// quantity, activities assigned round-robin).
-    fn steps_with(s: &Store, quantities: &[i64]) -> Vec<NewStep> {
-        let activities = s.activities().unwrap();
-        quantities
-            .iter()
-            .enumerate()
-            .map(|(i, &quantity)| NewStep {
-                activity_id: activities[i % activities.len()].id,
-                quantity,
-            })
-            .collect()
+    /// The first `n` seeded activity ids, in catalog order.
+    fn first_activities(s: &Store, n: usize) -> Vec<i64> {
+        s.activities().unwrap()[..n].iter().map(|a| a.id).collect()
     }
 
-    /// A valid course: quantities add up to [`COURSE_TOTAL`].
+    /// A valid course: a countdown over [`COURSE_STEPS`] distinct activities.
     fn propose(s: &Store, title: &str) -> Proposal {
         s.create_proposal(NewProposal {
             title: title.into(),
             author: "cap".into(),
-            steps: steps_with(s, &[3, 2, 2, 2, 1]),
+            activities: first_activities(s, COURSE_STEPS),
         })
         .unwrap()
     }
@@ -556,49 +535,42 @@ mod tests {
     }
 
     #[test]
-    fn a_course_spends_exactly_the_ten_unit_budget() {
+    fn a_course_is_a_countdown_over_ten_distinct_activities() {
         let s = store();
-        let under = s.create_proposal(NewProposal {
-            title: "under budget".into(),
+        let nine = s.create_proposal(NewProposal {
+            title: "too short".into(),
             author: "cap".into(),
-            steps: steps_with(&s, &[4, 5]),
+            activities: first_activities(&s, 9),
         });
-        assert!(matches!(under, Err(Error::BadRequest(_))));
+        assert!(matches!(nine, Err(Error::BadRequest(_))));
 
-        let over = s.create_proposal(NewProposal {
-            title: "over budget".into(),
+        let eleven = s.create_proposal(NewProposal {
+            title: "too long".into(),
             author: "cap".into(),
-            steps: steps_with(&s, &[4, 5, 2]),
+            activities: first_activities(&s, 11),
         });
-        assert!(matches!(over, Err(Error::BadRequest(_))));
+        assert!(matches!(eleven, Err(Error::BadRequest(_))));
 
-        let empty = s.create_proposal(NewProposal {
-            title: "no steps".into(),
+        let mut repeated = first_activities(&s, COURSE_STEPS);
+        repeated[9] = repeated[0];
+        let dup = s.create_proposal(NewProposal {
+            title: "double donuts".into(),
             author: "cap".into(),
-            steps: vec![],
+            activities: repeated,
         });
-        assert!(matches!(empty, Err(Error::BadRequest(_))));
-
-        // Any step count works as long as the budget is spent exactly.
-        let single = s.create_proposal(NewProposal {
-            title: "all in on one".into(),
-            author: "cap".into(),
-            steps: steps_with(&s, &[10]),
-        });
-        assert_eq!(single.unwrap().steps.len(), 1);
-
-        let ten_ones = s.create_proposal(NewProposal {
-            title: "one of everything".into(),
-            author: "cap".into(),
-            steps: steps_with(&s, &[1; 10]),
-        });
-        assert_eq!(ten_ones.unwrap().steps.len(), 10);
+        assert!(matches!(dup, Err(Error::BadRequest(_))));
 
         let p = propose(&s, "the gauntlet");
+        assert_eq!(p.steps.len(), COURSE_STEPS);
         assert_eq!(
             p.steps.iter().map(|st| st.position).collect::<Vec<_>>(),
-            (1..=p.steps.len() as i64).collect::<Vec<_>>(),
-            "positions are 1..=N in list order"
+            (1..=COURSE_STEPS as i64).collect::<Vec<_>>(),
+            "positions are 1..=10 in list order"
+        );
+        assert_eq!(
+            p.steps.iter().map(|st| st.quantity).collect::<Vec<_>>(),
+            (1..=COURSE_STEPS as i64).rev().collect::<Vec<_>>(),
+            "the countdown: 10 of the first, 1 of the last"
         );
         assert!(
             p.steps.iter().all(|st| !st.category.is_empty()),
@@ -607,21 +579,14 @@ mod tests {
     }
 
     #[test]
-    fn step_quantities_must_be_positive_and_activities_real() {
+    fn every_countdown_activity_must_be_real() {
         let s = store();
-        let err = s.create_proposal(NewProposal {
-            title: "zero".into(),
-            author: "cap".into(),
-            steps: steps_with(&s, &[0, 10]),
-        });
-        assert!(matches!(err, Err(Error::BadRequest(_))));
-
-        let mut steps = steps_with(&s, &[5, 5]);
-        steps[0].activity_id = 9999;
+        let mut activities = first_activities(&s, COURSE_STEPS);
+        activities[3] = 9999;
         let err = s.create_proposal(NewProposal {
             title: "ghost activity".into(),
             author: "cap".into(),
-            steps,
+            activities,
         });
         assert!(matches!(err, Err(Error::BadRequest(_))));
         assert!(

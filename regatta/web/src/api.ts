@@ -1,8 +1,9 @@
 import { req } from "@fleet/ui/api";
 
-/** Every course's step quantities must add up to exactly this — the game is
- * "vote on ten": a budget of ten whole units spent across activities. */
-export const COURSE_TOTAL = 10;
+/** A course is a countdown over exactly this many different activities: the
+ * first is done ten times, the second nine, … the last once — "10 of one
+ * thing, 9 of another". */
+export const COURSE_STEPS = 10;
 
 export interface Category {
   id: number;
@@ -48,7 +49,8 @@ export interface ActivityInput {
 export interface ProposalInput {
   title: string;
   author: string;
-  steps: { activity_id: number; quantity: number }[];
+  /** The countdown in order: the first activity is done ten times, the last once. */
+  activities: number[];
 }
 
 export const api = {

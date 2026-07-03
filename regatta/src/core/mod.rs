@@ -1,4 +1,4 @@
 pub mod model;
 pub mod store;
 
-pub use store::{NewActivity, NewProposal, NewStep, Store};
+pub use store::{NewActivity, NewProposal, Store};

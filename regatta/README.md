@@ -1,11 +1,11 @@
 # regatta
 
-Sequence-voting party game. Anyone proposes a **course** — a titled gauntlet
-of steps whose quantities **add up to exactly ten** ("3 donuts eaten" +
-"2 shots" + "2 miles run" + … = 10), each step an activity from the catalog —
-and the crew votes. Ten whole units is the whole budget, so a push-up costs as
-much as a donut: spending it well is the game. The board ranks courses by
-votes; ties keep the earlier proposal ahead.
+Sequence-voting party game. Anyone proposes a **course** — a countdown over
+ten different activities from the catalog: **10 of the first, 9 of the
+second, … 1 of the last** ("10 push-ups, 9 high-fives, 8 compliments, …,
+1 mile run") — and the crew votes. Choosing which activity can survive being
+done ten times and which deserves the single slot is the game. The board
+ranks courses by votes; ties keep the earlier proposal ahead.
 
 One binary serves the JSON API and the built web view over one SQLite store
 (fleet-common scaffolding: `/healthz`, the `{"error"}` contract, SPA fallback,
@@ -13,8 +13,11 @@ migrations).
 
 ## The rules
 
-- A proposal is any number of steps whose quantities — whole numbers from 1 to
-  10 — add up to exactly ten (`COURSE_TOTAL` in `core/model.rs`).
+- A proposal is a countdown over exactly ten different activities
+  (`COURSE_STEPS` in `core/model.rs`): step 1 is done ten times, step 10 once.
+  The quantity is derived from the position (`quantity_for`) and stored
+  nowhere — a derived value stored twice is a value that can disagree with
+  itself.
 - Voting is set membership: one vote per name per proposal, cast and retract
   are idempotent, so the tally can't be inflated by double-clicks.
 - The catalog is fully user-editable from the UI: categories (seeded with

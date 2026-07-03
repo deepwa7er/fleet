@@ -1,9 +1,16 @@
 use serde::Serialize;
 
-/// Every course's step quantities must add up to exactly this — the game is
-/// "vote on ten": a budget of ten whole units to spend across activities.
-/// Enforced by the store on creation.
-pub const COURSE_TOTAL: i64 = 10;
+/// A course is a countdown over exactly this many DIFFERENT activities: the
+/// first is done ten times, the second nine, … the last once — "10 of one
+/// thing, 9 of another". Enforced by the store on creation.
+pub const COURSE_STEPS: usize = 10;
+
+/// The quantity a step demands, determined entirely by its position in the
+/// countdown: position 1 → 10, position 10 → 1. Stored nowhere — a derived
+/// value stored twice is a value that can disagree with itself.
+pub fn quantity_for(position: i64) -> i64 {
+    COURSE_STEPS as i64 + 1 - position
+}
 
 /// A user-editable section of the activity catalog (e.g. "Games & puzzles").
 /// Purely for grouping in the picker — steps mix categories freely.
@@ -27,9 +34,9 @@ pub struct Activity {
     pub created_at: String,
 }
 
-/// One step of a proposed course: an activity plus how much of it. The
-/// activity's display fields (including its category's name) are denormalized
-/// in so the list view is one request.
+/// One step of a proposed course: an activity done [`quantity_for`]`(position)`
+/// times. The activity's display fields (including its category's name) are
+/// denormalized in so the list view is one request.
 #[derive(Debug, Clone, Serialize)]
 pub struct Step {
     pub position: i64,
@@ -37,6 +44,7 @@ pub struct Step {
     pub activity: String,
     pub category: String,
     pub unit: String,
+    /// Derived from `position` on the way out; see [`quantity_for`].
     pub quantity: i64,
 }
 

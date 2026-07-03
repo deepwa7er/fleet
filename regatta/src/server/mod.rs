@@ -13,7 +13,7 @@ use serde::Deserialize;
 use tower_http::trace::TraceLayer;
 
 use crate::core::model::{Activity, Category, Proposal};
-use crate::core::{NewActivity, NewProposal, NewStep, Store};
+use crate::core::{NewActivity, NewProposal, Store};
 use fleet_common::{Error, Result};
 
 #[derive(Clone)]
@@ -85,13 +85,9 @@ struct ActivityReq {
 struct ProposalReq {
     title: String,
     author: String,
-    steps: Vec<StepReq>,
-}
-
-#[derive(Deserialize)]
-struct StepReq {
-    activity_id: i64,
-    quantity: i64,
+    /// The countdown in order: the first activity is done ten times, the
+    /// last once.
+    activities: Vec<i64>,
 }
 
 #[derive(Deserialize)]
@@ -192,14 +188,7 @@ async fn create_proposal(
     let proposal = st.store.create_proposal(NewProposal {
         title: name("title", &req.title)?,
         author: name("author", &req.author)?,
-        steps: req
-            .steps
-            .into_iter()
-            .map(|s| NewStep {
-                activity_id: s.activity_id,
-                quantity: s.quantity,
-            })
-            .collect(),
+        activities: req.activities,
     })?;
     Ok((StatusCode::CREATED, Json(proposal)))
 }

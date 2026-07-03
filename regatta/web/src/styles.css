@@ -514,16 +514,13 @@ button:focus-visible {
   border-bottom: none;
 }
 
-.draft-step .pos {
-  color: var(--ink-faint);
-  font-size: 11px;
-  min-width: 2ch;
+/* The fixed countdown quantity of the row: 10 ×, 9 ×, … 1 ×. */
+.draft-step .countdown-qty {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+  min-width: 4ch;
   text-align: right;
-  flex: none;
-}
-
-.draft-step .qty-input {
-  width: 9ch;
   flex: none;
 }
 
@@ -537,35 +534,6 @@ button:focus-visible {
 .draft-step select {
   flex: 1;
   min-width: 0;
-}
-
-.draft-step > button {
-  flex: none;
-}
-
-/* Running total of the ten-unit budget under the step rows. */
-.budget-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s2);
-}
-
-.budget {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--warn);
-  white-space: nowrap;
-}
-
-.budget.spent {
-  color: var(--active);
-}
-
-.budget small {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--ink-muted);
 }
 
 /* ── Catalog modal ──────────────────────────────────────────────────────── */
