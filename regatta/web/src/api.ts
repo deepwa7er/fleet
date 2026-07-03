@@ -3,19 +3,17 @@ import { req } from "@fleet/ui/api";
 /** Every course is exactly this many steps — the game is "vote on ten". */
 export const SEQUENCE_LEN = 10;
 
-export type Category = "foods" | "misc" | "physical" | "video-games";
-
-export const CATEGORIES: { key: Category; label: string }[] = [
-  { key: "foods", label: "Foods" },
-  { key: "misc", label: "Misc" },
-  { key: "physical", label: "Physical" },
-  { key: "video-games", label: "Video games" },
-];
+export interface Category {
+  id: number;
+  name: string;
+  sort_order: number;
+  created_at: string;
+}
 
 export interface Activity {
   id: number;
   name: string;
-  category: Category;
+  category_id: number;
   unit: string;
   sort_order: number;
   created_at: string;
@@ -25,7 +23,7 @@ export interface Step {
   position: number;
   activity_id: number;
   activity: string;
-  category: Category;
+  category: string;
   unit: string;
   quantity: number;
 }
@@ -42,7 +40,7 @@ export interface Proposal {
 
 export interface ActivityInput {
   name: string;
-  category: Category;
+  category_id: number;
   unit: string;
 }
 
@@ -53,6 +51,12 @@ export interface ProposalInput {
 }
 
 export const api = {
+  categories: () => req<Category[]>("GET", "/api/categories"),
+  createCategory: (name: string) => req<Category>("POST", "/api/categories", { name }),
+  renameCategory: (id: number, name: string) =>
+    req<Category>("PUT", `/api/categories/${id}`, { name }),
+  deleteCategory: (id: number) => req<void>("DELETE", `/api/categories/${id}`),
+
   activities: () => req<Activity[]>("GET", "/api/activities"),
   createActivity: (data: ActivityInput) => req<Activity>("POST", "/api/activities", data),
   deleteActivity: (id: number) => req<void>("DELETE", `/api/activities/${id}`),

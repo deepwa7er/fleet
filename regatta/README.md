@@ -16,9 +16,12 @@ migrations).
   a schema CHECK), each with a positive quantity.
 - Voting is set membership: one vote per name per proposal, cast and retract
   are idempotent, so the tally can't be inflated by double-clicks.
-- The activity catalog (seeded with foods / misc / physical / video-games) is
-  editable from the UI; an activity can't be deleted while a proposal still
-  references it.
+- The catalog is fully user-editable from the UI: categories (seeded with
+  Foods, Misc, Physical, Video games, Games & puzzles, Social, Exploration,
+  Chance, Adulting, Creative) and activities alike. Keep activities easily
+  quantifiable — counts, streaks, minutes, miles — so no judging panel is
+  needed. An activity can't be deleted while a proposal references it, nor a
+  category while it still has activities.
 - Voter identity is an honor-system name kept in the browser — the game runs
   on the tailnet for friends, not the open internet.
 

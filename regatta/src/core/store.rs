@@ -3,18 +3,17 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::str::FromStr;
 use std::sync::Mutex;
 
 use chrono::{SecondsFormat, Utc};
-use rusqlite::types::Type;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use fleet_common::{Error, Result};
 
 use super::model::*;
 
-const ACTIVITY_COLS: &str = "id, name, category, unit, sort_order, created_at";
+const CATEGORY_COLS: &str = "id, name, sort_order, created_at";
+const ACTIVITY_COLS: &str = "id, name, category_id, unit, sort_order, created_at";
 
 pub struct Store {
     conn: Mutex<Connection>,
@@ -23,7 +22,7 @@ pub struct Store {
 /// Fields for a new catalog activity.
 pub struct NewActivity {
     pub name: String,
-    pub category: Category,
+    pub category_id: i64,
     pub unit: String,
 }
 
@@ -45,15 +44,12 @@ fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-/// Parse a TEXT column into a string-backed enum, surfacing a precise SQLite
-/// conversion error rather than panicking if the DB ever holds a bad value.
-fn parse_col<T: FromStr<Err = String>>(s: &str, col: usize) -> rusqlite::Result<T> {
-    T::from_str(s).map_err(|msg| {
-        rusqlite::Error::FromSqlConversionFailure(
-            col,
-            Type::Text,
-            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, msg)),
-        )
+fn category_from_row(row: &Row) -> rusqlite::Result<Category> {
+    Ok(Category {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        sort_order: row.get(2)?,
+        created_at: row.get(3)?,
     })
 }
 
@@ -61,7 +57,7 @@ fn activity_from_row(row: &Row) -> rusqlite::Result<Activity> {
     Ok(Activity {
         id: row.get(0)?,
         name: row.get(1)?,
-        category: parse_col(&row.get::<_, String>(2)?, 2)?,
+        category_id: row.get(2)?,
         unit: row.get(3)?,
         sort_order: row.get(4)?,
         created_at: row.get(5)?,
@@ -73,6 +69,7 @@ fn activity_from_row(row: &Row) -> rusqlite::Result<Activity> {
 const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/001_init.sql"),
     include_str!("../../migrations/002_seed_activities.sql"),
+    include_str!("../../migrations/003_user_categories.sql"),
 ];
 
 impl Store {
@@ -81,7 +78,7 @@ impl Store {
     /// the FK-off bracket during migration, migration fingerprinting); foreign
     /// keys are ON afterwards, enforcing ON DELETE CASCADE (deleting a
     /// proposal removes its steps and votes) and ON DELETE RESTRICT (an
-    /// activity in use cannot be deleted).
+    /// activity in use / a category with activities cannot be deleted).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let conn = fleet_common::store::open_migrated(path, MIGRATIONS)?;
         Ok(Store {
@@ -91,6 +88,107 @@ impl Store {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().expect("store mutex poisoned")
+    }
+
+    // ---- categories --------------------------------------------------------
+
+    pub fn categories(&self) -> Result<Vec<Category>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {CATEGORY_COLS} FROM categories ORDER BY sort_order ASC, id ASC"
+        ))?;
+        let rows = stmt
+            .query_map([], category_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    fn load_category(conn: &Connection, id: i64) -> Result<Category> {
+        conn.query_row(
+            &format!("SELECT {CATEGORY_COLS} FROM categories WHERE id = ?1"),
+            [id],
+            category_from_row,
+        )
+        .optional()?
+        .ok_or(Error::NotFound(id))
+    }
+
+    /// Category names are the display identity, so duplicates would make the
+    /// picker ambiguous; check first for a friendly error (the UNIQUE
+    /// constraint is the backstop).
+    fn require_unique_category_name(
+        conn: &Connection,
+        name: &str,
+        exclude: Option<i64>,
+    ) -> Result<()> {
+        let taken: bool = conn
+            .query_row(
+                "SELECT 1 FROM categories WHERE name = ?1 AND id IS NOT ?2",
+                params![name, exclude],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if taken {
+            Err(Error::BadRequest(format!(
+                "a category named \"{name}\" already exists"
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn create_category(&self, name: &str) -> Result<Category> {
+        let conn = self.lock();
+        Self::require_unique_category_name(&conn, name, None)?;
+        // New categories sort after the current maximum so they land at the end.
+        let next_order: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(sort_order), 0) + 10 FROM categories",
+            [],
+            |r| r.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO categories (name, sort_order, created_at) VALUES (?1, ?2, ?3)",
+            params![name, next_order, now()],
+        )?;
+        Self::load_category(&conn, conn.last_insert_rowid())
+    }
+
+    pub fn rename_category(&self, id: i64, name: &str) -> Result<Category> {
+        let conn = self.lock();
+        Self::require_unique_category_name(&conn, name, Some(id))?;
+        let changed = conn.execute(
+            "UPDATE categories SET name = ?1 WHERE id = ?2",
+            params![name, id],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound(id));
+        }
+        Self::load_category(&conn, id)
+    }
+
+    pub fn delete_category(&self, id: i64) -> Result<()> {
+        let conn = self.lock();
+        // The activities FK is RESTRICT; check first so the caller gets a
+        // message that names the rule instead of a raw constraint failure.
+        let in_use: bool = conn
+            .query_row(
+                "SELECT 1 FROM activities WHERE category_id = ?1 LIMIT 1",
+                [id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if in_use {
+            return Err(Error::BadRequest(format!(
+                "category #{id} still has activities; delete or move them first"
+            )));
+        }
+        let changed = conn.execute("DELETE FROM categories WHERE id = ?1", [id])?;
+        if changed == 0 {
+            return Err(Error::NotFound(id));
+        }
+        Ok(())
     }
 
     // ---- activities --------------------------------------------------------
@@ -118,6 +216,7 @@ impl Store {
 
     pub fn create_activity(&self, input: NewActivity) -> Result<Activity> {
         let conn = self.lock();
+        Self::require_category(&conn, input.category_id)?;
         // New activities sort after the current maximum so they land at the end.
         let next_order: i64 = conn.query_row(
             "SELECT COALESCE(MAX(sort_order), 0) + 10 FROM activities",
@@ -125,15 +224,9 @@ impl Store {
             |r| r.get(0),
         )?;
         conn.execute(
-            "INSERT INTO activities (name, category, unit, sort_order, created_at)
+            "INSERT INTO activities (name, category_id, unit, sort_order, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                input.name,
-                input.category.as_str(),
-                input.unit,
-                next_order,
-                now()
-            ],
+            params![input.name, input.category_id, input.unit, next_order, now()],
         )?;
         Self::load_activity(&conn, conn.last_insert_rowid())
     }
@@ -243,6 +336,18 @@ impl Store {
 
     // ---- shared loaders ----------------------------------------------------
 
+    fn require_category(conn: &Connection, id: i64) -> Result<()> {
+        let exists: bool = conn
+            .query_row("SELECT 1 FROM categories WHERE id = ?1", [id], |_| Ok(()))
+            .optional()?
+            .is_some();
+        if exists {
+            Ok(())
+        } else {
+            Err(Error::BadRequest(format!("no category #{id}")))
+        }
+    }
+
     fn require_activity(conn: &Connection, id: i64) -> Result<()> {
         let exists: bool = conn
             .query_row("SELECT 1 FROM activities WHERE id = ?1", [id], |_| Ok(()))
@@ -285,8 +390,10 @@ impl Store {
         {
             let mut stmt = conn.prepare(
                 "SELECT s.proposal_id, s.position, s.activity_id,
-                        a.name, a.category, a.unit, s.quantity
-                 FROM steps s JOIN activities a ON a.id = s.activity_id
+                        a.name, c.name, a.unit, s.quantity
+                 FROM steps s
+                 JOIN activities a ON a.id = s.activity_id
+                 JOIN categories c ON c.id = a.category_id
                  WHERE ?1 IS NULL OR s.proposal_id = ?1
                  ORDER BY s.proposal_id ASC, s.position ASC",
             )?;
@@ -296,7 +403,7 @@ impl Store {
                     position: row.get(1)?,
                     activity_id: row.get(2)?,
                     activity: row.get(3)?,
-                    category: parse_col(&row.get::<_, String>(4)?, 4)?,
+                    category: row.get(4)?,
                     unit: row.get(5)?,
                     quantity: row.get(6)?,
                 };
@@ -375,30 +482,64 @@ mod tests {
     #[test]
     fn fresh_db_is_seeded_with_the_starting_catalog() {
         let s = store();
+        let cats = s.categories().unwrap();
+        assert_eq!(cats.len(), 10, "seed migrations populate the categories");
+        assert_eq!(cats[0].name, "Foods", "ordered by sort_order");
+
         let acts = s.activities().unwrap();
-        assert_eq!(acts.len(), 10, "seed migration populates the catalog");
-        assert_eq!(acts[0].name, "Donuts eaten", "ordered by sort_order");
-        assert!(acts.iter().any(|a| a.category == Category::VideoGames));
+        assert_eq!(acts.len(), 45, "original ten plus the quantifiable list");
+        assert_eq!(acts[0].name, "Donuts eaten");
+        let chance = cats.iter().find(|c| c.name == "Chance").unwrap();
+        assert!(acts.iter().any(|a| a.category_id == chance.id));
     }
 
     #[test]
-    fn activity_create_and_delete() {
+    fn category_lifecycle_and_name_uniqueness() {
         let s = store();
+        let c = s.create_category("Karaoke marathon").unwrap();
+        assert!(c.sort_order > 100, "new categories append after the seeds");
+
+        assert!(matches!(
+            s.create_category("Karaoke marathon"),
+            Err(Error::BadRequest(_))
+        ));
+
+        let renamed = s.rename_category(c.id, "Marathon karaoke").unwrap();
+        assert_eq!(renamed.name, "Marathon karaoke");
+        assert!(matches!(
+            s.rename_category(c.id, "Foods"),
+            Err(Error::BadRequest(_)),
+        ));
+
+        s.delete_category(c.id).unwrap();
+        assert!(matches!(s.delete_category(c.id), Err(Error::NotFound(_))));
+    }
+
+    #[test]
+    fn a_category_with_activities_cannot_be_deleted() {
+        let s = store();
+        let c = s.create_category("Cartwheeling").unwrap();
         let a = s
             .create_activity(NewActivity {
                 name: "Cartwheels".into(),
-                category: Category::Physical,
+                category_id: c.id,
                 unit: "cartwheels".into(),
             })
             .unwrap();
-        assert_eq!(a.category, Category::Physical);
-        assert!(
-            a.sort_order > 100,
-            "new activities append after the seed rows"
-        );
-
+        assert!(matches!(s.delete_category(c.id), Err(Error::BadRequest(_))));
         s.delete_activity(a.id).unwrap();
-        assert!(matches!(s.delete_activity(a.id), Err(Error::NotFound(_))));
+        s.delete_category(c.id).unwrap();
+    }
+
+    #[test]
+    fn an_activity_requires_an_existing_category() {
+        let s = store();
+        let bad = s.create_activity(NewActivity {
+            name: "Ghost".into(),
+            category_id: 9999,
+            unit: "ghosts".into(),
+        });
+        assert!(matches!(bad, Err(Error::BadRequest(_))));
     }
 
     #[test]
@@ -419,6 +560,10 @@ mod tests {
             p.steps.iter().map(|st| st.position).collect::<Vec<_>>(),
             (1..=SEQUENCE_LEN as i64).collect::<Vec<_>>(),
             "positions are 1..=10 in list order"
+        );
+        assert!(
+            p.steps.iter().all(|st| !st.category.is_empty()),
+            "steps carry their category's display name"
         );
     }
 

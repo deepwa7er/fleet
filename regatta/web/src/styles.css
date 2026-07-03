@@ -540,13 +540,34 @@ button:focus-visible {
 }
 
 /* ── Catalog modal ──────────────────────────────────────────────────────── */
-.catalog-group h3 {
-  margin: 0 0 var(--s1);
+.modal p {
+  margin: 0;
+}
+
+.catalog-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s1);
+}
+
+.catalog-head h3 {
+  margin: 0;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--ink-faint);
+  flex: 1;
+  min-width: 0;
+}
+
+.catalog-head input {
+  flex: 1;
+}
+
+.catalog-head button {
+  flex: none;
 }
 
 .catalog-list {

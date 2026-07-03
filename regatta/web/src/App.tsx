@@ -1,23 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   api,
-  CATEGORIES,
   SEQUENCE_LEN,
   type Activity,
-  type ActivityInput,
   type Category,
   type Proposal,
 } from "./api";
 
 const VOTER_KEY = "regatta-voter";
 
-const categoryLabel = (c: Category) => CATEGORIES.find((x) => x.key === c)?.label ?? c;
-
 /** Server order: votes desc, earlier proposal wins ties. Re-applied after a
  * vote so the board re-ranks in place. */
 const byRank = (a: Proposal, b: Proposal) => b.votes - a.votes || a.id - b.id;
 
 export function App() {
+  const [categories, setCategories] = useState<Category[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [voter, setVoter] = useState(() => localStorage.getItem(VOTER_KEY) ?? "");
@@ -34,7 +31,12 @@ export function App() {
 
   const load = async (asVoter: string) => {
     try {
-      const [acts, props] = await Promise.all([api.activities(), api.proposals(asVoter)]);
+      const [cats, acts, props] = await Promise.all([
+        api.categories(),
+        api.activities(),
+        api.proposals(asVoter),
+      ]);
+      setCategories(cats);
       setActivities(acts);
       setProposals(props);
       setError(null);
@@ -50,6 +52,17 @@ export function App() {
     const t = setTimeout(() => void load(trimmedVoter), trimmedVoter ? 300 : 0);
     return () => clearTimeout(t);
   }, [trimmedVoter]);
+
+  /** Re-fetch the catalog after the catalog modal changes it. */
+  const reloadCatalog = async () => {
+    try {
+      const [cats, acts] = await Promise.all([api.categories(), api.activities()]);
+      setCategories(cats);
+      setActivities(acts);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const replaceProposal = (next: Proposal) =>
     setProposals((prev) => prev.map((p) => (p.id === next.id ? next : p)).sort(byRank));
@@ -138,6 +151,7 @@ export function App() {
 
       {showBuilder && (
         <Builder
+          categories={categories}
           activities={activities}
           author={trimmedVoter}
           onClose={() => setShowBuilder(false)}
@@ -150,9 +164,10 @@ export function App() {
 
       {showCatalog && (
         <Catalog
+          categories={categories}
           activities={activities}
           onClose={() => setShowCatalog(false)}
-          onChanged={setActivities}
+          onChanged={() => void reloadCatalog()}
         />
       )}
     </div>
@@ -203,7 +218,7 @@ function ProposalCard(props: {
               {s.quantity} {s.unit}
             </span>
             <span className="act">{s.activity}</span>
-            <span className="cat">{categoryLabel(s.category)}</span>
+            <span className="cat">{s.category}</span>
           </li>
         ))}
       </ol>
@@ -222,6 +237,7 @@ const emptyDraft = (): DraftStep[] =>
   Array.from({ length: SEQUENCE_LEN }, () => ({ activity_id: null, quantity: "" }));
 
 function Builder(props: {
+  categories: Category[];
   activities: Activity[];
   author: string;
   onClose: () => void;
@@ -235,11 +251,13 @@ function Builder(props: {
 
   const grouped = useMemo(
     () =>
-      CATEGORIES.map((c) => ({
-        ...c,
-        activities: props.activities.filter((a) => a.category === c.key),
-      })).filter((c) => c.activities.length > 0),
-    [props.activities],
+      props.categories
+        .map((c) => ({
+          ...c,
+          activities: props.activities.filter((a) => a.category_id === c.id),
+        }))
+        .filter((c) => c.activities.length > 0),
+    [props.categories, props.activities],
   );
 
   const setStep = (i: number, patch: Partial<DraftStep>) =>
@@ -317,7 +335,7 @@ function Builder(props: {
               >
                 <option value="">pick an activity…</option>
                 {grouped.map((c) => (
-                  <optgroup key={c.key} label={c.label}>
+                  <optgroup key={c.id} label={c.name}>
                     {c.activities.map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.name}
@@ -345,72 +363,134 @@ function Builder(props: {
   );
 }
 
-// ── the activity catalog editor ──────────────────────────────────────────────
+// ── the catalog editor (categories + activities) ─────────────────────────────
 
 function Catalog(props: {
+  categories: Category[];
   activities: Activity[];
   onClose: () => void;
-  onChanged: (next: Activity[]) => void;
+  onChanged: () => void;
 }) {
-  const [draft, setDraft] = useState<ActivityInput>({ name: "", category: "misc", unit: "" });
+  const [newCategory, setNewCategory] = useState("");
+  const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(null);
+  const [draft, setDraft] = useState({ name: "", unit: "", category_id: null as number | null });
   const [error, setError] = useState<string | null>(null);
 
-  const add = async () => {
-    if (!draft.name.trim() || !draft.unit.trim()) return;
+  const run = async (op: () => Promise<unknown>) => {
     try {
-      await api.createActivity({ ...draft, name: draft.name.trim(), unit: draft.unit.trim() });
-      props.onChanged(await api.activities());
-      setDraft({ name: "", category: draft.category, unit: "" });
+      await op();
+      props.onChanged();
       setError(null);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return false;
     }
   };
 
-  const remove = async (a: Activity) => {
-    try {
-      await api.deleteActivity(a.id);
-      props.onChanged(props.activities.filter((x) => x.id !== a.id));
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
+  const addCategory = async () => {
+    if (!newCategory.trim()) return;
+    if (await run(() => api.createCategory(newCategory.trim()))) setNewCategory("");
+  };
+
+  const saveRename = async () => {
+    if (!renaming || !renaming.name.trim()) return;
+    if (await run(() => api.renameCategory(renaming.id, renaming.name.trim()))) setRenaming(null);
+  };
+
+  const addActivity = async () => {
+    if (!draft.name.trim() || !draft.unit.trim() || draft.category_id === null) return;
+    const ok = await run(() =>
+      api.createActivity({
+        name: draft.name.trim(),
+        unit: draft.unit.trim(),
+        category_id: draft.category_id!,
+      }),
+    );
+    if (ok) setDraft({ name: "", unit: "", category_id: draft.category_id });
   };
 
   return (
     <div className="modal-backdrop" onClick={props.onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Activity catalog</h2>
-        {CATEGORIES.map((c) => {
-          const acts = props.activities.filter((a) => a.category === c.key);
-          if (acts.length === 0) return null;
+        <h2>Catalog — categories &amp; activities</h2>
+        <p className="hint">
+          Keep activities easily quantifiable — counts, streaks, minutes, miles — so nobody has to
+          judge whether it really happened.
+        </p>
+
+        {props.categories.map((c) => {
+          const acts = props.activities.filter((a) => a.category_id === c.id);
           return (
-            <div className="catalog-group" key={c.key}>
-              <h3>{c.label}</h3>
-              <ul className="catalog-list">
-                {acts.map((a) => (
-                  <li key={a.id}>
-                    <span className="act">{a.name}</span>
-                    <span className="unit">per {a.unit}</span>
+            <div className="catalog-group" key={c.id}>
+              <div className="catalog-head">
+                {renaming?.id === c.id ? (
+                  <>
+                    <input
+                      value={renaming.name}
+                      onChange={(e) => setRenaming({ id: c.id, name: e.target.value })}
+                      onKeyDown={(e) => e.key === "Enter" && void saveRename()}
+                      autoFocus
+                    />
+                    <button onClick={() => void saveRename()}>Save</button>
+                    <button className="ghost" onClick={() => setRenaming(null)}>
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <h3>{c.name}</h3>
+                    <button className="ghost" onClick={() => setRenaming({ id: c.id, name: c.name })}>
+                      rename
+                    </button>
                     <button
                       className="ghost danger-hover"
-                      onClick={() => void remove(a)}
-                      title="delete activity (blocked while a proposal uses it)"
+                      onClick={() => void run(() => api.deleteCategory(c.id))}
+                      title="delete category (blocked while it has activities)"
                     >
                       ✕
                     </button>
-                  </li>
-                ))}
-              </ul>
+                  </>
+                )}
+              </div>
+              {acts.length > 0 && (
+                <ul className="catalog-list">
+                  {acts.map((a) => (
+                    <li key={a.id}>
+                      <span className="act">{a.name}</span>
+                      <span className="unit">per {a.unit}</span>
+                      <button
+                        className="ghost danger-hover"
+                        onClick={() => void run(() => api.deleteActivity(a.id))}
+                        title="delete activity (blocked while a proposal uses it)"
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           );
         })}
 
         <div className="catalog-add">
           <input
+            value={newCategory}
+            onChange={(e) => setNewCategory(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void addCategory()}
+            placeholder="new category (e.g. Water sports)"
+          />
+          <button className="primary" disabled={!newCategory.trim()} onClick={() => void addCategory()}>
+            Add category
+          </button>
+        </div>
+
+        <div className="catalog-add">
+          <input
             value={draft.name}
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            placeholder="new activity (e.g. Cartwheels)"
+            placeholder="new activity (e.g. Cannonballs done)"
           />
           <input
             className="unit-input"
@@ -419,19 +499,22 @@ function Catalog(props: {
             placeholder="unit"
           />
           <select
-            value={draft.category}
-            onChange={(e) => setDraft({ ...draft, category: e.target.value as Category })}
+            value={draft.category_id ?? ""}
+            onChange={(e) =>
+              setDraft({ ...draft, category_id: e.target.value ? Number(e.target.value) : null })
+            }
           >
-            {CATEGORIES.map((c) => (
-              <option key={c.key} value={c.key}>
-                {c.label}
+            <option value="">category…</option>
+            {props.categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
               </option>
             ))}
           </select>
           <button
             className="primary"
-            disabled={!draft.name.trim() || !draft.unit.trim()}
-            onClick={() => void add()}
+            disabled={!draft.name.trim() || !draft.unit.trim() || draft.category_id === null}
+            onClick={() => void addActivity()}
           >
             Add
           </button>

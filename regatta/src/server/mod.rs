@@ -32,6 +32,14 @@ pub async fn run(store: Arc<Store>, config: ServerConfig) -> std::io::Result<()>
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route(
+            "/api/categories",
+            get(list_categories).post(create_category),
+        )
+        .route(
+            "/api/categories/{id}",
+            axum::routing::put(rename_category).delete(delete_category),
+        )
+        .route(
             "/api/activities",
             get(list_activities).post(create_activity),
         )
@@ -62,9 +70,14 @@ pub async fn run(store: Arc<Store>, config: ServerConfig) -> std::io::Result<()>
 // ---- request bodies ---------------------------------------------------------
 
 #[derive(Deserialize)]
+struct CategoryReq {
+    name: String,
+}
+
+#[derive(Deserialize)]
 struct ActivityReq {
     name: String,
-    category: Category,
+    category_id: i64,
     unit: String,
 }
 
@@ -103,11 +116,40 @@ fn require(field: &str, value: &str) -> Result<()> {
     }
 }
 
-/// Trim a voter/author name; blank names never reach the store, so a vote row
-/// always has a real owner.
+/// Trim a required text field; blank values never reach the store, so a vote
+/// row always has a real owner and names are always displayable.
 fn name(field: &str, value: &str) -> Result<String> {
     require(field, value)?;
     Ok(value.trim().to_string())
+}
+
+// ---- category handlers --------------------------------------------------------
+
+async fn list_categories(State(st): State<AppState>) -> Result<Json<Vec<Category>>> {
+    Ok(Json(st.store.categories()?))
+}
+
+async fn create_category(
+    State(st): State<AppState>,
+    Json(req): Json<CategoryReq>,
+) -> Result<(StatusCode, Json<Category>)> {
+    let category = st.store.create_category(&name("name", &req.name)?)?;
+    Ok((StatusCode::CREATED, Json(category)))
+}
+
+async fn rename_category(
+    State(st): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<CategoryReq>,
+) -> Result<Json<Category>> {
+    Ok(Json(
+        st.store.rename_category(id, &name("name", &req.name)?)?,
+    ))
+}
+
+async fn delete_category(State(st): State<AppState>, Path(id): Path<i64>) -> Result<StatusCode> {
+    st.store.delete_category(id)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---- activity handlers --------------------------------------------------------
@@ -122,7 +164,7 @@ async fn create_activity(
 ) -> Result<(StatusCode, Json<Activity>)> {
     let activity = st.store.create_activity(NewActivity {
         name: name("name", &req.name)?,
-        category: req.category,
+        category_id: req.category_id,
         unit: name("unit", &req.unit)?,
     })?;
     Ok((StatusCode::CREATED, Json(activity)))
