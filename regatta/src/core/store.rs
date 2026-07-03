@@ -32,8 +32,9 @@ pub struct NewStep {
     pub quantity: f64,
 }
 
-/// Fields for a new proposal. `steps` must hold exactly [`SEQUENCE_LEN`]
-/// entries with positive quantities — the store rejects anything else.
+/// Fields for a new proposal. `steps` must be non-empty and its quantities —
+/// positive multiples of 0.5 — must add up to exactly [`COURSE_TOTAL`]; the
+/// store rejects anything else.
 pub struct NewProposal {
     pub title: String,
     pub author: String,
@@ -70,6 +71,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/001_init.sql"),
     include_str!("../../migrations/002_seed_activities.sql"),
     include_str!("../../migrations/003_user_categories.sql"),
+    include_str!("../../migrations/004_sum_to_ten.sql"),
 ];
 
 impl Store {
@@ -265,19 +267,31 @@ impl Store {
     }
 
     pub fn create_proposal(&self, input: NewProposal) -> Result<Proposal> {
-        if input.steps.len() != SEQUENCE_LEN {
-            return Err(Error::BadRequest(format!(
-                "a proposal is exactly {SEQUENCE_LEN} steps; got {}",
-                input.steps.len()
-            )));
+        if input.steps.is_empty() {
+            return Err(Error::BadRequest("a course needs at least one step".into()));
         }
+        // Work in half-units so the budget check is exact integer arithmetic
+        // (every valid quantity is a dyadic rational, exact in f64).
+        let mut total_halves: i64 = 0;
         for (i, step) in input.steps.iter().enumerate() {
-            if !(step.quantity.is_finite() && step.quantity > 0.0) {
+            let halves = step.quantity * 2.0;
+            let valid = step.quantity.is_finite()
+                && step.quantity > 0.0
+                && step.quantity <= COURSE_TOTAL
+                && halves.fract() == 0.0;
+            if !valid {
                 return Err(Error::BadRequest(format!(
-                    "step {} quantity must be a positive number",
+                    "step {} quantity must be a positive multiple of 0.5, at most {COURSE_TOTAL}",
                     i + 1
                 )));
             }
+            total_halves += halves as i64;
+        }
+        if total_halves != (COURSE_TOTAL * 2.0) as i64 {
+            return Err(Error::BadRequest(format!(
+                "step quantities must add up to exactly {COURSE_TOTAL}; got {}",
+                total_halves as f64 / 2.0
+            )));
         }
         let mut conn = self.lock();
         let tx = conn.transaction()?;
@@ -459,22 +473,26 @@ mod tests {
         Store::open(":memory:").expect("open in-memory store")
     }
 
-    /// A valid ten-step sequence over the seeded catalog.
-    fn ten_steps(s: &Store) -> Vec<NewStep> {
+    /// Steps over the seeded catalog with the given quantities (one step per
+    /// quantity, activities assigned round-robin).
+    fn steps_with(s: &Store, quantities: &[f64]) -> Vec<NewStep> {
         let activities = s.activities().unwrap();
-        (0..SEQUENCE_LEN)
-            .map(|i| NewStep {
+        quantities
+            .iter()
+            .enumerate()
+            .map(|(i, &quantity)| NewStep {
                 activity_id: activities[i % activities.len()].id,
-                quantity: (i + 1) as f64,
+                quantity,
             })
             .collect()
     }
 
+    /// A valid course: quantities add up to [`COURSE_TOTAL`].
     fn propose(s: &Store, title: &str) -> Proposal {
         s.create_proposal(NewProposal {
             title: title.into(),
             author: "cap".into(),
-            steps: ten_steps(s),
+            steps: steps_with(s, &[2.5, 3.0, 1.5, 2.0, 1.0]),
         })
         .unwrap()
     }
@@ -543,23 +561,49 @@ mod tests {
     }
 
     #[test]
-    fn a_proposal_is_exactly_ten_steps() {
+    fn a_course_spends_exactly_the_ten_unit_budget() {
         let s = store();
-        let mut nine = ten_steps(&s);
-        nine.pop();
-        let err = s.create_proposal(NewProposal {
-            title: "too short".into(),
+        let under = s.create_proposal(NewProposal {
+            title: "under budget".into(),
             author: "cap".into(),
-            steps: nine,
+            steps: steps_with(&s, &[4.0, 5.5]),
         });
-        assert!(matches!(err, Err(Error::BadRequest(_))));
+        assert!(matches!(under, Err(Error::BadRequest(_))));
+
+        let over = s.create_proposal(NewProposal {
+            title: "over budget".into(),
+            author: "cap".into(),
+            steps: steps_with(&s, &[4.0, 5.5, 1.0]),
+        });
+        assert!(matches!(over, Err(Error::BadRequest(_))));
+
+        let empty = s.create_proposal(NewProposal {
+            title: "no steps".into(),
+            author: "cap".into(),
+            steps: vec![],
+        });
+        assert!(matches!(empty, Err(Error::BadRequest(_))));
+
+        // Any step count works as long as the budget is spent exactly.
+        let single = s.create_proposal(NewProposal {
+            title: "all in on one".into(),
+            author: "cap".into(),
+            steps: steps_with(&s, &[10.0]),
+        });
+        assert_eq!(single.unwrap().steps.len(), 1);
+
+        let twenty_halves = s.create_proposal(NewProposal {
+            title: "death by halves".into(),
+            author: "cap".into(),
+            steps: steps_with(&s, &[0.5; 20]),
+        });
+        assert_eq!(twenty_halves.unwrap().steps.len(), 20);
 
         let p = propose(&s, "the gauntlet");
-        assert_eq!(p.steps.len(), SEQUENCE_LEN);
         assert_eq!(
             p.steps.iter().map(|st| st.position).collect::<Vec<_>>(),
-            (1..=SEQUENCE_LEN as i64).collect::<Vec<_>>(),
-            "positions are 1..=10 in list order"
+            (1..=p.steps.len() as i64).collect::<Vec<_>>(),
+            "positions are 1..=N in list order"
         );
         assert!(
             p.steps.iter().all(|st| !st.category.is_empty()),
@@ -568,18 +612,28 @@ mod tests {
     }
 
     #[test]
+    fn quantities_move_in_half_unit_increments() {
+        let s = store();
+        // Sums to 10, but 0.3 is not a half-unit.
+        let err = s.create_proposal(NewProposal {
+            title: "third donut".into(),
+            author: "cap".into(),
+            steps: steps_with(&s, &[0.3, 9.7]),
+        });
+        assert!(matches!(err, Err(Error::BadRequest(_))));
+    }
+
+    #[test]
     fn step_quantities_must_be_positive_and_activities_real() {
         let s = store();
-        let mut steps = ten_steps(&s);
-        steps[3].quantity = 0.0;
         let err = s.create_proposal(NewProposal {
             title: "zero".into(),
             author: "cap".into(),
-            steps,
+            steps: steps_with(&s, &[0.0, 10.0]),
         });
         assert!(matches!(err, Err(Error::BadRequest(_))));
 
-        let mut steps = ten_steps(&s);
+        let mut steps = steps_with(&s, &[5.0, 5.0]);
         steps[0].activity_id = 9999;
         let err = s.create_proposal(NewProposal {
             title: "ghost activity".into(),

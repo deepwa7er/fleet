@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   api,
-  SEQUENCE_LEN,
+  COURSE_TOTAL,
   type Activity,
   type Category,
   type Proposal,
@@ -95,7 +95,7 @@ export function App() {
     <div className="app">
       <header>
         <h1>Regatta</h1>
-        <span className="subtitle">ten-step courses — the crew votes</span>
+        <span className="subtitle">courses that add up to ten — the crew votes</span>
         <div className="header-right">
           <label className="voter">
             <span>voting as</span>
@@ -133,7 +133,7 @@ export function App() {
         <main className="main">
           {proposals.length === 0 && (
             <div className="empty-board">
-              No proposals yet. Chart the first ten-step course.
+              No proposals yet. Chart the first course that adds up to ten.
             </div>
           )}
           {proposals.map((p, i) => (
@@ -233,8 +233,18 @@ interface DraftStep {
   quantity: string;
 }
 
-const emptyDraft = (): DraftStep[] =>
-  Array.from({ length: SEQUENCE_LEN }, () => ({ activity_id: null, quantity: "" }));
+const emptyStep = (): DraftStep => ({ activity_id: null, quantity: "" });
+
+const emptyDraft = (): DraftStep[] => Array.from({ length: 3 }, emptyStep);
+
+/** A draft quantity in half-units, or null if it isn't a positive multiple of
+ * 0.5. Working in half-units keeps the budget check exact. */
+const toHalves = (quantity: string): number | null => {
+  const q = Number(quantity);
+  if (!Number.isFinite(q) || q <= 0 || q > COURSE_TOTAL) return null;
+  const halves = q * 2;
+  return Number.isInteger(halves) ? halves : null;
+};
 
 function Builder(props: {
   categories: Category[];
@@ -263,14 +273,19 @@ function Builder(props: {
   const setStep = (i: number, patch: Partial<DraftStep>) =>
     setSteps((prev) => prev.map((s, j) => (j === i ? { ...s, ...patch } : s)));
 
-  const parsed = steps.map((s) => ({
-    activity_id: s.activity_id,
-    quantity: Number(s.quantity),
-  }));
+  const addStep = () => setSteps((prev) => [...prev, emptyStep()]);
+
+  const removeStep = (i: number) => setSteps((prev) => prev.filter((_, j) => j !== i));
+
+  const halves = steps.map((s) => toHalves(s.quantity));
+  const spentHalves = halves.reduce<number>((sum, h) => sum + (h ?? 0), 0);
+  const remaining = COURSE_TOTAL - spentHalves / 2;
+  const stepsValid = steps.every((s, i) => s.activity_id !== null && halves[i] !== null);
   const complete =
     title.trim() !== "" &&
     author.trim() !== "" &&
-    parsed.every((s) => s.activity_id !== null && Number.isFinite(s.quantity) && s.quantity > 0);
+    stepsValid &&
+    spentHalves === COURSE_TOTAL * 2;
 
   const unitFor = (id: number | null) => props.activities.find((a) => a.id === id)?.unit ?? "";
 
@@ -281,7 +296,7 @@ function Builder(props: {
       const created = await api.createProposal({
         title: title.trim(),
         author: author.trim(),
-        steps: parsed.map((s) => ({ activity_id: s.activity_id!, quantity: s.quantity })),
+        steps: steps.map((s) => ({ activity_id: s.activity_id!, quantity: Number(s.quantity) })),
       });
       props.onCreated(created);
     } catch (e) {
@@ -293,7 +308,7 @@ function Builder(props: {
   return (
     <div className="modal-backdrop" onClick={props.onClose}>
       <div className="modal builder" onClick={(e) => e.stopPropagation()}>
-        <h2>Propose a course — {SEQUENCE_LEN} steps</h2>
+        <h2>Propose a course — spend exactly {COURSE_TOTAL}</h2>
         <div className="field-row">
           <label className="field">
             <span>Title</span>
@@ -318,7 +333,8 @@ function Builder(props: {
                 className="qty-input"
                 type="number"
                 min="0"
-                step="any"
+                max={COURSE_TOTAL}
+                step="0.5"
                 inputMode="decimal"
                 value={s.quantity}
                 onChange={(e) => setStep(i, { quantity: e.target.value })}
@@ -344,14 +360,38 @@ function Builder(props: {
                   </optgroup>
                 ))}
               </select>
+              <button
+                className="ghost danger-hover"
+                onClick={() => removeStep(i)}
+                disabled={steps.length === 1}
+                title="remove step"
+                aria-label={`remove step ${i + 1}`}
+              >
+                ✕
+              </button>
             </div>
           ))}
+        </div>
+
+        <div className="budget-row">
+          <button className="ghost" onClick={addStep}>
+            + add step
+          </button>
+          <span className={`budget${spentHalves === COURSE_TOTAL * 2 ? " spent" : ""}`}>
+            {spentHalves / 2} / {COURSE_TOTAL}
+            {remaining !== 0 && (
+              <small>
+                {" "}
+                ({remaining > 0 ? `${remaining} left` : `${-remaining} over`})
+              </small>
+            )}
+          </span>
         </div>
 
         {error && <div className="banner error">{error}</div>}
         <div className="modal-actions">
           <span className="hint spacer">
-            all {SEQUENCE_LEN} steps need an activity and a positive quantity
+            quantities move in halves and must add up to exactly {COURSE_TOTAL}
           </span>
           <button onClick={props.onClose}>Cancel</button>
           <button className="primary" disabled={!complete || busy} onClick={() => void submit()}>

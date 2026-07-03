@@ -1,7 +1,9 @@
 import { req } from "@fleet/ui/api";
 
-/** Every course is exactly this many steps — the game is "vote on ten". */
-export const SEQUENCE_LEN = 10;
+/** Every course's step quantities must add up to exactly this — the game is
+ * "vote on ten": a budget of ten units spent across activities, in half-unit
+ * increments. */
+export const COURSE_TOTAL = 10;
 
 export interface Category {
   id: number;

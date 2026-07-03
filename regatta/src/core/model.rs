@@ -1,8 +1,11 @@
 use serde::Serialize;
 
-/// Every proposal is a course of exactly this many steps — the game is
-/// "vote on ten". Enforced by the store on creation.
-pub const SEQUENCE_LEN: usize = 10;
+/// Every course's step quantities must add up to exactly this — the game is
+/// "vote on ten": a budget of ten units to spend across activities. Quantities
+/// move in half-unit increments (halves are exact in binary floating point, so
+/// the budget check is exact integer arithmetic on half-units, never an
+/// epsilon comparison). Enforced by the store on creation.
+pub const COURSE_TOTAL: f64 = 10.0;
 
 /// A user-editable section of the activity catalog (e.g. "Games & puzzles").
 /// Purely for grouping in the picker — steps mix categories freely.
