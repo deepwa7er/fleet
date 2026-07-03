@@ -1,11 +1,9 @@
 use serde::Serialize;
 
 /// Every course's step quantities must add up to exactly this — the game is
-/// "vote on ten": a budget of ten units to spend across activities. Quantities
-/// move in half-unit increments (halves are exact in binary floating point, so
-/// the budget check is exact integer arithmetic on half-units, never an
-/// epsilon comparison). Enforced by the store on creation.
-pub const COURSE_TOTAL: f64 = 10.0;
+/// "vote on ten": a budget of ten whole units to spend across activities.
+/// Enforced by the store on creation.
+pub const COURSE_TOTAL: i64 = 10;
 
 /// A user-editable section of the activity catalog (e.g. "Games & puzzles").
 /// Purely for grouping in the picker — steps mix categories freely.
@@ -39,7 +37,7 @@ pub struct Step {
     pub activity: String,
     pub category: String,
     pub unit: String,
-    pub quantity: f64,
+    pub quantity: i64,
 }
 
 /// A proposed course with its tally. `voted` is whether the requesting voter

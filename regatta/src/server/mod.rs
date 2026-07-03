@@ -91,7 +91,7 @@ struct ProposalReq {
 #[derive(Deserialize)]
 struct StepReq {
     activity_id: i64,
-    quantity: f64,
+    quantity: i64,
 }
 
 #[derive(Deserialize)]

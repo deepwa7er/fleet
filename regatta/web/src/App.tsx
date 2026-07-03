@@ -237,13 +237,11 @@ const emptyStep = (): DraftStep => ({ activity_id: null, quantity: "" });
 
 const emptyDraft = (): DraftStep[] => Array.from({ length: 3 }, emptyStep);
 
-/** A draft quantity in half-units, or null if it isn't a positive multiple of
- * 0.5. Working in half-units keeps the budget check exact. */
-const toHalves = (quantity: string): number | null => {
+/** A draft quantity as whole units, or null if it isn't a whole number from 1
+ * to the budget. */
+const toUnits = (quantity: string): number | null => {
   const q = Number(quantity);
-  if (!Number.isFinite(q) || q <= 0 || q > COURSE_TOTAL) return null;
-  const halves = q * 2;
-  return Number.isInteger(halves) ? halves : null;
+  return Number.isInteger(q) && q >= 1 && q <= COURSE_TOTAL ? q : null;
 };
 
 function Builder(props: {
@@ -277,15 +275,12 @@ function Builder(props: {
 
   const removeStep = (i: number) => setSteps((prev) => prev.filter((_, j) => j !== i));
 
-  const halves = steps.map((s) => toHalves(s.quantity));
-  const spentHalves = halves.reduce<number>((sum, h) => sum + (h ?? 0), 0);
-  const remaining = COURSE_TOTAL - spentHalves / 2;
-  const stepsValid = steps.every((s, i) => s.activity_id !== null && halves[i] !== null);
+  const units = steps.map((s) => toUnits(s.quantity));
+  const spent = units.reduce<number>((sum, u) => sum + (u ?? 0), 0);
+  const remaining = COURSE_TOTAL - spent;
+  const stepsValid = steps.every((s, i) => s.activity_id !== null && units[i] !== null);
   const complete =
-    title.trim() !== "" &&
-    author.trim() !== "" &&
-    stepsValid &&
-    spentHalves === COURSE_TOTAL * 2;
+    title.trim() !== "" && author.trim() !== "" && stepsValid && spent === COURSE_TOTAL;
 
   const unitFor = (id: number | null) => props.activities.find((a) => a.id === id)?.unit ?? "";
 
@@ -332,10 +327,10 @@ function Builder(props: {
               <input
                 className="qty-input"
                 type="number"
-                min="0"
+                min="1"
                 max={COURSE_TOTAL}
-                step="0.5"
-                inputMode="decimal"
+                step="1"
+                inputMode="numeric"
                 value={s.quantity}
                 onChange={(e) => setStep(i, { quantity: e.target.value })}
                 placeholder="qty"
@@ -377,8 +372,8 @@ function Builder(props: {
           <button className="ghost" onClick={addStep}>
             + add step
           </button>
-          <span className={`budget${spentHalves === COURSE_TOTAL * 2 ? " spent" : ""}`}>
-            {spentHalves / 2} / {COURSE_TOTAL}
+          <span className={`budget${spent === COURSE_TOTAL ? " spent" : ""}`}>
+            {spent} / {COURSE_TOTAL}
             {remaining !== 0 && (
               <small>
                 {" "}
@@ -391,7 +386,7 @@ function Builder(props: {
         {error && <div className="banner error">{error}</div>}
         <div className="modal-actions">
           <span className="hint spacer">
-            quantities move in halves and must add up to exactly {COURSE_TOTAL}
+            whole-number quantities that add up to exactly {COURSE_TOTAL}
           </span>
           <button onClick={props.onClose}>Cancel</button>
           <button className="primary" disabled={!complete || busy} onClick={() => void submit()}>

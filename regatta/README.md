@@ -2,8 +2,8 @@
 
 Sequence-voting party game. Anyone proposes a **course** — a titled gauntlet
 of steps whose quantities **add up to exactly ten** ("3 donuts eaten" +
-"2 shots" + "1.5 miles run" + … = 10), each step an activity from the catalog
-— and the crew votes. Ten units is the whole budget, so a push-up costs as
+"2 shots" + "2 miles run" + … = 10), each step an activity from the catalog —
+and the crew votes. Ten whole units is the whole budget, so a push-up costs as
 much as a donut: spending it well is the game. The board ranks courses by
 votes; ties keep the earlier proposal ahead.
 
@@ -13,10 +13,8 @@ migrations).
 
 ## The rules
 
-- A proposal is any number of steps whose quantities add up to exactly ten
-  (`COURSE_TOTAL` in `core/model.rs`). Quantities move in half-unit increments
-  — halves are exact in binary floating point, so the budget check is exact
-  integer arithmetic on half-units, never an epsilon comparison.
+- A proposal is any number of steps whose quantities — whole numbers from 1 to
+  10 — add up to exactly ten (`COURSE_TOTAL` in `core/model.rs`).
 - Voting is set membership: one vote per name per proposal, cast and retract
   are idempotent, so the tally can't be inflated by double-clicks.
 - The catalog is fully user-editable from the UI: categories (seeded with
