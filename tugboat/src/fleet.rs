@@ -38,14 +38,6 @@ pub struct Fleet {
     /// declare (see [`BackupExtras`]); merged by `tugboat fleet gen`.
     #[serde(default)]
     pub backup: BackupExtras,
-    /// Monorepo-root-relative paths whose changes affect every monorepo
-    /// service — shared crates, the shared web UI kit, the workspace
-    /// manifests. `tugboat serve` scopes a member's "undeployed commits"
-    /// count to the member's own directory plus these, so a commit that
-    /// touches neither doesn't mark the member stale. Members that are their
-    /// own repository are unaffected (every commit there is theirs).
-    #[serde(default)]
-    pub shared: Vec<String>,
 }
 
 /// State the fleet backup must cover but which no in-monorepo `deploy.toml`

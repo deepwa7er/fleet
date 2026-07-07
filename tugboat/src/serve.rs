@@ -18,7 +18,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use axum::extract::{Path, Query, Request, State};
@@ -37,6 +37,7 @@ use crate::docs;
 use crate::fleet::{self, Fleet};
 use crate::git;
 use crate::manifest;
+use crate::scope;
 use crate::version::BuildInfo;
 
 /// How long to wait for a burst of commits to settle before rebuilding the docs,
@@ -142,6 +143,12 @@ struct ServeState {
     docs_notify: Arc<Notify>,
     /// The docs auto-refresh state (last build outcome, whether one is running).
     docs: Mutex<DocsStatus>,
+    /// Cached cargo workspace graph for scoping undeployed-commit counts (see
+    /// [`scope`]). Lazily loaded with a short TTL — `cargo metadata` costs a
+    /// few hundred ms, too much to pay on every status request. The inner
+    /// `Option` records a failed load, so an unavailable graph is also cached
+    /// rather than retried per request.
+    workspace_graph: Mutex<Option<(Instant, Option<Arc<scope::WorkspaceGraph>>)>>,
 }
 
 impl ServeState {
@@ -157,6 +164,32 @@ impl ServeState {
             }
         }
         self.fleet.read().unwrap()
+    }
+
+    /// The cargo workspace dependency graph, lazily loaded and cached for a
+    /// minute. `None` when `cargo metadata` fails — callers degrade to
+    /// whole-repo commit counts (noisy, but never silently zero).
+    fn workspace_graph(&self) -> Option<Arc<scope::WorkspaceGraph>> {
+        const TTL: Duration = Duration::from_secs(60);
+        let mut slot = self.workspace_graph.lock().unwrap();
+        if let Some((at, graph)) = slot.as_ref() {
+            if at.elapsed() < TTL {
+                return graph.clone();
+            }
+        }
+        let root = self.fleet().root_dir();
+        let graph = match scope::load_workspace_graph(&root) {
+            Ok(g) => Some(Arc::new(g)),
+            Err(err) => {
+                eprintln!(
+                    "tugboat serve: workspace graph unavailable, \
+                     status counts fall back to whole-repo ({err:#})"
+                );
+                None
+            }
+        };
+        *slot = Some((Instant::now(), graph.clone()));
+        graph
     }
 }
 
@@ -230,6 +263,7 @@ pub fn run(args: ServeArgs) -> Result<()> {
         started_unix,
         docs_notify: Arc::new(Notify::new()),
         docs: Mutex::new(DocsStatus::default()),
+        workspace_graph: Mutex::new(None),
     });
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -354,10 +388,11 @@ struct StatusInfo {
     dirty: bool,
     /// Commits on `origin/<default-branch>` not yet in the deployed sha (only when
     /// the deployed sha was supplied and is an ancestor of that branch head). For a
-    /// monorepo member the count is scoped to commits touching the member's own
-    /// directory or one of the fleet's declared `shared` paths — repo-wide churn
-    /// that can't affect the member doesn't count. Members that are their own
-    /// repository count every commit.
+    /// monorepo member the count is scoped to commits that can reach its build —
+    /// its own directory, its transitive cargo path dependencies, the workspace
+    /// manifests, and its web app's `file:` packages (see [`member_pathspecs`]) —
+    /// so repo-wide churn that can't affect the member doesn't count. Members that
+    /// are their own repository count every commit.
     #[serde(skip_serializing_if = "Option::is_none")]
     undeployed_commits: Option<u32>,
     /// Whether the deployed sha is an ancestor of `origin/<default-branch>` — i.e.
@@ -374,13 +409,19 @@ struct StatusQuery {
     deployed: Option<String>,
 }
 
-/// The pathspecs that scope a member's "undeployed commits" count. A monorepo
-/// member is affected only by commits touching its own directory or one of the
-/// fleet's declared `shared` paths. A member that is its own repository (its
-/// dir IS the repo toplevel) returns no pathspecs — every commit is its own.
-/// Resolution failures also return no pathspecs, degrading to the whole-repo
-/// count rather than silently reporting zero.
-fn member_pathspecs(dir: &std::path::Path, shared: &[String]) -> Vec<String> {
+/// The pathspecs that scope a member's "undeployed commits" count: the
+/// member's own directory plus everything the build graphs say can reach its
+/// build — the transitive cargo path dependencies of its crates (and the
+/// workspace manifests, whose dependency bumps change any Rust binary), and
+/// the `file:` packages its web app links. A member that is its own
+/// repository (its dir IS the repo toplevel) returns no pathspecs — every
+/// commit there is its own. Resolution failures, including an unavailable
+/// workspace graph, also return no pathspecs, degrading to the whole-repo
+/// count rather than silently undercounting.
+fn member_pathspecs(
+    dir: &std::path::Path,
+    graph: Option<&scope::WorkspaceGraph>,
+) -> Vec<String> {
     let Ok(top) = git::toplevel(dir) else {
         return Vec::new();
     };
@@ -393,8 +434,25 @@ fn member_pathspecs(dir: &std::path::Path, shared: &[String]) -> Vec<String> {
     let Ok(rel) = dir.strip_prefix(&top) else {
         return Vec::new();
     };
+    // Without the cargo graph, a scoped count could hide a shared-crate change
+    // that does affect this member — fall back to counting everything.
+    let Some(graph) = graph else {
+        return Vec::new();
+    };
+
+    let rel_spec = |p: &std::path::Path| -> Option<String> {
+        let p = p.canonicalize().ok()?;
+        let rel = p.strip_prefix(&top).ok()?;
+        Some(rel.to_string_lossy().into_owned())
+    };
+
     let mut specs = vec![rel.to_string_lossy().into_owned()];
-    specs.extend(shared.iter().cloned());
+    if graph.has_packages_under(&dir) {
+        specs.push("Cargo.toml".into());
+        specs.push("Cargo.lock".into());
+        specs.extend(graph.dep_dirs(&dir).iter().filter_map(|d| rel_spec(d)));
+    }
+    specs.extend(scope::web_dep_dirs(&dir).iter().filter_map(|d| rel_spec(d)));
     specs
 }
 
@@ -422,10 +480,8 @@ async fn list_status(
     Query(query): Query<StatusQuery>,
 ) -> Json<Vec<StatusInfo>> {
     let deployed = parse_deployed(&query.deployed);
-    let (deployables, shared) = {
-        let fleet = state.fleet();
-        (fleet::deployables(&fleet), fleet.shared.clone())
-    };
+    let deployables = fleet::deployables(&state.fleet());
+    let graph = state.workspace_graph();
     let infos = deployables
         .unwrap_or_default()
         .into_iter()
@@ -450,7 +506,7 @@ async fn list_status(
                     (Some(dep), Some(head)) => {
                         let ancestor = git::is_ancestor(&dir, dep, head);
                         let commits = if ancestor {
-                            let scope = member_pathspecs(&dir, &shared);
+                            let scope = member_pathspecs(&dir, graph.as_deref());
                             git::count_commits_touching(&dir, dep, head, &scope)
                         } else {
                             None

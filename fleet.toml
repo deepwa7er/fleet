@@ -17,12 +17,12 @@
 #
 # `root` defaults to this file's own directory — the monorepo root — so the
 # manifest works from any checkout location (dev box, fedora, CI).
-
-# Monorepo-root-relative paths whose changes affect every service: the shared
-# crates, the shared web UI kit, and the workspace manifests. `tugboat serve`
-# scopes each service's "undeployed commits" count to its own directory plus
-# these, so unrelated monorepo churn doesn't mark every service stale.
-shared = ["crates", "web/fleet-ui", "Cargo.toml", "Cargo.lock"]
+#
+# "UNDEPLOYED COMMITS" ARE SCOPED, NOT DECLARED. `tugboat serve` counts a
+# commit against a service iff it touches the service's directory or something
+# its build actually reaches — derived from `cargo metadata` (transitive path
+# dependencies + the workspace manifests) and the web app's `file:` package
+# links. Nothing to maintain here when shared code moves.
 
 # ── repos outside the monorepo (clone/pull/status only) ──────────────────────
 

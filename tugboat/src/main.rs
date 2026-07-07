@@ -16,6 +16,7 @@ mod gen;
 mod git;
 mod hooks;
 mod manifest;
+mod scope;
 mod selfdeploy;
 mod serve;
 mod version;
