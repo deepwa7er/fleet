@@ -1,6 +1,6 @@
-/* DG-001 (U.S. Graphics school) — dark "terminal" discipline, shared with the
+/* DG-002 TRITIUM (U.S. Graphics school) — dark "terminal" discipline, shared with the
  * rest of the fleet's web UIs (lighthouse, pilot, drydock). Monospace-forward,
- * hairline rules, flat fills, sharp corners, a single signal-blue accent, and a
+ * hairline rules, flat fills, sharp corners, a single LCD-blue accent, and a
  * flat functional status ramp. The :root tokens and base element styles match
  * the fleet exactly so the services read as one suite; the component classes
  * below are wardrobe-specific. */
@@ -9,20 +9,20 @@
     "Berkeley Mono", "JetBrains Mono", "IBM Plex Mono", ui-monospace,
     SFMono-Regular, Menlo, Consolas, monospace;
 
-  --bg: #0b0c0d;
-  --surface: #121315;
-  --surface-2: #16181a;
-  --ink: #e6e4dd;
-  --ink-muted: #9a978d;
-  --ink-faint: #6a675f;
-  --rule: #2a2b2d;
-  --rule-strong: #3a3c3e;
+  --bg: #000000;
+  --surface: #0a0a0a;
+  --surface-2: #101010;
+  --ink: #00a645;
+  --ink-muted: #00753d;
+  --ink-faint: #4a4a48;
+  --rule: #242424;
+  --rule-strong: #3d3d3b;
 
-  --accent: #4dabf7; /* single signal color: action / interactive */
-  --active: #37b24d; /* success / owned */
-  --failed: #c92a2a; /* destructive / error */
-  --warn: #f08c00; /* needs attention */
-  --idle: #6a675f; /* neutral / terminal */
+  --accent: #4a90d4; /* single signal color: action / interactive */
+  --active: #00a645; /* success / owned */
+  --failed: #e0281e; /* destructive / error */
+  --warn: #ffbf00; /* needs attention */
+  --idle: #4a4a48; /* neutral / terminal */
 
   --border: 1px solid var(--rule);
   --border-strong: 1px solid var(--rule-strong);
@@ -38,17 +38,17 @@
 
 html[data-theme="light"] {
   --bg: #f4f3ee;
-  --surface: #ffffff;
+  --surface: #fafaf8;
   --surface-2: #eceae3;
-  --ink: #1b1a17;
-  --ink-muted: #57544c;
+  --ink: #00702f;
+  --ink-muted: #4d7a5e;
   --ink-faint: #8a8678;
   --rule: #d8d6cd;
   --rule-strong: #bfbcb0;
 
-  --accent: #1971c2;
-  --active: #2f9e44;
-  --failed: #c92a2a;
+  --accent: #2a6bb0;
+  --active: #00702f;
+  --failed: #b3231a;
   --warn: #a85d00;
   --idle: #8a8678;
 }

@@ -1,6 +1,6 @@
-/* spyglass UI — DG-001 (U.S. Graphics school): dense, functional, instrument
+/* spyglass UI — DG-002 TRITIUM (U.S. Graphics school): dense, functional, instrument
    panel. Mono-forward, hairlines, tabular numerals, sharp corners, a single
-   signal-blue accent. Dark by default; tide flips html[data-theme] light.
+   LCD-blue accent. Dark by default; tide flips html[data-theme] light.
    Tokens mirror the fleet's lighthouse index.css so every UI matches. */
 
 :root {
@@ -9,16 +9,16 @@
   --lh-base: 1.45;
 
   /* Dark (default) */
-  --bg: #0b0c0d;
-  --surface: #121315;
-  --surface-2: #16181a;
-  --ink: #e6e4dd;
-  --ink-muted: #9a978d;
-  --ink-faint: #6a675f;
-  --rule: #2a2b2d;
-  --rule-strong: #3a3c3e;
-  --accent: #4dabf7;
-  --failed: #c92a2a;
+  --bg: #000000;
+  --surface: #0a0a0a;
+  --surface-2: #101010;
+  --ink: #00a645;
+  --ink-muted: #00753d;
+  --ink-faint: #4a4a48;
+  --rule: #242424;
+  --rule-strong: #3d3d3b;
+  --accent: #4a90d4;
+  --failed: #e0281e;
   --mark-bg: rgba(77, 171, 247, 0.22);
 
   --radius: 0px;
@@ -28,15 +28,15 @@
 
 html[data-theme="light"] {
   --bg: #f4f3ee;
-  --surface: #ffffff;
+  --surface: #fafaf8;
   --surface-2: #eceae3;
-  --ink: #1b1a17;
-  --ink-muted: #57544c;
+  --ink: #00702f;
+  --ink-muted: #4d7a5e;
   --ink-faint: #8a8678;
   --rule: #d8d6cd;
   --rule-strong: #bfbcb0;
-  --accent: #1971c2;
-  --failed: #c92a2a;
+  --accent: #2a6bb0;
+  --failed: #b3231a;
   --mark-bg: rgba(25, 113, 194, 0.16);
 }
 

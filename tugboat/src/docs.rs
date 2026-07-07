@@ -1542,7 +1542,7 @@ fn html_escape(s: &str) -> String {
 }
 
 /// Wrap the rendered package sections in a self-contained dark, monospace page
-/// (the fleet's DG-001 palette, inlined since this isn't part of the React app).
+/// (the fleet's DG-002 TRITIUM palette, inlined since this isn't part of the React app).
 fn go_doc_html(module: &str, sections: &str) -> String {
     format!(
         r#"<!doctype html>
@@ -1551,16 +1551,16 @@ fn go_doc_html(module: &str, sections: &str) -> String {
 <title>{module} — Go docs</title>
 <style>
   :root {{ color-scheme: dark; }}
-  body {{ margin:0; background:#0b0c0d; color:#e6e4dd;
+  body {{ margin:0; background:#000000; color:#00a645;
     font-family:"Berkeley Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
     font-size:13px; line-height:1.5; }}
   .wrap {{ max-width:980px; margin:0 auto; padding:2rem 1.5rem; }}
-  header {{ border-bottom:1px solid #2a2b2d; padding-bottom:1rem; margin-bottom:1.5rem; }}
-  h1 {{ font-size:1.4rem; margin:0; color:#4dabf7; }}
-  .sub {{ color:#6a675f; font-size:12px; margin-top:.3rem; }}
-  section {{ border:1px solid #2a2b2d; background:#121315; margin-bottom:1rem; }}
-  h2 {{ font-size:13px; margin:0; padding:.5rem .75rem; background:#16181a;
-    border-bottom:1px solid #2a2b2d; color:#9a978d; font-weight:600; }}
+  header {{ border-bottom:1px solid #242424; padding-bottom:1rem; margin-bottom:1.5rem; }}
+  h1 {{ font-size:1.4rem; margin:0; color:#4a90d4; }}
+  .sub {{ color:#4a4a48; font-size:12px; margin-top:.3rem; }}
+  section {{ border:1px solid #242424; background:#0a0a0a; margin-bottom:1rem; }}
+  h2 {{ font-size:13px; margin:0; padding:.5rem .75rem; background:#101010;
+    border-bottom:1px solid #242424; color:#00753d; font-weight:600; }}
   pre {{ margin:0; padding:.75rem; overflow-x:auto; white-space:pre-wrap; }}
 </style></head>
 <body><div class="wrap">
@@ -1570,7 +1570,7 @@ fn go_doc_html(module: &str, sections: &str) -> String {
     )
 }
 
-/// Wrap gomarkdoc-rendered HTML in a styled page (the fleet's DG-001 palette,
+/// Wrap gomarkdoc-rendered HTML in a styled page (the fleet's DG-002 TRITIUM palette,
 /// inlined). Styles the full structure gomarkdoc produces — headings, the index
 /// list, fenced code (signatures), tables, and links — so it reads like real
 /// docs rather than a text dump.
@@ -1582,28 +1582,28 @@ fn markdown_html(module: &str, body: &str) -> String {
 <title>{module} — Go docs</title>
 <style>
   :root {{ color-scheme: dark; }}
-  body {{ margin:0; background:#0b0c0d; color:#e6e4dd;
+  body {{ margin:0; background:#000000; color:#00a645;
     font-family:"Berkeley Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
     font-size:13px; line-height:1.6; }}
   .wrap {{ max-width:920px; margin:0 auto; padding:2rem 1.5rem; }}
-  a {{ color:#4dabf7; text-decoration:none; }}
+  a {{ color:#4a90d4; text-decoration:none; }}
   a:hover {{ text-decoration:underline; }}
-  h1 {{ font-size:1.5rem; color:#4dabf7; margin:2rem 0 .5rem;
-    padding-top:1rem; border-top:1px solid #2a2b2d; }}
+  h1 {{ font-size:1.5rem; color:#4a90d4; margin:2rem 0 .5rem;
+    padding-top:1rem; border-top:1px solid #242424; }}
   h1:first-of-type {{ border-top:0; padding-top:0; margin-top:0; }}
-  h2 {{ font-size:1.1rem; color:#e6e4dd; margin:1.75rem 0 .5rem; }}
-  h3, h4 {{ font-size:1rem; color:#9a978d; margin:1.25rem 0 .4rem; }}
+  h2 {{ font-size:1.1rem; color:#00a645; margin:1.75rem 0 .5rem; }}
+  h3, h4 {{ font-size:1rem; color:#00753d; margin:1.25rem 0 .4rem; }}
   p {{ color:#c9c6bd; }}
   ul {{ padding-left:1.25rem; }}
   li {{ margin:.15rem 0; }}
-  code {{ background:#16181a; border:1px solid #2a2b2d; border-radius:3px;
+  code {{ background:#101010; border:1px solid #242424; border-radius:3px;
     padding:.05rem .3rem; font-size:.92em; }}
-  pre {{ background:#121315; border:1px solid #2a2b2d; border-radius:4px;
+  pre {{ background:#0a0a0a; border:1px solid #242424; border-radius:4px;
     padding:.75rem 1rem; overflow-x:auto; }}
   pre code {{ background:none; border:0; padding:0; }}
   table {{ border-collapse:collapse; margin:.5rem 0; }}
-  th, td {{ border:1px solid #2a2b2d; padding:.3rem .6rem; text-align:left; }}
-  hr {{ border:0; border-top:1px solid #2a2b2d; margin:1.5rem 0; }}
+  th, td {{ border:1px solid #242424; padding:.3rem .6rem; text-align:left; }}
+  hr {{ border:0; border-top:1px solid #242424; margin:1.5rem 0; }}
 </style></head>
 <body><div class="wrap">{body}</div></body></html>
 "#
