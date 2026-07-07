@@ -353,7 +353,11 @@ struct StatusInfo {
     /// contract (its freshness verdict still reads this field).
     dirty: bool,
     /// Commits on `origin/<default-branch>` not yet in the deployed sha (only when
-    /// the deployed sha was supplied and is an ancestor of that branch head).
+    /// the deployed sha was supplied and is an ancestor of that branch head). For a
+    /// monorepo member the count is scoped to commits touching the member's own
+    /// directory or one of the fleet's declared `shared` paths — repo-wide churn
+    /// that can't affect the member doesn't count. Members that are their own
+    /// repository count every commit.
     #[serde(skip_serializing_if = "Option::is_none")]
     undeployed_commits: Option<u32>,
     /// Whether the deployed sha is an ancestor of `origin/<default-branch>` — i.e.
@@ -368,6 +372,30 @@ struct StatusQuery {
     /// Optional `name:sha,name:sha,…` of currently-deployed shas, so the daemon
     /// can compute each member's relationship to what's running.
     deployed: Option<String>,
+}
+
+/// The pathspecs that scope a member's "undeployed commits" count. A monorepo
+/// member is affected only by commits touching its own directory or one of the
+/// fleet's declared `shared` paths. A member that is its own repository (its
+/// dir IS the repo toplevel) returns no pathspecs — every commit is its own.
+/// Resolution failures also return no pathspecs, degrading to the whole-repo
+/// count rather than silently reporting zero.
+fn member_pathspecs(dir: &std::path::Path, shared: &[String]) -> Vec<String> {
+    let Ok(top) = git::toplevel(dir) else {
+        return Vec::new();
+    };
+    let (Ok(top), Ok(dir)) = (top.canonicalize(), dir.canonicalize()) else {
+        return Vec::new();
+    };
+    if top == dir {
+        return Vec::new();
+    }
+    let Ok(rel) = dir.strip_prefix(&top) else {
+        return Vec::new();
+    };
+    let mut specs = vec![rel.to_string_lossy().into_owned()];
+    specs.extend(shared.iter().cloned());
+    specs
 }
 
 /// Parse the `deployed` query into a name → sha map.
@@ -394,7 +422,11 @@ async fn list_status(
     Query(query): Query<StatusQuery>,
 ) -> Json<Vec<StatusInfo>> {
     let deployed = parse_deployed(&query.deployed);
-    let infos = fleet::deployables(&state.fleet())
+    let (deployables, shared) = {
+        let fleet = state.fleet();
+        (fleet::deployables(&fleet), fleet.shared.clone())
+    };
+    let infos = deployables
         .unwrap_or_default()
         .into_iter()
         .map(|d| {
@@ -418,7 +450,8 @@ async fn list_status(
                     (Some(dep), Some(head)) => {
                         let ancestor = git::is_ancestor(&dir, dep, head);
                         let commits = if ancestor {
-                            git::count_commits(&dir, dep, head)
+                            let scope = member_pathspecs(&dir, &shared);
+                            git::count_commits_touching(&dir, dep, head, &scope)
                         } else {
                             None
                         };

@@ -127,6 +127,19 @@ pub fn count_commits(dir: &Path, from: &str, to: &str) -> Option<u32> {
         .and_then(|s| s.parse().ok())
 }
 
+/// Count commits in `from..to` that touch any of `paths` (repo-relative
+/// pathspecs). Empty `paths` counts every commit, same as [`count_commits`].
+/// `None` if either ref is unknown.
+pub fn count_commits_touching(dir: &Path, from: &str, to: &str, paths: &[String]) -> Option<u32> {
+    if paths.is_empty() {
+        return count_commits(dir, from, to);
+    }
+    let range = format!("{from}..{to}");
+    let mut args: Vec<&str> = vec!["rev-list", "--count", &range, "--"];
+    args.extend(paths.iter().map(String::as_str));
+    out(dir, &args).ok().flatten().and_then(|s| s.parse().ok())
+}
+
 /// One commit in a range, for the deploy changelog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Commit {
@@ -370,6 +383,36 @@ mod tests {
         assert!(log_range(&dir, &third, &third, 10).is_empty());
         // An unknown ref is best-effort empty, not a panic.
         assert!(log_range(&dir, "0000000000000000000000000000000000000000", &third, 10).is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Monorepo scoping: `count_commits_touching` counts only commits touching
+    /// the given pathspecs, and falls back to the whole-repo count when no
+    /// pathspecs are given.
+    #[test]
+    fn counts_commits_scoped_to_pathspecs() {
+        let dir: PathBuf =
+            std::env::temp_dir().join(format!("tugboat-count-scope-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("svc")).unwrap();
+        std::fs::create_dir_all(dir.join("other")).unwrap();
+        git(&dir, &["init", "-q"]);
+
+        let base = commit(&dir, "svc/a", "svc work");
+        let _other = commit(&dir, "other/b", "other work");
+        let head = commit(&dir, "svc/c", "more svc work");
+
+        // Whole-repo: both commits after `base` count.
+        assert_eq!(super::count_commits(&dir, &base, &head), Some(2));
+        // Scoped to svc/: the `other` commit is invisible.
+        let scoped = super::count_commits_touching(&dir, &base, &head, &["svc".to_owned()]);
+        assert_eq!(scoped, Some(1));
+        // No pathspecs falls back to the whole-repo count.
+        assert_eq!(super::count_commits_touching(&dir, &base, &head, &[]), Some(2));
+        // An unknown ref is best-effort None, not a panic.
+        let bogus = "0000000000000000000000000000000000000000";
+        assert_eq!(super::count_commits_touching(&dir, bogus, &head, &["svc".to_owned()]), None);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

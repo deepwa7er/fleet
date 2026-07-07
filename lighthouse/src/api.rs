@@ -308,7 +308,15 @@ fn verdict(deployed: Option<&LedgerEntry>, local: &DaemonStatus) -> &'static str
     if *head == deployed.sha {
         if local.dirty { "dirty" } else { "current" }
     } else if local.deployed_is_ancestor == Some(true) {
-        "stale"
+        // The branch moved on, but the daemon scopes the count to commits that
+        // touch this member (its directory + the fleet's shared paths). Zero
+        // relevant commits means the running build is still current for this
+        // service; only unscoped churn happened elsewhere in the monorepo.
+        if local.undeployed_commits == Some(0) {
+            "current"
+        } else {
+            "stale"
+        }
     } else {
         "diverged"
     }
