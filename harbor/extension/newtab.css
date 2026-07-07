@@ -1,5 +1,6 @@
 /* harbor — new-tab UI
- * Styled after DG-001 (U.S. Graphics school): dark "terminal" discipline,
+ * Styled after DG-002 TRITIUM (see ~/code/design-guide.md): phosphor-green ink
+ * on true black, amber second voice, LCD-blue as the one interactive color,
  * monospace-forward, hairline rules, flat fills, sharp corners, tabular
  * numerals. No gradients, no glow, no blur, no soft shadows. Functional first.
  */
@@ -11,26 +12,28 @@
   --fs-base: 13px;
   --lh-base: 1.45;
 
-  /* Dark blue-tinted base. */
-  --bg:          #0a0d12;
-  --surface:     #0f131b;
-  --surface-2:   #141a26;
-  --ink:         #e4e7ee;
-  --ink-muted:   #9aa3b5;
-  --ink-faint:   #61687a;
-  --rule:        #232a38;
-  --rule-strong: #323c52;
+  /* TRITIUM dark base. */
+  --bg:          #000000;
+  --surface:     #0a0a0a;
+  --surface-2:   #101010;
+  --ink:         #00a645;
+  --ink-muted:   #00753d;
+  --ink-faint:   #4a4a48;
+  --rule:        #242424;
+  --rule-strong: #3d3d3b;
 
-  /* Accent + status ramp. */
-  --accent:       #4dabf7;
-  --accent-muted: #6f9bc4;
-  --danger:       #c92a2a;
-  --st-active:    #37b24d;
-  --st-shipped:   #22b8cf;
-  --st-idle:      #6a675f;
-  --st-idea:      #f08c00;
-  --st-learning:  #9775fa;
-  --st-archived:  #46443e;
+  /* Accent + status ramp. Shipped uses the LCD blue-white (done = quiet
+   * pride); idea is the amber second voice; learning keeps a rare RETICLE
+   * violet so the graph legend stays distinguishable. */
+  --accent:       #4a90d4;
+  --accent-muted: #366a9e;
+  --danger:       #e0281e;
+  --st-active:    #00a645;
+  --st-shipped:   #cfe0f2;
+  --st-idle:      #4a4a48;
+  --st-idea:      #ffbf00;
+  --st-learning:  #723df9;
+  --st-archived:  #343432;
 
   --border: 1px solid var(--rule);
 
@@ -38,28 +41,28 @@
   --s5: 24px; --s6: 32px; --s7: 48px;
 }
 
-/* Light variant of harbor's blue-tinted palette — the shared fleet theme (tide
- * flips html[data-theme], applied by theme.js). --border references --rule, so
- * it follows automatically. */
+/* TRITIUM light — the shared fleet paper palette (tide flips html[data-theme],
+ * applied by theme.js). --border references --rule, so it follows
+ * automatically. */
 :root[data-theme="light"] {
-  --bg:          #f5f7fa;
-  --surface:     #ffffff;
-  --surface-2:   #eef1f6;
-  --ink:         #14181f;
-  --ink-muted:   #4a5260;
-  --ink-faint:   #7a828f;
-  --rule:        #d8dde6;
-  --rule-strong: #c2c9d4;
+  --bg:          #f4f3ee;
+  --surface:     #fafaf8;
+  --surface-2:   #eceae3;
+  --ink:         #00702f;
+  --ink-muted:   #4d7a5e;
+  --ink-faint:   #8a8678;
+  --rule:        #d8d6cd;
+  --rule-strong: #bfbcb0;
 
-  --accent:       #1971c2;
+  --accent:       #2a6bb0;
   --accent-muted: #5b87b0;
-  --danger:       #c92a2a;
-  --st-active:    #2f9e44;
-  --st-shipped:   #1098ad;
+  --danger:       #b3231a;
+  --st-active:    #00702f;
+  --st-shipped:   #1c3a5e;
   --st-idle:      #8a8678;
-  --st-idea:      #e8590c;
-  --st-learning:  #6741d9;
-  --st-archived:  #adb5bd;
+  --st-idea:      #a85d00;
+  --st-learning:  #5f3dc4;
+  --st-archived:  #bfbcb0;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }

@@ -73,8 +73,8 @@ cat > build/index.html <<HTML
 <title>harbor extension</title>
 <style>
   :root {
-    --bg:#0d0f12; --surface:#14181d; --ink:#c9d1d9; --ink-muted:#7d8694;
-    --rule:#222a31; --accent:#4dabf7;
+    --bg:#000000; --surface:#0a0a0a; --ink:#00a645; --ink-muted:#00753d;
+    --rule:#242424; --accent:#4a90d4;
     --font-mono:"Berkeley Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
   * { box-sizing:border-box; }
@@ -83,10 +83,10 @@ cat > build/index.html <<HTML
   main { max-width:42rem; margin:0 auto; }
   h1 { font-size:1.4rem; margin:0; letter-spacing:.5px; }
   .sub { color:var(--ink-muted); margin:.25rem 0 2rem; }
-  .dl { display:inline-block; background:var(--accent); color:#04121f; font-weight:700;
+  .dl { display:inline-block; background:var(--accent); color:#000000; font-weight:700;
         text-decoration:none; padding:.7rem 1.4rem; border:1px solid var(--accent);
         text-transform:uppercase; letter-spacing:.5px; }
-  .dl:hover { background:#1864ab; border-color:#1864ab; color:#fff; }
+  .dl:hover { background:#366a9e; border-color:#366a9e; color:#fff; }
   .ver { color:var(--ink-muted); font-size:12px; margin:.6rem 0 2.5rem; }
   section { border:1px solid var(--rule); background:var(--surface); padding:1.25rem 1.5rem; }
   h2 { font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:var(--ink-muted);
