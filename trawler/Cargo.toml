@@ -1,0 +1,22 @@
+[package]
+name = "trawler"
+version = "0.1.0"
+edition = "2024"
+description = "Trawls Portland-area dealership sites for used BMWs with the B58 engine."
+
+[[bin]]
+name = "trawler"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+regex = "1"
+# rustls-tls because the dealer sites and the NHTSA VIN API are external HTTPS
+# (the workspace disables reqwest's default TLS backends for the musl builds).
+reqwest = { workspace = true, features = ["rustls-tls", "json", "gzip"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process", "sync"] }
+toml = { workspace = true }
