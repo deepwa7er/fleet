@@ -1,0 +1,33 @@
+[Unit]
+Description=Recipes cookbook
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=recipes
+Group=recipes
+# Creates /var/lib/recipes (owned by recipes, writable under ProtectSystem=strict)
+# where the SQLite database lives — and which fleet-backup ships to R2.
+StateDirectory=recipes
+Environment=RECIPES_DB=/var/lib/recipes/recipes.db
+Environment=RECIPES_ADDR=127.0.0.1:8097
+Environment=RECIPES_WEB_DIR=/opt/recipes/web
+ExecStart=/usr/local/bin/recipes serve
+Restart=on-failure
+RestartSec=2
+
+# Hardening — the service only reads its web dir and writes its state dir; it
+# makes no outbound requests.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

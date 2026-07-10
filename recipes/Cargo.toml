@@ -1,0 +1,17 @@
+[package]
+name = "recipes"
+version = "0.1.0"
+edition = "2021"
+description = "Recipe book — a single binary serving a web view and JSON API over one SQLite store, for creating, viewing, and editing recipes."
+
+[dependencies]
+fleet-common = { path = "../crates/fleet-common" }
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal"] }
+tower-http = { workspace = true, features = ["fs", "trace"] }
+rusqlite = { workspace = true, features = ["bundled"] }
+serde = { workspace = true, features = ["derive"] }
+clap = { workspace = true, features = ["derive"] }
+chrono = { workspace = true, features = ["serde"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

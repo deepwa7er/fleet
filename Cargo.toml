@@ -14,10 +14,13 @@ members = [
     "ferry",
     "harbor/server",
     "lighthouse",
+    "recipes",
     "regatta",
+    "sonar",
     "source",
     "spyglass",
     "tide",
+    "trawler",
     "tugboat",
 ]
 
