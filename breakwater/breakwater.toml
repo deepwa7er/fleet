@@ -119,6 +119,15 @@ upstream = "127.0.0.1:8092"
 label = "docs"
 serve_dir = "/opt/pilot/web"
 
+# netfps client distribution — external member (repo deepwa7er/netfps).
+# Download page + version manifest + per-platform game binaries; process-less
+# static files like docs, so breakwater serves the directory directly. The
+# netfps repo's deploy/release.sh builds and ships releases into this path;
+# the game client checks manifest.json here at every launch to self-update.
+[[routes]]
+label = "netfps"
+serve_dir = "/srv/netfps-dist"
+
 # Source-code viewer (source) — the only upstream NOT on the VPS. The fleet's
 # working trees live on the dev box, so `source` runs there (a launchd agent) and
 # breakwater proxies to its Tailscale IP over the tailnet. The page is reachable
