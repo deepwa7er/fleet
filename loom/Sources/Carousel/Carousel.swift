@@ -55,7 +55,11 @@ final class Carousel {
         // Slot 0 is the OS's frontmost window, so it already covers the
         // stack — no raise race to wait out here.
         renderResting()
-        if let front = frontSlot() { Windows.focus(front) }
+        if let front = frontSlot() {
+            markRaised(front)
+            confirmedFront = front
+            Windows.focus(front)
+        }
     }
 
     /// Adopt one window and tile it — the only resize it will ever get from us.
@@ -149,12 +153,16 @@ final class Carousel {
                 motion = .idle
                 return false
             }
+            markRaised(front)
+            pendingFront = front
             Windows.focus(front)
             motion = .settling(front: front, deadline: now + raiseTimeout)
             return true
         case .settling(let front, let deadline):
             guard now >= deadline
                 || Windows.isFrontmost(front.id, among: Set(slots.map(\.id))) else { return true }
+            confirmedFront = front
+            pendingFront = nil
             renderResting()
             motion = .idle
             if pendingRelayout {
@@ -174,15 +182,82 @@ final class Carousel {
 
     // MARK: Layout
 
-    /// Slide every window to its spot on the ring — positions only.
+    /// Monotonic stamp source for `ManagedWindow.raiseGen`.
+    private var raiseGeneration = 0
+
+    /// The window the OS currently considers active (`confirmedFront`) and
+    /// the one we've asked to take over but haven't confirmed (`pendingFront`).
+    /// Neither may hide at stage center: the WindowServer keeps the active
+    /// app's window above AX-raised background windows, so raise stamps
+    /// can't vouch for it — only the settle confirmation can.
+    private var confirmedFront: ManagedWindow?
+    private var pendingFront: ManagedWindow?
+
+    private func markRaised(_ slot: ManagedWindow) {
+        raiseGeneration += 1
+        slot.raiseGen = raiseGeneration
+    }
+
+    /// Slide every window to its spot on the ring.
+    ///
+    /// Off-strip windows hide dead-center behind the front window (true
+    /// off-screen parking is impossible; the WindowServer clamps AX positions
+    /// to keep ~40pt visible, which used to leave slivers pinned at the
+    /// screen edges mid-gesture). That only works if the strip stays above
+    /// the hidden stack, so a window joining the strip is raised first —
+    /// while it's still at the clamped edge, where the raise can't flash
+    /// anything onto the stage.
     private func render() {
         guard let screen = screenFrame(), !slots.isEmpty else { return }
         let tile = CarouselLayout.soloTile(screen: screen)
+        let placements = slots.indices.map { i in
+            CarouselLayout.placement(atTheta: rotation + CGFloat(i) * slotAngle,
+                                     slotAngle: slotAngle, width: tile.width)
+        }
+        // Stamp strip joiners first so the off-stage rank comparisons below
+        // see up-to-date ranks. The actual raise happens after the joiner's
+        // position write: a joiner may be coming from the hidden center
+        // stack, and raising it while still centered would flash it over the
+        // front window until its move lands.
+        var joiners = Set<Int>()
         for (i, slot) in slots.enumerated() {
-            let theta = rotation + CGFloat(i) * slotAngle
-            let x = tile.minX + CarouselLayout.xOffset(atTheta: theta, slotAngle: slotAngle,
-                                                       width: tile.width)
-            Windows.setPosition(slot, CGPoint(x: x, y: tile.minY))
+            if case .strip = placements[i], !slot.onStrip {
+                slot.onStrip = true
+                markRaised(slot)
+                joiners.insert(i)
+            }
+        }
+        // The visual front: the on-strip window nearest stage center.
+        var front: ManagedWindow?
+        var frontDistance = CGFloat.infinity
+        for (i, placement) in placements.enumerated() {
+            if case .strip(let offset) = placement, abs(offset) < frontDistance {
+                frontDistance = abs(offset)
+                front = slots[i]
+            }
+        }
+        for (i, slot) in slots.enumerated() {
+            switch placements[i] {
+            case .strip(let offset):
+                Windows.setPosition(slot, CGPoint(x: tile.minX + offset, y: tile.minY))
+                // AX requests to one app process in order, so by the time
+                // the raise lands the window is already off-center.
+                if joiners.contains(i) { Windows.raise(slot.axWindow) }
+            case .offStage(let edgeOffset):
+                slot.onStrip = false
+                let mayCoverStage = slot === confirmedFront || slot === pendingFront
+                    || front == nil || slot.raiseGen > front!.raiseGen
+                if mayCoverStage {
+                    // Centering this window could cover the stage — it's the
+                    // (possibly still) active window, or it outranks the
+                    // current front (gesture reversal). Hold it at the
+                    // clamped edge; the next settle confirms z-order and
+                    // collapses it.
+                    Windows.setPosition(slot, CGPoint(x: tile.minX + edgeOffset, y: tile.minY))
+                } else {
+                    Windows.setPosition(slot, tile.origin)
+                }
+            }
         }
         resting = false
     }
@@ -199,6 +274,7 @@ final class Carousel {
         guard let screen = screenFrame(), !slots.isEmpty else { return }
         let origin = CarouselLayout.soloTile(screen: screen).origin
         for slot in slots {
+            slot.onStrip = false
             Windows.setPosition(slot, origin)
         }
         resting = true
