@@ -11,6 +11,13 @@ final class ManagedWindow {
     /// Skip-caches; each setter invalidates the other on write.
     var lastOrigin: CGPoint?
     var lastFrame: CGRect?
+    /// Stamp of our most recent raise of this window (monotonic, issued by
+    /// Carousel). Windows hidden at stage center are only hidden if every
+    /// strip window outranks them, so the ring compares stamps before
+    /// letting a window park behind the front.
+    var raiseGen = 0
+    /// Whether the last render placed this window on the filmstrip.
+    var onStrip = false
 
     init(id: CGWindowID, pid: pid_t, originalFrame: CGRect, axWindow: AXUIElement) {
         self.id = id

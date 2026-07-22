@@ -12,17 +12,22 @@ enum CarouselLayout {
         s.insetBy(dx: gap, dy: gap)
     }
 
-    /// Horizontal offset from stage center for a window at angle θ, used
-    /// while the ring is in motion (at rest the carousel stacks everything
-    /// behind the front window instead — the WindowServer clamps AX
-    /// positions so a window can never sit fully off-screen).
-    /// Windows form a filmstrip with a stride of one full screen width
-    /// (tile + both gaps), so mid-scroll the outer gap glides between
-    /// windows instead of showing a seam. Slots beyond the neighbors park
-    /// off-stage (the back of the ring would otherwise sit centered behind
-    /// the front window and get revealed mid-gesture); every park/unpark
-    /// crossing happens off-screen, so nothing pops.
-    static func xOffset(atTheta theta: CGFloat, slotAngle: CGFloat, width: CGFloat) -> CGFloat {
+    /// Where a window at angle θ sits while the ring is in motion.
+    enum Placement {
+        /// On the filmstrip: horizontal offset from stage center. The strip's
+        /// stride is one full screen width (tile + both gaps), so mid-scroll
+        /// the outer gap glides between windows instead of showing a seam.
+        case strip(offset: CGFloat)
+        /// Beyond the strip. The window should hide dead-center behind the
+        /// front window — the WindowServer clamps AX positions so ~40pt of a
+        /// window always stays on-screen, making true off-screen parking
+        /// impossible. `edgeOffset` is the strip position one stride out on
+        /// the exit side, the fallback spot (clamped to a screen-edge sliver)
+        /// for a window whose z-order doesn't allow hiding at center yet.
+        case offStage(edgeOffset: CGFloat)
+    }
+
+    static func placement(atTheta theta: CGFloat, slotAngle: CGFloat, width: CGFloat) -> Placement {
         // Signed distance from the front of the ring, in slots.
         let twoPi = 2 * CGFloat.pi
         var wrapped = theta.truncatingRemainder(dividingBy: twoPi)
@@ -30,10 +35,10 @@ enum CarouselLayout {
         else if wrapped <= -.pi { wrapped += twoPi }
         let slots = wrapped / slotAngle
         let stride = width + 2 * gap
-        if abs(slots) <= 1 {
-            return slots * stride // on the strip: current and adjacent windows
+        if abs(slots) < 1 {
+            return .strip(offset: slots * stride) // current and adjacent windows
         }
-        return (slots > 0 ? 1 : -1) * 2 * stride // parked off-stage
+        return .offStage(edgeOffset: (slots > 0 ? 1 : -1) * stride)
     }
 
     /// 1 at the front (θ = 0), 0 at the back (θ = π); used only for z-order.
