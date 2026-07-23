@@ -11,8 +11,6 @@ final class Carousel {
     private var target: CGFloat = 0     // angle we're easing toward
     private var animator: Animator?
     private var reconcileTimer: Timer?
-    /// Set when membership changes mid-animation; re-aligns once it settles.
-    private var pendingRelayout = false
 
     /// What the ring is doing between frames. All rendering happens on the
     /// animator's display-link tick — never in the scroll event tap, whose
@@ -48,9 +46,12 @@ final class Carousel {
 
     // MARK: Membership
 
-    /// Enroll every movable on-screen window, front-to-back, and snap the ring into place.
+    /// Enroll every movable window on the ring's display, front-to-back, and
+    /// snap the ring into place. Windows on other displays are left alone.
     private func capture() {
-        slots = Windows.snapshot().compactMap(enroll)
+        guard let display = displayFrame() else { return }
+        slots = Windows.snapshot(on: display).compactMap(enroll)
+        for (i, slot) in slots.enumerated() where i < 9 { slot.number = i + 1 }
         FileHandle.standardError.write(Data("Carousel: enrolled \(slots.count) windows\n".utf8))
         // Slot 0 is the OS's frontmost window, so it already covers the
         // stack — no raise race to wait out here.
@@ -69,25 +70,28 @@ final class Carousel {
         return managed
     }
 
-    /// Arrivals join at the back, the dead are dropped, everyone else keeps their place.
+    /// Arrivals join at the back, the dead are dropped, everyone else keeps
+    /// their place. Runs only while the ring is at rest: mid-gesture, ring
+    /// windows are deliberately away from their resting spot (sliding,
+    /// edge-held, or hidden), and judging membership by position then would
+    /// wrongly drop them.
     private func reconcile() {
-        let snapshot = Windows.snapshot()
+        guard case .idle = motion, let display = displayFrame() else { return }
+        let snapshot = Windows.snapshot(on: display)
         let onScreen = Set(snapshot.map(\.id))
         let before = Set(slots.map(\.id))
         slots.removeAll { !onScreen.contains($0.id) || !Windows.isAlive($0.axWindow) }
         let known = Set(slots.map(\.id))
         for info in snapshot where !known.contains(info.id) {
-            if let managed = enroll(info) { slots.append(managed) }
+            if let managed = enroll(info) {
+                managed.number = nextFreeNumber()
+                slots.append(managed)
+            }
         }
         // Realign only when membership changed; never fight the user otherwise.
         guard Set(slots.map(\.id)) != before else { return }
-        // The slot angle changed with N, so the ring is off-grid: glide back
-        // to alignment (deferred if a spin is mid-flight).
-        if animator?.isAnimating == true {
-            pendingRelayout = true
-        } else {
-            endScroll()
-        }
+        // The slot angle changed with N, so the ring is off-grid: snap back.
+        endScroll()
     }
 
     // MARK: Rotation
@@ -123,11 +127,78 @@ final class Carousel {
         FileHandle.standardError.write(Data("Carousel: snap to slot \(Int(slot))\n".utf8))
         StateLog.append("snap to slot \(Int(slot))")
         target = slot * slotAngle
+        beginSnap()
+    }
+
+    private func beginSnap() {
+        if stepperMode() { rotation = target } // nothing animates; land now
         motion = .snapping(from: rotation, start: CACurrentMediaTime())
         animator?.start()
     }
 
     private var slotAngle: CGFloat { 2 * .pi / CGFloat(slots.count) }
+
+    // MARK: Switching
+
+    /// How windows are switched on the ring's display. Filmstrip displays
+    /// spin with ⌥+scroll; stepper displays (a side blocked by an adjacent
+    /// display — nothing can slide) switch instantly with ⌘1–9 instead.
+    enum SwitchStyle {
+        case scroll
+        case hotkeys
+    }
+
+    func switchStyle() -> SwitchStyle {
+        stepperMode() ? .hotkeys : .scroll
+    }
+
+    /// Bring the window assigned this ⌘-digit to the front. Returns false
+    /// when no window holds the number, so the keystroke can pass through.
+    func switchToWindow(number: Int) -> Bool {
+        guard let index = slots.firstIndex(where: { $0.number == number }) else { return false }
+        switchTo(index: index)
+        return true
+    }
+
+    /// Menu-driven switch to a specific window.
+    func switchToWindow(id: CGWindowID) {
+        guard let index = slots.firstIndex(where: { $0.id == id }) else { return }
+        switchTo(index: index)
+    }
+
+    /// Give the front window this ⌘-digit; a window already holding it
+    /// takes the front window's old number in exchange.
+    func assignFrontWindow(number: Int) -> Bool {
+        guard (1...9).contains(number), let front = frontSlot() else { return false }
+        if let holder = slots.first(where: { $0.number == number }) {
+            holder.number = front.number
+        }
+        front.number = number
+        StateLog.append("assigned \(number) to \(Windows.title(of: front))")
+        return true
+    }
+
+    /// Ring membership for the status menu, in slot order.
+    func windowList() -> [(number: Int?, title: String, id: CGWindowID)] {
+        slots.map { ($0.number, Windows.title(of: $0), $0.id) }
+    }
+
+    /// Rotate the ring so `index`'s window lands in front, via the shortest
+    /// path. Snaps instantly on stepper displays, animates on filmstrips.
+    private func switchTo(index: Int) {
+        snapTimer?.invalidate()
+        snapTimer = nil
+        let desired = -CGFloat(index) * slotAngle
+        var delta = (desired - target).truncatingRemainder(dividingBy: 2 * .pi)
+        if delta > .pi { delta -= 2 * .pi } else if delta <= -.pi { delta += 2 * .pi }
+        target += delta
+        beginSnap()
+    }
+
+    private func nextFreeNumber() -> Int? {
+        let used = Set(slots.compactMap(\.number))
+        return (1...9).first { !used.contains($0) }
+    }
 
     /// One animation frame. Returns false once the ring has settled.
     private func stepAnimation(now: CFTimeInterval) -> Bool {
@@ -165,12 +236,7 @@ final class Carousel {
             pendingFront = nil
             renderResting()
             motion = .idle
-            if pendingRelayout {
-                pendingRelayout = false
-                endScroll() // may re-enter .snapping
-            }
-            if case .idle = motion { return false }
-            return true
+            return false
         }
     }
 
@@ -198,27 +264,43 @@ final class Carousel {
         slot.raiseGen = raiseGeneration
     }
 
-    /// Slide every window to its spot on the ring.
+    /// A display where the filmstrip can't run: an adjacent display blocks
+    /// at least one side, so sliding windows out would parade them across
+    /// the neighbor screen. Such displays switch instantly instead — the
+    /// windows never move; focus and z-order flips are the whole show.
+    private func stepperMode() -> Bool {
+        guard let screen = Displays.screen(matching: selectedUUID) else { return false }
+        let tile = CarouselLayout.soloTile(screen: Displays.visibleFrame(of: screen))
+        let open = Displays.openSides(of: screen,
+                                      stride: CarouselLayout.stride(width: tile.width))
+        return !(open.left && open.right)
+    }
+
+    /// Move every window to its spot on the ring (filmstrip displays only;
+    /// stepper displays never move windows — see `stepperMode`).
     ///
-    /// Off-strip windows hide dead-center behind the front window (true
-    /// off-screen parking is impossible; the WindowServer clamps AX positions
-    /// to keep ~40pt visible, which used to leave slivers pinned at the
-    /// screen edges mid-gesture). That only works if the strip stays above
-    /// the hidden stack, so a window joining the strip is raised first —
-    /// while it's still at the clamped edge, where the raise can't flash
-    /// anything onto the stage.
+    /// Off-strip windows hide dead-center behind the front window — true
+    /// off-screen parking is impossible; the WindowServer clamps AX
+    /// positions to keep ~40pt visible. That only works if whatever is on
+    /// the strip stays above the hidden stack, so strip joiners are raised
+    /// (position first, then raise: AX requests to one app process in
+    /// order, so the raise lands only after the window has left center).
     private func render() {
-        guard let screen = screenFrame(), !slots.isEmpty else { return }
-        let tile = CarouselLayout.soloTile(screen: screen)
+        guard let screen = Displays.screen(matching: selectedUUID), !slots.isEmpty else { return }
+        guard !stepperMode() else {
+            renderResting() // everyone stays stacked; stepFocus does the rest
+            return
+        }
+        let tile = CarouselLayout.soloTile(screen: Displays.visibleFrame(of: screen))
+        let stride = CarouselLayout.stride(width: tile.width)
         let placements = slots.indices.map { i in
             CarouselLayout.placement(atTheta: rotation + CGFloat(i) * slotAngle,
                                      slotAngle: slotAngle, width: tile.width)
         }
         // Stamp strip joiners first so the off-stage rank comparisons below
         // see up-to-date ranks. The actual raise happens after the joiner's
-        // position write: a joiner may be coming from the hidden center
-        // stack, and raising it while still centered would flash it over the
-        // front window until its move lands.
+        // position write, so a joiner leaving the hidden center stack can't
+        // flash over the front window on its way out.
         var joiners = Set<Int>()
         for (i, slot) in slots.enumerated() {
             if case .strip = placements[i], !slot.onStrip {
@@ -237,13 +319,11 @@ final class Carousel {
             }
         }
         for (i, slot) in slots.enumerated() {
+            let x: CGFloat
             switch placements[i] {
             case .strip(let offset):
-                Windows.setPosition(slot, CGPoint(x: tile.minX + offset, y: tile.minY))
-                // AX requests to one app process in order, so by the time
-                // the raise lands the window is already off-center.
-                if joiners.contains(i) { Windows.raise(slot.axWindow) }
-            case .offStage(let edgeOffset):
+                x = tile.minX + offset
+            case .offStage(let side):
                 slot.onStrip = false
                 let mayCoverStage = slot === confirmedFront || slot === pendingFront
                     || front == nil || slot.raiseGen > front!.raiseGen
@@ -251,13 +331,15 @@ final class Carousel {
                     // Centering this window could cover the stage — it's the
                     // (possibly still) active window, or it outranks the
                     // current front (gesture reversal). Hold it at the
-                    // clamped edge; the next settle confirms z-order and
-                    // collapses it.
-                    Windows.setPosition(slot, CGPoint(x: tile.minX + edgeOffset, y: tile.minY))
+                    // clamped screen edge until the next settle confirms
+                    // z-order and collapses it.
+                    x = tile.minX + side * stride
                 } else {
-                    Windows.setPosition(slot, tile.origin)
+                    x = tile.minX
                 }
             }
+            Windows.setPosition(slot, CGPoint(x: x, y: tile.minY))
+            if joiners.contains(i) { Windows.raise(slot.axWindow) }
         }
         resting = false
     }
@@ -298,10 +380,54 @@ final class Carousel {
         for slot in slots { Windows.setFrame(slot, slot.originalFrame) }
     }
 
-    /// Screen geometry in Quartz (top-left origin) coordinates to match AX.
+    // MARK: Display
+
+    /// UUID of the chosen display; nil means "the primary display". Loaded
+    /// once at startup and changed only through `select(displayUUID:)`.
+    private(set) var selectedUUID: String? = Displays.savedSelection()
+
+    /// Choose the ring's display, persist the choice, and rebuild there.
+    func select(displayUUID uuid: String?) {
+        selectedUUID = uuid
+        Displays.persistSelection(uuid)
+        retarget()
+    }
+
+    /// Move the ring to the newly selected display: give every window back
+    /// its original frame, then rebuild membership from that display.
+    private func retarget() {
+        restoreAll()
+        snapTimer?.invalidate()
+        snapTimer = nil
+        motion = .idle
+        confirmedFront = nil
+        pendingFront = nil
+        rotation = 0
+        target = 0
+        slots = []
+        capture()
+    }
+
+    /// Display geometry changed (resolution, arrangement, connect or
+    /// disconnect): re-tile every slot for the current screen and settle.
+    /// Membership drift — e.g. windows macOS evacuated from a vanished
+    /// display — is picked up by the next reconcile pass.
+    func displayConfigurationChanged() {
+        guard let screen = screenFrame() else { return }
+        let tile = CarouselLayout.soloTile(screen: screen)
+        for slot in slots { Windows.setFrame(slot, tile) }
+        endScroll()
+    }
+
+    /// Stage geometry (visible frame of the ring's display) in Quartz
+    /// coordinates to match AX.
     private func screenFrame() -> CGRect? {
-        guard let screen = NSScreen.screens.first else { return nil }
-        let f = screen.visibleFrame
-        return CGRect(x: f.minX, y: screen.frame.height - f.maxY, width: f.width, height: f.height)
+        Displays.screen(matching: selectedUUID).map(Displays.visibleFrame(of:))
+    }
+
+    /// Full frame of the ring's display, for window membership tests and
+    /// the scroll interceptor's pointer gate.
+    func displayFrame() -> CGRect? {
+        Displays.screen(matching: selectedUUID).map(Displays.frame(of:))
     }
 }

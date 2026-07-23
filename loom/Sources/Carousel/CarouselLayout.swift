@@ -12,19 +12,20 @@ enum CarouselLayout {
         s.insetBy(dx: gap, dy: gap)
     }
 
-    /// Where a window at angle θ sits while the ring is in motion.
+    /// The filmstrip's stride: one full screen width (tile + both gaps), so
+    /// mid-scroll the outer gap glides between windows instead of a seam.
+    static func stride(width: CGFloat) -> CGFloat {
+        width + 2 * gap
+    }
+
+    /// Where a window at angle θ sits while the ring is in motion. Pure ring
+    /// geometry — how an offset maps to an on-screen position depends on the
+    /// display's surroundings and window identity, which Carousel owns.
     enum Placement {
-        /// On the filmstrip: horizontal offset from stage center. The strip's
-        /// stride is one full screen width (tile + both gaps), so mid-scroll
-        /// the outer gap glides between windows instead of showing a seam.
+        /// Within one stride of the front: offset from stage center.
         case strip(offset: CGFloat)
-        /// Beyond the strip. The window should hide dead-center behind the
-        /// front window — the WindowServer clamps AX positions so ~40pt of a
-        /// window always stays on-screen, making true off-screen parking
-        /// impossible. `edgeOffset` is the strip position one stride out on
-        /// the exit side, the fallback spot (clamped to a screen-edge sliver)
-        /// for a window whose z-order doesn't allow hiding at center yet.
-        case offStage(edgeOffset: CGFloat)
+        /// Beyond the strip on the given side (-1 left, +1 right).
+        case offStage(side: CGFloat)
     }
 
     static func placement(atTheta theta: CGFloat, slotAngle: CGFloat, width: CGFloat) -> Placement {
@@ -34,11 +35,10 @@ enum CarouselLayout {
         if wrapped > .pi { wrapped -= twoPi }
         else if wrapped <= -.pi { wrapped += twoPi }
         let slots = wrapped / slotAngle
-        let stride = width + 2 * gap
         if abs(slots) < 1 {
-            return .strip(offset: slots * stride) // current and adjacent windows
+            return .strip(offset: slots * stride(width: width))
         }
-        return .offStage(edgeOffset: (slots > 0 ? 1 : -1) * stride)
+        return .offStage(side: slots > 0 ? 1 : -1)
     }
 
     /// 1 at the front (θ = 0), 0 at the back (θ = π); used only for z-order.

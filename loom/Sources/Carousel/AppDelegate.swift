@@ -1,10 +1,12 @@
 import AppKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var carousel: Carousel?
-    private var interceptor: ScrollInterceptor?
+    private var eventTap: EventTap?
     private var statusItem: NSStatusItem?
     private var stateMenuItem: NSMenuItem?
+    private let displayMenu = NSMenu(title: "Display")
+    private let windowsMenu = NSMenu(title: "Windows")
     private var permissionTimer: Timer?
     /// Keeps the process out of App Nap: Finder-launched agents get their
     /// timers throttled to nothing, which freezes the spin animation.
@@ -41,10 +43,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         carousel.start()
         self.carousel = carousel
 
-        let interceptor = ScrollInterceptor(carousel: carousel)
-        interceptor.start()
-        self.interceptor = interceptor
-        StateLog.write("running, accessibility granted, listenEvent=\(listen), tap=\(interceptor.isTapActive)")
+        let eventTap = EventTap(carousel: carousel)
+        eventTap.start()
+        self.eventTap = eventTap
+
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.carousel?.displayConfigurationChanged()
+        }
+        StateLog.write("running, accessibility granted, listenEvent=\(listen), tap=\(eventTap.isTapActive)")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -66,6 +75,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                  action: #selector(restoreFrames), keyEquivalent: "r")
         restore.target = self
         menu.addItem(restore)
+
+        let display = NSMenuItem(title: "Display", action: nil, keyEquivalent: "")
+        displayMenu.delegate = self // rebuilt on every open, so new monitors show up
+        display.submenu = displayMenu
+        menu.addItem(display)
+
+        let windows = NSMenuItem(title: "Windows", action: nil, keyEquivalent: "")
+        windowsMenu.delegate = self // rebuilt on every open with live membership
+        windows.submenu = windowsMenu
+        menu.addItem(windows)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)),
                                 keyEquivalent: "q"))
@@ -75,5 +94,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func restoreFrames() {
         carousel?.restoreAll()
+    }
+
+    // MARK: Display picker
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === windowsMenu { return rebuildWindowsMenu() }
+        guard menu === displayMenu else { return }
+        menu.removeAllItems()
+        // Resolve through the fallback so the checkmark shows the display
+        // actually in use, not a disconnected saved selection.
+        let selection = carousel?.selectedUUID ?? Displays.savedSelection()
+        let selected = Displays.screen(matching: selection).flatMap(Displays.uuid(of:))
+        for screen in NSScreen.screens {
+            guard let uuid = Displays.uuid(of: screen) else { continue }
+            let item = NSMenuItem(title: screen.localizedName,
+                                  action: #selector(selectDisplay(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = uuid
+            item.state = uuid == selected ? .on : .off
+            menu.addItem(item)
+        }
+    }
+
+    @objc private func selectDisplay(_ sender: NSMenuItem) {
+        guard let uuid = sender.representedObject as? String else { return }
+        carousel?.select(displayUUID: uuid)
+        StateLog.append("display -> \(sender.title)")
+    }
+
+    // MARK: Window list
+
+    private func rebuildWindowsMenu() {
+        windowsMenu.removeAllItems()
+        guard let carousel else { return }
+        for entry in carousel.windowList() {
+            let label = entry.number.map { "⌘\($0)  \(entry.title)" } ?? "—  \(entry.title)"
+            let item = NSMenuItem(title: label, action: #selector(switchToWindow(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = entry.id
+            windowsMenu.addItem(item)
+        }
+        windowsMenu.addItem(.separator())
+        let hint = NSMenuItem(title: "⌥⌘1–9 gives the front window that number",
+                              action: nil, keyEquivalent: "")
+        hint.isEnabled = false
+        windowsMenu.addItem(hint)
+    }
+
+    @objc private func switchToWindow(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? CGWindowID else { return }
+        carousel?.switchToWindow(id: id)
     }
 }
