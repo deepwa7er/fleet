@@ -18,6 +18,8 @@ final class ManagedWindow {
     var raiseGen = 0
     /// Whether the last render placed this window on the filmstrip.
     var onStrip = false
+    /// ⌘-digit assigned to this window (1–9), if any. Session-scoped.
+    var number: Int?
 
     init(id: CGWindowID, pid: pid_t, originalFrame: CGRect, axWindow: AXUIElement) {
         self.id = id
@@ -40,8 +42,9 @@ enum Windows {
         "Window Server", "Dock", "Control Center", "WindowManager", "Notification Center",
     ]
 
-    /// Every on-screen window of a regular app, front-to-back.
-    static func snapshot() -> [Info] {
+    /// Every on-screen window of a regular app whose center lies on the
+    /// given display (Quartz frame), front-to-back.
+    static func snapshot(on display: CGRect) -> [Info] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
         else { return [] }
@@ -55,7 +58,8 @@ enum Windows {
                   let owner = info["kCGWindowOwnerName"] as? String,
                   !ignoredOwners.contains(owner),
                   let boundsDict = info["kCGWindowBounds"] as? [String: Any],
-                  let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+                  display.contains(CGPoint(x: bounds.midX, y: bounds.midY))
             else { return nil }
             return Info(id: id, pid: pid, bounds: bounds)
         }
@@ -125,6 +129,19 @@ enum Windows {
 
     static func raise(_ ax: AXUIElement) {
         AXUIElementPerformAction(ax, kAXRaiseAction as CFString)
+    }
+
+    /// Human-readable label for menus: the window's AX title, else its app's
+    /// name, else the bare window number.
+    static func title(of window: ManagedWindow) -> String {
+        var value: AnyObject?
+        if AXUIElementCopyAttributeValue(window.axWindow, kAXTitleAttribute as CFString,
+                                         &value) == .success,
+           let title = value as? String, !title.isEmpty {
+            return title
+        }
+        return NSRunningApplication(processIdentifier: window.pid)?.localizedName
+            ?? "Window \(window.id)"
     }
 
     /// Keyboard focus + bring the app forward, without popping its other
