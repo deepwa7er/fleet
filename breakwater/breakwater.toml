@@ -136,6 +136,12 @@ serve_dir = "/srv/netfps-dist"
 label = "source"
 upstream = "100.74.202.93:7879"
 
+# Code map / call tracer (atlas) — dev-box upstream like source, and for the
+# same reason: it runs rust-analyzer over the working trees, which live there.
+[[routes]]
+label = "atlas"
+upstream = "100.74.202.93:7880"
+
 # Note: tidepool is intentionally NOT routed here. It runs as its own Tailscale
 # node (tsnet, `-tls`) and serves HTTPS itself at https://tidepool — there is no
 # plain-HTTP backend to proxy to.

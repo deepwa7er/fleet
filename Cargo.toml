@@ -8,6 +8,7 @@ members = [
     "crates/fleet-api",
     "crates/fleet-common",
     "crates/tugboat-ledger",
+    "atlas",
     "clothes",
     "driftword",
     "drydock",

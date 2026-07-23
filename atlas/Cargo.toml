@@ -1,0 +1,29 @@
+[package]
+name = "atlas"
+version = "0.1.0"
+edition = "2024"
+description = "Map and trace the fleet's Rust code: a symbol graph over rust-analyzer's SCIP index."
+
+[[bin]]
+name = "atlas"
+path = "src/main.rs"
+
+[dependencies]
+fleet-common = { path = "../crates/fleet-common" }
+anyhow = { workspace = true }
+axum = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+rusqlite = { workspace = true, features = ["bundled"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal"] }
+toml = { workspace = true }
+tower-http = { workspace = true, features = ["fs", "trace"] }
+tracing = { workspace = true }
+
+# SCIP protobuf bindings (sourcegraph/scip). `protobuf` is required directly for
+# the `Message` trait that parses the index file; scip pins =3.7.2.
+scip = "0.9"
+protobuf = "3.7.2"

@@ -1,0 +1,636 @@
+/* DG-002 TRITIUM (U.S. Graphics school) — the fleet's shared tokens, plus the
+ * LCD data island and the §5 syntax roles (atlas renders signatures and a
+ * call graph, both code surfaces). Dark is canonical. */
+:root {
+  --font-mono:
+    "Berkeley Mono", "JetBrains Mono", "IBM Plex Mono", ui-monospace,
+    SFMono-Regular, Menlo, Consolas, monospace;
+
+  --bg: #000000;
+  --surface: #0a0a0a;
+  --surface-2: #101010;
+  --ink: #00a645;
+  --ink-muted: #00753d;
+  --ink-faint: #4a4a48;
+  --rule: #242424;
+  --rule-strong: #3d3d3b;
+  --emphasis: #ffffff;
+
+  --accent: #4a90d4;
+  --warn: #ffbf00;
+  --crit: #e0281e;
+
+  --lcd-bg: #101720;
+  --lcd-rule: #24344a;
+  --lcd-ink: #cfe0f2;
+  --lcd-label: #4a90d4;
+
+  --syn-steel: #858e97;
+  --syn-data: #008d41;
+
+  --border: 1px solid var(--rule);
+  --border-strong: 1px solid var(--rule-strong);
+
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+}
+
+html[data-theme="light"] {
+  --bg: #f4f3ee;
+  --surface: #fafaf8;
+  --surface-2: #eceae3;
+  --ink: #00702f;
+  --ink-muted: #4d7a5e;
+  --ink-faint: #8a8678;
+  --rule: #d8d6cd;
+  --rule-strong: #bfbcb0;
+  --emphasis: #1a1a1a;
+
+  --accent: #2a6bb0;
+  --warn: #a85d00;
+  --crit: #b3231a;
+
+  --lcd-bg: #e7eef7;
+  --lcd-rule: #b9c9dd;
+  --lcd-ink: #1c3a5e;
+  --lcd-label: #2a6bb0;
+
+  --syn-steel: #6a7480;
+  --syn-data: #1d7a3e;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.45 var(--font-mono);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+code {
+  font: inherit;
+}
+h1,
+h2 {
+  font-size: 13px;
+  margin: 0;
+  color: var(--emphasis);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+h2 {
+  text-transform: uppercase;
+  font-size: 11px;
+  border-bottom: var(--border-strong);
+  padding-bottom: var(--s1);
+  margin-bottom: var(--s3);
+}
+h2 .count {
+  color: var(--ink-muted);
+  font-weight: 400;
+  text-transform: none;
+}
+select,
+input {
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: var(--border-strong);
+  border-radius: 0;
+  padding: 3px var(--s2);
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ── Header: instrument bar ─────────────────────────────────────────────── */
+header {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s2) var(--s4);
+  border-bottom: var(--border-strong);
+  background: var(--surface);
+  flex: 0 0 auto;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+.wordmark {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--emphasis);
+}
+.brand .sub {
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+.searchbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: 1 1 auto;
+  max-width: 520px;
+}
+.searchbar input[type="search"] {
+  flex: 1 1 auto;
+}
+
+.btn {
+  border: var(--border-strong);
+  background: var(--surface-2);
+  padding: 3px var(--s3);
+  color: var(--ink);
+}
+.btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn--primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn:disabled {
+  color: var(--ink-faint);
+  border-color: var(--rule);
+  cursor: default;
+}
+
+/* The LCD data island — one per screen, the headline numbers. */
+.lcd {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin-left: auto;
+  background: var(--lcd-bg);
+  border: 1px solid var(--lcd-rule);
+}
+.lcd-cell {
+  display: flex;
+  flex-direction: column;
+  padding: var(--s1) var(--s3);
+  border-right: 1px solid var(--lcd-rule);
+}
+.lcd-label {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--lcd-label);
+}
+.lcd-value {
+  color: var(--lcd-ink);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.lcd-btn {
+  margin: var(--s1);
+  align-self: center;
+}
+.banner-error {
+  padding: var(--s1) var(--s4);
+  color: var(--crit);
+  border-bottom: var(--border);
+  background: var(--surface);
+}
+
+/* ── Body: sidebar + main ───────────────────────────────────────────────── */
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.sidebar {
+  width: 280px;
+  flex: 0 0 auto;
+  border-right: var(--border-strong);
+  background: var(--surface);
+  overflow-y: auto;
+  padding: var(--s2) 0 var(--s4);
+}
+.main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.pane-pad {
+  padding: var(--s4);
+}
+.placeholder {
+  padding: var(--s6);
+  color: var(--ink-muted);
+  max-width: 60ch;
+}
+.empty {
+  color: var(--ink-faint);
+  padding: var(--s2) var(--s4);
+  margin: 0;
+}
+.error {
+  color: var(--crit);
+  padding: var(--s2) var(--s4);
+  margin: 0;
+}
+.truncated {
+  color: var(--warn);
+  font-size: 11px;
+  margin: var(--s2) 0 0;
+}
+
+/* ── Module tree ────────────────────────────────────────────────────────── */
+.tree-crate-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s1) var(--s2);
+  border-bottom: var(--border);
+}
+.tree-fold {
+  width: 16px;
+  color: var(--ink-faint);
+  text-align: center;
+}
+.tree-fold:hover {
+  color: var(--accent);
+}
+.tree-crate-name {
+  color: var(--emphasis);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  flex: 1 1 auto;
+  text-align: left;
+}
+.tree-crate-name:hover {
+  color: var(--accent);
+}
+.tree-count {
+  color: var(--ink-faint);
+  font-size: 11px;
+  margin-left: auto;
+  padding-right: var(--s2);
+}
+.tree-branches {
+  padding: var(--s1) 0;
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 1px var(--s2);
+  color: var(--ink);
+  gap: var(--s2);
+}
+.tree-row:hover .tree-name {
+  color: var(--accent);
+}
+.tree-row--active {
+  background: var(--surface-2);
+}
+.tree-row--active .tree-name {
+  color: var(--emphasis);
+}
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── The symbol table ───────────────────────────────────────────────────── */
+table.symbols {
+  border-collapse: collapse;
+  width: 100%;
+}
+.symbols th,
+.symbols td {
+  border-bottom: var(--border);
+  padding: 3px var(--s2);
+  text-align: left;
+  vertical-align: baseline;
+}
+.symbols th {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+  font-weight: 400;
+  border-bottom: var(--border-strong);
+}
+.symbols td.num,
+.symbols th.num {
+  text-align: right;
+}
+.col-kind {
+  width: 72px;
+  white-space: nowrap;
+}
+.col-loc {
+  white-space: nowrap;
+}
+.col-count {
+  width: 56px;
+}
+.kind {
+  font-size: 11px;
+}
+.kind--fn {
+  color: var(--accent);
+}
+.kind--type {
+  color: var(--lcd-ink);
+}
+.kind--value {
+  color: var(--ink);
+}
+.kind--other {
+  color: var(--ink-faint);
+}
+.sym-link {
+  color: var(--accent);
+  text-align: left;
+  word-break: break-all;
+}
+.sym-link:hover {
+  text-decoration: underline;
+}
+.sym-container {
+  color: var(--ink-muted);
+}
+.sym-trait {
+  color: var(--ink-muted);
+  font-style: italic;
+}
+.sym-where,
+.sym-loc {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+.sym-sig {
+  color: var(--ink);
+  font-size: 12px;
+  max-width: 46ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* §5 syntax roles (lexical subset). */
+.sig-kw {
+  color: var(--syn-steel);
+  font-weight: 700;
+}
+.sig-punct {
+  color: var(--ink-faint);
+}
+.sig-type {
+  color: var(--lcd-ink);
+}
+.sig-lit {
+  color: var(--syn-data);
+}
+.sig-life {
+  color: var(--syn-data);
+  font-style: italic;
+}
+
+/* ── Symbol page ────────────────────────────────────────────────────────── */
+.symbol-page {
+  padding: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+.symbol-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s4);
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.symbol-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  min-width: 0;
+}
+.symbol-title h1 {
+  word-break: break-all;
+}
+.badge-ext {
+  color: var(--warn);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  border: 1px solid var(--warn);
+  padding: 0 var(--s1);
+}
+.symbol-actions {
+  display: flex;
+  gap: var(--s2);
+}
+.symbol-sig {
+  background: var(--surface);
+  border: var(--border-strong);
+  padding: var(--s2) var(--s3);
+  overflow-x: auto;
+  white-space: pre;
+}
+.symbol-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px var(--s4);
+  margin: 0;
+}
+.symbol-meta dt {
+  color: var(--ink-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.symbol-meta dd {
+  margin: 0;
+}
+.symbol-docs {
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  border-left: 2px solid var(--rule-strong);
+  color: var(--ink-muted);
+  white-space: pre-wrap;
+  font: inherit;
+}
+
+/* ── Trace view ─────────────────────────────────────────────────────────── */
+.trace {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.trace-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s2) var(--s4);
+  border-bottom: var(--border);
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+.trace-root strong {
+  color: var(--emphasis);
+  font-weight: 700;
+}
+.trace-controls {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+}
+.opt {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+.trace-stats {
+  margin-left: auto;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+.trace-truncated {
+  color: var(--warn);
+}
+.trace-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 0;
+}
+.trace-svg {
+  display: block;
+}
+.trace-ruler {
+  fill: var(--ink-faint);
+  font: 10px var(--font-mono);
+  letter-spacing: 0.08em;
+}
+.trace-rule {
+  stroke: var(--rule);
+  stroke-dasharray: 1 3;
+}
+.trace-edge {
+  fill: none;
+  stroke: var(--rule-strong);
+  stroke-width: 1;
+}
+.trace-edge--hot {
+  stroke: var(--accent);
+}
+.trace-edge--back {
+  stroke: var(--warn);
+  stroke-dasharray: 4 3;
+  opacity: 0.7;
+}
+.trace-node {
+  cursor: pointer;
+}
+.trace-node rect {
+  fill: var(--surface);
+  stroke: var(--rule-strong);
+}
+.trace-node:hover rect {
+  stroke: var(--accent);
+}
+.trace-node--selected rect {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.trace-node--root rect {
+  stroke: var(--emphasis);
+}
+.trace-node--ext rect {
+  stroke-dasharray: 3 2;
+}
+.trace-node--ext .trace-node-title {
+  fill: var(--ink-muted);
+}
+.trace-node-title {
+  font: 12px var(--font-mono);
+  fill: var(--ink);
+}
+.trace-node--fn .trace-node-title {
+  fill: var(--accent);
+}
+.trace-node--type .trace-node-title {
+  fill: var(--lcd-ink);
+}
+.trace-node--root .trace-node-title {
+  fill: var(--emphasis);
+  font-weight: 700;
+}
+.trace-node-sub {
+  font: 10px var(--font-mono);
+  fill: var(--ink-faint);
+}
+.trace-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) var(--s4);
+  border-top: var(--border-strong);
+  background: var(--surface);
+}
+.trace-foot-name {
+  color: var(--emphasis);
+  word-break: break-all;
+}
+
+/* ── Footer: doc furniture ──────────────────────────────────────────────── */
+footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s1) var(--s4);
+  border-top: var(--border);
+  background: var(--surface);
+  flex: 0 0 auto;
+}
+.doc-no {
+  color: var(--ink-faint);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+.quiet-mark {
+  color: var(--accent);
+  opacity: 0.85;
+  font-style: italic;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+}

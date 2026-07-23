@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>atlas — fleet</title>
+    <script>
+      // First-paint theme from the shared fleet cookie (tide is the source of
+      // truth; lib/theme.ts then syncs/polls it). Avoids a dark→light flash.
+      (function () {
+        var m = document.cookie.match(/(?:^|;\s*)fleet_theme=(dark|light)/);
+        if (m) document.documentElement.dataset.theme = m[1];
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
