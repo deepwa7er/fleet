@@ -168,17 +168,34 @@ final class Carousel {
         switchTo(index: index)
     }
 
-    /// Give the front window this ⌘-digit; a window already holding it
-    /// takes the front window's old number in exchange.
+    /// ⌥⌘-digit: give the front window this number.
     func assignFrontWindow(number: Int) -> Bool {
-        guard (1...9).contains(number), let front = frontSlot() else { return false }
-        if let holder = slots.first(where: { $0.number == number }) {
-            holder.number = front.number
-        }
-        front.number = number
-        persistNumbers()
-        StateLog.append("assigned \(number) to \(Windows.title(of: front))")
+        guard let front = frontSlot() else { return false }
+        assignWindow(id: front.id, number: number)
         return true
+    }
+
+    /// Give a window a ⌘-digit — a window already holding it takes the old
+    /// number in exchange — or clear its digit (nil), which also drops the
+    /// digit's persisted reservation.
+    func assignWindow(id: CGWindowID, number: Int?) {
+        guard let slot = slots.first(where: { $0.id == id }) else { return }
+        if let number {
+            guard (1...9).contains(number), number != slot.number else { return }
+            if let holder = slots.first(where: { $0.number == number }) {
+                holder.number = slot.number
+            }
+            slot.number = number
+            StateLog.append("assigned \(number) to \(Windows.title(of: slot))")
+        } else {
+            guard let old = slot.number else { return }
+            slot.number = nil
+            var map = Assignments.load()
+            map[old] = nil
+            Assignments.save(map)
+            StateLog.append("cleared \(old) from \(Windows.title(of: slot))")
+        }
+        persistNumbers()
     }
 
     /// Ring membership for the status menu, in slot order.

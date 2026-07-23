@@ -130,10 +130,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let carousel else { return }
         for entry in carousel.windowList() {
             let label = entry.number.map { "⌘\($0)  \(entry.title)" } ?? "—  \(entry.title)"
-            let item = NSMenuItem(title: label, action: #selector(switchToWindow(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.representedObject = entry.id
+            let item = NSMenuItem(title: label, action: nil, keyEquivalent: "")
+            item.submenu = windowSubmenu(for: entry)
             windowsMenu.addItem(item)
         }
         windowsMenu.addItem(.separator())
@@ -143,8 +141,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windowsMenu.addItem(hint)
     }
 
+    private func windowSubmenu(for entry: (number: Int?, title: String, id: CGWindowID)) -> NSMenu {
+        let submenu = NSMenu(title: entry.title)
+        let bringFront = NSMenuItem(title: "Bring to Front",
+                                    action: #selector(switchToWindow(_:)), keyEquivalent: "")
+        bringFront.target = self
+        bringFront.representedObject = entry.id
+        submenu.addItem(bringFront)
+        submenu.addItem(.separator())
+        for digit in 1...9 {
+            let item = NSMenuItem(title: "⌘\(digit)",
+                                  action: #selector(assignNumber(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = (entry.id, digit) as (CGWindowID, Int?)
+            item.state = entry.number == digit ? .on : .off
+            submenu.addItem(item)
+        }
+        submenu.addItem(.separator())
+        let none = NSMenuItem(title: "No Number",
+                              action: #selector(assignNumber(_:)), keyEquivalent: "")
+        none.target = self
+        none.representedObject = (entry.id, nil) as (CGWindowID, Int?)
+        none.state = entry.number == nil ? .on : .off
+        submenu.addItem(none)
+        return submenu
+    }
+
     @objc private func switchToWindow(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? CGWindowID else { return }
         carousel?.switchToWindow(id: id)
+    }
+
+    @objc private func assignNumber(_ sender: NSMenuItem) {
+        guard let (id, number) = sender.representedObject as? (CGWindowID, Int?) else { return }
+        carousel?.assignWindow(id: id, number: number)
     }
 }
