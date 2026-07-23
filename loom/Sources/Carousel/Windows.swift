@@ -8,6 +8,8 @@ final class ManagedWindow {
     let pid: pid_t
     let axWindow: AXUIElement
     let originalFrame: CGRect
+    /// Owning app's bundle identifier; the key for persisted ⌘-digits.
+    let appID: String?
     /// Skip-caches; each setter invalidates the other on write.
     var lastOrigin: CGPoint?
     var lastFrame: CGRect?
@@ -21,11 +23,13 @@ final class ManagedWindow {
     /// ⌘-digit assigned to this window (1–9), if any. Session-scoped.
     var number: Int?
 
-    init(id: CGWindowID, pid: pid_t, originalFrame: CGRect, axWindow: AXUIElement) {
+    init(id: CGWindowID, pid: pid_t, originalFrame: CGRect, axWindow: AXUIElement,
+         appID: String?) {
         self.id = id
         self.pid = pid
         self.originalFrame = originalFrame
         self.axWindow = axWindow
+        self.appID = appID
     }
 }
 
@@ -72,7 +76,10 @@ enum Windows {
               isSettable(ax, kAXSizeAttribute),
               !isFullScreen(ax)
         else { return nil }
-        return ManagedWindow(id: info.id, pid: info.pid, originalFrame: info.bounds, axWindow: ax)
+        return ManagedWindow(id: info.id, pid: info.pid, originalFrame: info.bounds,
+                             axWindow: ax,
+                             appID: NSRunningApplication(processIdentifier: info.pid)?
+                                 .bundleIdentifier)
     }
 
     static func isAlive(_ ax: AXUIElement) -> Bool {

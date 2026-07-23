@@ -51,7 +51,7 @@ final class Carousel {
     private func capture() {
         guard let display = displayFrame() else { return }
         slots = Windows.snapshot(on: display).compactMap(enroll)
-        for (i, slot) in slots.enumerated() where i < 9 { slot.number = i + 1 }
+        assignNumbers()
         FileHandle.standardError.write(Data("Carousel: enrolled \(slots.count) windows\n".utf8))
         // Slot 0 is the OS's frontmost window, so it already covers the
         // stack — no raise race to wait out here.
@@ -82,14 +82,16 @@ final class Carousel {
         let before = Set(slots.map(\.id))
         slots.removeAll { !onScreen.contains($0.id) || !Windows.isAlive($0.axWindow) }
         let known = Set(slots.map(\.id))
+        let saved = Assignments.load()
         for info in snapshot where !known.contains(info.id) {
             if let managed = enroll(info) {
-                managed.number = nextFreeNumber()
+                managed.number = number(forArrival: managed, saved: saved)
                 slots.append(managed)
             }
         }
         // Realign only when membership changed; never fight the user otherwise.
         guard Set(slots.map(\.id)) != before else { return }
+        persistNumbers()
         // The slot angle changed with N, so the ring is off-grid: snap back.
         endScroll()
     }
@@ -174,6 +176,7 @@ final class Carousel {
             holder.number = front.number
         }
         front.number = number
+        persistNumbers()
         StateLog.append("assigned \(number) to \(Windows.title(of: front))")
         return true
     }
@@ -195,9 +198,53 @@ final class Carousel {
         beginSnap()
     }
 
-    private func nextFreeNumber() -> Int? {
+    /// Number the freshly captured ring: saved app assignments first (each
+    /// digit goes to the first unnumbered window of its app), then the
+    /// remaining windows take digits that are neither in use nor reserved
+    /// for an absent app. The result is persisted, so numbering stays
+    /// stable across restarts instead of following capture order.
+    private func assignNumbers() {
+        let saved = Assignments.load()
+        for slot in slots { slot.number = nil }
+        for (number, appID) in saved.sorted(by: { $0.key < $1.key }) {
+            if let slot = slots.first(where: { $0.appID == appID && $0.number == nil }) {
+                slot.number = number
+            }
+        }
+        for slot in slots where slot.number == nil {
+            slot.number = freeNumber(saved: saved)
+        }
+        persistNumbers()
+    }
+
+    /// Digit for a window arriving mid-session: its app's lowest unused
+    /// reservation first, else the lowest unreserved free digit.
+    private func number(forArrival slot: ManagedWindow, saved: [Int: String]) -> Int? {
         let used = Set(slots.compactMap(\.number))
-        return (1...9).first { !used.contains($0) }
+        if let app = slot.appID,
+           let reserved = saved.filter({ $0.value == app && !used.contains($0.key) })
+               .keys.min() {
+            return reserved
+        }
+        return freeNumber(saved: saved)
+    }
+
+    /// The lowest digit neither held by a ring window nor reserved for an
+    /// app that isn't on the ring right now.
+    private func freeNumber(saved: [Int: String]) -> Int? {
+        let used = Set(slots.compactMap(\.number))
+        return (1...9).first { !used.contains($0) && saved[$0] == nil }
+    }
+
+    /// Write the ring's numbering over the saved map. Current windows win
+    /// their digits; reservations of absent apps are kept, so quitting an
+    /// app doesn't forfeit its number.
+    private func persistNumbers() {
+        var map = Assignments.load()
+        for slot in slots {
+            if let number = slot.number, let app = slot.appID { map[number] = app }
+        }
+        Assignments.save(map)
     }
 
     /// One animation frame. Returns false once the ring has settled.
