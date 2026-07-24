@@ -6,7 +6,7 @@
 
 # The dev box's Tailscale IP. The launchd agent and breakwater's upstream both
 # reference this address.
-bind = "100.74.202.93"
+bind = "100.111.100.87"
 port = 7879
 
 # The fleet manifest: the monorepo's top-level directories are the repos to

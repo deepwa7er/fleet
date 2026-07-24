@@ -7,7 +7,7 @@
 
 # The dev box's Tailscale IP. The launchd agent and breakwater's upstream both
 # reference this address.
-bind = "100.74.202.93"
+bind = "100.111.100.87"
 port = 7880
 
 # The built frontend. `cd web && bun run build` produces web/dist.

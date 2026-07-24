@@ -96,7 +96,7 @@ fleet manifest, and the `web/dist` path). Then add the breakwater route:
 ```toml
 [[routes]]
 label = "source"
-upstream = "100.74.202.93:7879"   # the dev box's Tailscale IP
+upstream = "100.111.100.87:7879"   # the dev box's Tailscale IP
 ```
 
 and `tugboat deploy breakwater`. Because the upstream is the dev box, the page is
