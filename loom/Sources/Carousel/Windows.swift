@@ -118,20 +118,27 @@ enum Windows {
         setPoint(ax, kAXPositionAttribute, rect.origin)
     }
 
-    /// Is `id` the frontmost of `ids` in the WindowServer's current z-order?
-    /// Used to confirm a raise has actually landed before other windows are
-    /// stacked behind the front one.
-    static func isFrontmost(_ id: CGWindowID, among ids: Set<CGWindowID>) -> Bool {
+    /// The frontmost of `ids` in the WindowServer's current z-order — which of
+    /// our windows the user is actually looking at — or nil when none of them
+    /// are on screen.
+    static func frontmost(among ids: Set<CGWindowID>) -> CGWindowID? {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
-        else { return false }
+        else { return nil }
         // The list is ordered front-to-back.
         for info in list {
             guard let wid = info["kCGWindowNumber"] as? CGWindowID, ids.contains(wid)
             else { continue }
-            return wid == id
+            return wid
         }
-        return false
+        return nil
+    }
+
+    /// Is `id` the frontmost of `ids` in the WindowServer's current z-order?
+    /// Used to confirm a raise has actually landed before other windows are
+    /// stacked behind the front one.
+    static func isFrontmost(_ id: CGWindowID, among ids: Set<CGWindowID>) -> Bool {
+        frontmost(among: ids) == id
     }
 
     static func raise(_ ax: AXUIElement) {
