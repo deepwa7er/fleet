@@ -242,9 +242,26 @@ final class Carousel {
         persistNumbers()
     }
 
-    /// Ring membership for the status menu, in slot order.
-    func windowList() -> [(number: Int?, title: String, id: CGWindowID)] {
-        slots.map { ($0.number, Windows.title(of: $0), $0.id) }
+    /// One ring member as the status menu and the switcher panel see it.
+    struct WindowEntry {
+        let id: CGWindowID
+        /// The ⌘-digit this window holds, if any.
+        let number: Int?
+        let title: String
+        /// Owning process — the UI resolves the app's name and icon from it,
+        /// so the ring itself never touches AppKit imagery.
+        let pid: pid_t
+        /// Whether this window currently holds the stage.
+        let isFront: Bool
+    }
+
+    /// Ring membership for the status menu and the switcher, in slot order.
+    func windowList() -> [WindowEntry] {
+        let front = frontSlot()
+        return slots.map {
+            WindowEntry(id: $0.id, number: $0.number, title: Windows.title(of: $0),
+                        pid: $0.pid, isFront: $0 === front)
+        }
     }
 
     /// Rotate the ring so `index`'s window lands in front, via the shortest

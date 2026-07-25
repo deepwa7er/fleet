@@ -14,12 +14,14 @@ final class EventTap {
     var wheelNotchesPerSlot: Double = 2
 
     private let carousel: Carousel
+    private let switcher: SwitcherPanel
     private var tap: CFMachPort?
 
     var isTapActive: Bool { tap != nil }
 
-    init(carousel: Carousel) {
+    init(carousel: Carousel, switcher: SwitcherPanel) {
         self.carousel = carousel
+        self.switcher = switcher
     }
 
     func start() {
@@ -108,12 +110,35 @@ final class EventTap {
         18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9,
     ]
 
+    /// Virtual keycodes for the switcher's own keys.
+    private static let spaceKeycode: Int64 = 49
+    private static let escapeKeycode: Int64 = 53
+
     private func handleKey(_ event: CGEvent) -> Unmanaged<CGEvent>? {
         let pass = Unmanaged.passUnretained(event)
         let flags = event.flags
+        let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+
+        // ⌥Space summons the switcher from anywhere. Unlike the ring's gestures
+        // it is not aimed at a particular display, so it is deliberately not
+        // gated on the pointer: the panel is how you reach the ring when the
+        // pointer isn't on it.
+        if keycode == Self.spaceKeycode, flags.contains(.maskAlternate),
+           !flags.contains(.maskCommand), !flags.contains(.maskControl),
+           !flags.contains(.maskShift) {
+            guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return nil }
+            switcher.toggle()
+            return nil
+        }
+        // Escape is only ours to swallow while the panel is actually up.
+        if keycode == Self.escapeKeycode, switcher.isVisible {
+            switcher.dismiss()
+            return nil
+        }
+
         guard flags.contains(.maskCommand),
               !flags.contains(.maskControl), !flags.contains(.maskShift),
-              let digit = Self.digitKeycodes[event.getIntegerValueField(.keyboardEventKeycode)]
+              let digit = Self.digitKeycodes[keycode]
         else { return pass }
         // Keystrokes carry no useful location; gate on where the pointer
         // is, the same rule the scroll gesture uses.
