@@ -76,6 +76,12 @@ final class Carousel {
     /// edge-held, or hidden), and judging membership by position then would
     /// wrongly drop them.
     private func reconcile() {
+        // A locked screen is not a membership change. The WindowServer stops
+        // reporting the session's windows as on-screen while the lock is up, so
+        // a pass taken now would evict the entire ring and re-enroll it from
+        // scratch on unlock — losing every window's original frame and
+        // re-deriving the ring's order from whatever z-order the unlock left.
+        guard !Session.screenIsLocked else { return }
         guard case .idle = motion, let display = displayFrame() else { return }
         let snapshot = Windows.snapshot(on: display)
         let onScreen = Set(snapshot.map(\.id))
@@ -92,8 +98,9 @@ final class Carousel {
         // Realign only when membership changed; never fight the user otherwise.
         guard Set(slots.map(\.id)) != before else { return }
         persistNumbers()
-        // The slot angle changed with N, so the ring is off-grid: snap back.
-        endScroll()
+        // The slot angle changed with N, so the ring is off-grid: put it back
+        // on-grid around whichever window is already in front.
+        realign()
     }
 
     // MARK: Rotation
@@ -136,6 +143,43 @@ final class Carousel {
         if stepperMode() { rotation = target } // nothing animates; land now
         motion = .snapping(from: rotation, start: CACurrentMediaTime())
         animator?.start()
+    }
+
+    /// Put the ring back on-grid after its membership or its display geometry
+    /// changed, without touching focus.
+    ///
+    /// Rotation is an angle over slot *indices*, so a window joining or leaving
+    /// renumbers every slot: the same angle now names a different window. The
+    /// ring therefore re-derives its angle from the window the WindowServer
+    /// already has in front, which keeps the stage with the window the user is
+    /// looking at. Nothing is raised or focused — an arrival or a departure is
+    /// not a request to switch windows.
+    ///
+    /// `endScroll` is the counterpart for the user's own gesture: that one does
+    /// land on a new window, and does move focus to it.
+    private func realign() {
+        snapTimer?.invalidate()
+        snapTimer = nil
+        motion = .idle
+        pendingFront = nil
+        guard let anchor = frontmostSlot() ?? slots.first,
+              let index = slots.firstIndex(where: { $0 === anchor })
+        else {
+            rotation = 0
+            target = 0
+            confirmedFront = nil
+            return
+        }
+        target = -CGFloat(index) * slotAngle
+        rotation = target
+        confirmedFront = anchor
+        renderResting()
+    }
+
+    /// The ring member the WindowServer currently has in front, if any.
+    private func frontmostSlot() -> ManagedWindow? {
+        guard let id = Windows.frontmost(among: Set(slots.map(\.id))) else { return nil }
+        return slots.first { $0.id == id }
     }
 
     private var slotAngle: CGFloat { 2 * .pi / CGFloat(slots.count) }
@@ -475,12 +519,13 @@ final class Carousel {
     /// Display geometry changed (resolution, arrangement, connect or
     /// disconnect): re-tile every slot for the current screen and settle.
     /// Membership drift — e.g. windows macOS evacuated from a vanished
-    /// display — is picked up by the next reconcile pass.
+    /// display — is picked up by the next reconcile pass. Re-tiling is not a
+    /// window switch, so the front window keeps both the stage and focus.
     func displayConfigurationChanged() {
         guard let screen = screenFrame() else { return }
         let tile = CarouselLayout.soloTile(screen: screen)
         for slot in slots { Windows.setFrame(slot, tile) }
-        endScroll()
+        realign()
     }
 
     /// Stage geometry (visible frame of the ring's display) in Quartz
