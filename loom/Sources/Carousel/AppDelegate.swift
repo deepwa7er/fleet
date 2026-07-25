@@ -3,6 +3,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var carousel: Carousel?
     private var eventTap: EventTap?
+    private var switcher: SwitcherPanel?
     private var statusItem: NSStatusItem?
     private var stateMenuItem: NSMenuItem?
     private let displayMenu = NSMenu(title: "Display")
@@ -43,7 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         carousel.start()
         self.carousel = carousel
 
-        let eventTap = EventTap(carousel: carousel)
+        let switcher = SwitcherPanel(carousel: carousel)
+        self.switcher = switcher
+
+        let eventTap = EventTap(carousel: carousel, switcher: switcher)
         eventTap.start()
         self.eventTap = eventTap
 
@@ -71,6 +75,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(state)
         stateMenuItem = state
 
+        let switcher = NSMenuItem(title: "Window Switcher  ⌥Space",
+                                  action: #selector(showSwitcher), keyEquivalent: "")
+        switcher.target = self
+        menu.addItem(switcher)
+
         let restore = NSMenuItem(title: "Restore Window Frames",
                                  action: #selector(restoreFrames), keyEquivalent: "r")
         restore.target = self
@@ -90,6 +99,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                 keyEquivalent: "q"))
         item.menu = menu
         statusItem = item
+    }
+
+    @objc private func showSwitcher() {
+        switcher?.show()
     }
 
     @objc private func restoreFrames() {
@@ -141,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windowsMenu.addItem(hint)
     }
 
-    private func windowSubmenu(for entry: (number: Int?, title: String, id: CGWindowID)) -> NSMenu {
+    private func windowSubmenu(for entry: Carousel.WindowEntry) -> NSMenu {
         let submenu = NSMenu(title: entry.title)
         let bringFront = NSMenuItem(title: "Bring to Front",
                                     action: #selector(switchToWindow(_:)), keyEquivalent: "")
