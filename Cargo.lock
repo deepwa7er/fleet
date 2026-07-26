@@ -1036,10 +1036,12 @@ version = "0.2.0"
 dependencies = [
  "axum",
  "clap",
+ "fleet-common",
  "futures-util",
  "if-addrs",
  "libc",
  "reqwest",
+ "rusqlite",
  "rustyline",
  "serde",
  "serde_json",

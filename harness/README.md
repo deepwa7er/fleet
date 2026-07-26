@@ -38,8 +38,35 @@ Each session is a driver task owning a library `Session` with its own working
 directory: relative tool paths resolve against it, commands run in it, and its
 system prompt and AGENTS.md come from it — concurrent web sessions (and the
 REPL) never share a process-global cwd or interrupt bit. Web sessions always
-run yolo (commands execute without confirmation). Sessions are in-memory:
-restarting the server ends them.
+run yolo (commands execute without confirmation).
+
+### Sessions survive restarts
+
+Web sessions are stored in SQLite (`--db`, else `$HARNESS_DB`, else
+`~/.local/share/harness/harness.db`) and come back on startup as ordinary live
+sessions you can keep talking to — a relaunch, a reboot, or a rebuild no
+longer ends every conversation. Two logs persist, and they are deliberately
+different:
+
+- **the context** — the model's message history, restored verbatim so a
+  resumed session remembers what was said. A reset deletes it, because that is
+  what a reset means.
+- **the transcript** — the event stream a browser renders. Append-only, and
+  kept *across* a reset: the stored `Reset` event makes a replaying tab clear
+  at the same point a live tab did, so the transcript stays a record of the
+  whole session rather than only its current context.
+
+Deleting a session (the `×` in the sidebar) removes both.
+
+The system prompt is not stored. It is composed fresh on restore, so edits to
+`~/.config/harness/system.md` or a project's `AGENTS.md` take effect on the
+next start instead of being frozen into every old session.
+
+Streaming deltas are coalesced before they are written: a turn emits thousands
+of per-token events but stores the handful of blocks they build up to. Live
+viewers still receive every delta — coalescing is the write path, not the
+broadcast — so a tab that reconnects mid-turn still catches up token by token
+from the in-memory replay buffer.
 
 To run it while the MacBook is on, install the launchd agent:
 
@@ -101,7 +128,8 @@ substituted at load; HTML comments are stripped. Appended after it, in order:
 
 Env vars: `KIMI_API_KEY`, `KIMI_MODEL` (default `k3`), `KIMI_BASE_URL`,
 `KIMI_CODE_HOME`, `KIMI_SYSTEM_PROMPT`, `KIMI_CONTEXT_WINDOW` (makes `/context`
-show the last request as a percentage of the window).
+show the last request as a percentage of the window), `HARNESS_DB` (the serve
+session database; `--db` wins over it).
 
 ## Deliberate limitations
 
@@ -115,6 +143,16 @@ show the last request as a percentage of the window).
   does not take that lock. A CLI refresh concurrent with ours can still leave
   one side holding a rotated-away token; that self-heals via reload-from-disk
   on the next 401.
-- Web sessions are ephemeral (in-memory); a server restart ends them all.
+- The REPL is not persisted — only `harness serve` sessions are. A terminal
+  session still ends when you quit.
+- Nothing prunes the session database: it grows until you delete sessions from
+  the UI. And because harness has no `deploy.toml` (it is not a VPS service),
+  `fleet-backup` does not know about that database — back it up yourself if
+  the transcripts matter to you.
+- A crash *mid-turn* loses the rest of that turn. Messages are recorded as the
+  loop appends them, so the work up to the last completed message survives; any
+  tool call the process died before answering is given a synthetic "harness
+  restarted" result on restore, because the API requires every call to be
+  answered and a history with a hole in it would fail every later request.
 - `/model` can only report the served model if the API includes a `model`
   field in chat responses.

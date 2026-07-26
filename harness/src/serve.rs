@@ -14,10 +14,19 @@
 //! input channel the driver reads between turns — so typing while the model
 //! works steers it, exactly like the terminal REPL. Web sessions always run
 //! yolo (commands execute without confirmation).
+//!
+//! Sessions are durable: both logs go to SQLite through [harness::store], and
+//! [restore_sessions] brings them all back at startup as ordinary live
+//! sessions you can keep talking to. The retained in-memory history remains
+//! the *live* replay buffer — it holds every streaming delta, so a tab that
+//! reconnects mid-turn catches up token by token — while the durable log
+//! coalesces those deltas into blocks (see [Emit::persist]).
 
 use clap::Args;
+use fleet_common::util::default_db_path;
 use futures_util::{Stream, StreamExt};
-use harness::agent::{Session, SessionConfig, Steer, TurnIo, cancelled};
+use harness::agent::{MessageSink, Session, SessionConfig, Steer, TurnIo, cancelled};
+use harness::store::{Store, Write, Writer, spawn_writer};
 use harness::util::{home, now_secs, resolve_path, short_args, truncate_chars};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -41,6 +50,19 @@ pub struct ServeArgs {
     /// Port to listen on
     #[arg(long, default_value_t = 8098)]
     pub port: u16,
+    /// Session database. Default: $HARNESS_DB, else
+    /// ~/.local/share/harness/harness.db
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+}
+
+impl ServeArgs {
+    fn db_path(&self) -> PathBuf {
+        self.db
+            .clone()
+            .or_else(|| std::env::var("HARNESS_DB").ok().map(PathBuf::from).filter(|p| p.as_os_str() != ""))
+            .unwrap_or_else(|| default_db_path("harness", "harness.db"))
+    }
 }
 
 const PORT_DEFAULT_NOTE: &str = "8098 sits in the fleet's service port range";
@@ -62,7 +84,10 @@ struct SessionEvent {
     kind: EventKind,
 }
 
-#[derive(Clone, Serialize)]
+/// Serialized as-is into the durable transcript, so it round-trips through
+/// [Deserialize] on restore — the wire format and the stored format are the
+/// same format on purpose, and only `seq` is re-assigned.
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum EventKind {
     /// A user message (turn start, or an ask_user answer).
@@ -92,22 +117,53 @@ enum EventKind {
     Reset,
 }
 
-/// The outbound side of a session: broadcast to live SSE clients plus a
-/// retained history for replay.
+/// A run of same-kind streaming deltas, accumulating until some other event
+/// ends it. See [Emit::persist].
+struct Pending {
+    seq: u64,
+    /// true = reasoning, false = answer content.
+    reasoning: bool,
+    text: String,
+}
+
+/// The outbound side of a session: broadcast to live SSE clients, a retained
+/// in-memory history for replay, and the durable transcript.
 struct Emit {
+    session: String,
     events: broadcast::Sender<SessionEvent>,
     history: Mutex<Vec<SessionEvent>>,
     seq: AtomicU64,
+    writer: Writer,
+    pending: Mutex<Option<Pending>>,
 }
 
 impl Emit {
-    fn new() -> Emit {
+    /// An [Emit] pre-loaded with a restored transcript (empty for a fresh
+    /// session). The events keep their order but get fresh, contiguous seqs:
+    /// seq only ever orders events within one connection's replay-then-resume,
+    /// so it need not — and after coalescing cannot — match what was stored.
+    fn seeded(session: String, writer: Writer, restored: Vec<EventKind>) -> Emit {
         let (events, _) = broadcast::channel(256);
-        Emit { events, history: Mutex::new(Vec::new()), seq: AtomicU64::new(0) }
+        let history: Vec<SessionEvent> = restored
+            .into_iter()
+            .enumerate()
+            .map(|(i, kind)| SessionEvent { seq: i as u64 + 1, kind })
+            .collect();
+        let next = history.len() as u64;
+        Emit {
+            session,
+            events,
+            history: Mutex::new(history),
+            seq: AtomicU64::new(next),
+            writer,
+            pending: Mutex::new(None),
+        }
     }
 
     fn emit(&self, kind: EventKind) {
-        let event = SessionEvent { seq: self.seq.fetch_add(1, Ordering::Relaxed) + 1, kind };
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+        self.persist(seq, &kind);
+        let event = SessionEvent { seq, kind };
         {
             let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
             if history.len() >= EVENT_HISTORY_CAP {
@@ -118,8 +174,85 @@ impl Emit {
         self.events.send(event).ok(); // no live receivers is fine
     }
 
+    /// Queue the event for the durable transcript, merging consecutive
+    /// streaming deltas of the same kind into one record.
+    ///
+    /// A turn emits thousands of per-token deltas but only a handful of
+    /// blocks, and the transcript only needs the blocks — a replaying browser
+    /// appends a whole block exactly as it appends a token. Live viewers are
+    /// unaffected: this is the write path, not the broadcast. Every non-delta
+    /// event closes the open run, and `stream_end` always arrives, so a block
+    /// is never left pending across a turn boundary.
+    fn persist(&self, seq: u64, kind: &EventKind) {
+        let delta = match kind {
+            EventKind::Reasoning { delta } => Some((true, delta)),
+            EventKind::Content { delta } => Some((false, delta)),
+            _ => None,
+        };
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((reasoning, text)) = delta {
+            let merged = match pending.as_mut() {
+                Some(open) if open.reasoning == reasoning => {
+                    open.text.push_str(text);
+                    true
+                }
+                _ => false,
+            };
+            if merged {
+                return;
+            }
+            if let Some(open) = pending.take() {
+                self.write_block(open);
+            }
+            *pending = Some(Pending { seq, reasoning, text: text.clone() });
+            return;
+        }
+        if let Some(open) = pending.take() {
+            self.write_block(open);
+        }
+        self.write(seq, kind);
+    }
+
+    fn write_block(&self, open: Pending) {
+        let kind = if open.reasoning {
+            EventKind::Reasoning { delta: open.text }
+        } else {
+            EventKind::Content { delta: open.text }
+        };
+        self.write(open.seq, &kind);
+    }
+
+    fn write(&self, seq: u64, kind: &EventKind) {
+        match serde_json::to_string(kind) {
+            Ok(body) => {
+                self.writer.send(Write::Event { session: self.session.clone(), seq, body })
+            }
+            Err(e) => harness::log(&format!("[store] could not serialize event: {e}")),
+        }
+    }
+
     fn snapshot(&self) -> Vec<SessionEvent> {
         self.history.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
+
+/// The [MessageSink] that records a session's context to SQLite.
+struct StoreSink {
+    session: String,
+    writer: Writer,
+}
+
+impl MessageSink for StoreSink {
+    fn appended(&self, index: usize, message: &Value) {
+        self.writer.send(Write::Message {
+            session: self.session.clone(),
+            idx: index,
+            body: message.to_string(),
+        });
+    }
+
+    fn cleared(&self) {
+        self.writer.send(Write::ClearMessages { session: self.session.clone() });
     }
 }
 
@@ -142,10 +275,10 @@ struct SessionHandle {
     emit: Arc<Emit>,
 }
 
-#[derive(Default)]
 struct AppState {
     sessions: Mutex<HashMap<String, Arc<SessionHandle>>>,
     next_id: AtomicU64,
+    writer: Writer,
 }
 
 /// The web [TurnIo]: events out on the broadcast channel, mid-turn input
@@ -238,16 +371,32 @@ impl TurnIo for WebIo {
 
 /// One task per session: owns the library Session and feeds it user lines.
 /// Exits when the last input sender is dropped (session deleted).
+///
+/// `restored` is a persisted history to resume from, appended after
+/// [Session::start] composes a fresh system prompt — so a resumed session
+/// keeps its memory but picks up any edits to system.md / AGENTS.md.
 async fn drive_session(
     emit: Arc<Emit>,
     input: mpsc::Receiver<UserMsg>,
     cancel: Arc<AtomicBool>,
     busy: Arc<AtomicBool>,
     config: SessionConfig,
+    restored: Vec<Value>,
+    sink: Arc<dyn MessageSink>,
 ) {
     let mut session = match Session::start(config).await {
         Ok(mut s) => {
             s.cancel = Arc::clone(&cancel);
+            // Restore before attaching the sink: these messages are already
+            // stored, and re-announcing them would rewrite what they came from.
+            if !restored.is_empty() {
+                let count = restored.len();
+                s.restore(restored);
+                emit.emit(EventKind::Note {
+                    text: format!("[resumed with {count} messages of context]"),
+                });
+            }
+            s.sink = Some(sink);
             s
         }
         Err(e) => {
@@ -345,28 +494,53 @@ async fn create_session(
         ));
     }
     let id = format!("s{}", state.next_id.fetch_add(1, Ordering::Relaxed) + 1);
+    start_session(&state, Restore { id: id.clone(), cwd, model: body.model, created_at: now_secs(), messages: Vec::new(), events: Vec::new() });
+    harness::log(&format!("[serve] session {id} created"));
+    Ok(axum::Json(json!({ "id": id })))
+}
+
+/// Everything needed to bring a session up, whether it is brand new (empty
+/// `messages`/`events`) or being resumed from the store.
+struct Restore {
+    id: String,
+    cwd: PathBuf,
+    model: Option<String>,
+    created_at: u64,
+    messages: Vec<Value>,
+    events: Vec<EventKind>,
+}
+
+/// Spawn a session's driver task, record it durably, and register its handle.
+/// Fresh creation and startup restore share this so the two cannot drift.
+fn start_session(state: &AppState, restore: Restore) {
+    let Restore { id, cwd, model, created_at, messages, events } = restore;
     let (input_tx, input_rx) = mpsc::channel(64);
-    let emit = Arc::new(Emit::new());
+    let emit = Arc::new(Emit::seeded(id.clone(), state.writer.clone(), events));
     let cancel = Arc::new(AtomicBool::new(false));
     let busy = Arc::new(AtomicBool::new(false));
     let handle = Arc::new(SessionHandle {
         id: id.clone(),
         cwd: cwd.clone(),
-        created_at: now_secs(),
+        created_at,
         busy: Arc::clone(&busy),
         cancel: Arc::clone(&cancel),
         input: input_tx,
         emit: Arc::clone(&emit),
     });
-    let mut config = SessionConfig::from_env(cwd, true); // web sessions are yolo
-    if let Some(model) = body.model
+    let mut config = SessionConfig::from_env(cwd.clone(), true); // web sessions are yolo
+    if let Some(model) = model
         && !model.trim().is_empty() {
             config.model = model.trim().to_string();
         }
-    tokio::spawn(drive_session(emit, input_rx, cancel, busy, config));
-    state.sessions.lock().unwrap_or_else(|e| e.into_inner()).insert(id.clone(), handle);
-    harness::log(&format!("[serve] session {id} created"));
-    Ok(axum::Json(json!({ "id": id })))
+    state.writer.send(Write::Session {
+        id: id.clone(),
+        cwd: cwd.display().to_string(),
+        model: config.model.clone(),
+        created_at,
+    });
+    let sink = Arc::new(StoreSink { session: id.clone(), writer: state.writer.clone() });
+    tokio::spawn(drive_session(emit, input_rx, cancel, busy, config, messages, sink));
+    state.sessions.lock().unwrap_or_else(|e| e.into_inner()).insert(id, handle);
 }
 
 async fn delete_session(
@@ -381,6 +555,8 @@ async fn delete_session(
     // Interrupt any in-flight turn; dropping the handle closes the input
     // channel, so the driver task exits once the turn unwinds.
     handle.cancel.store(true, Ordering::SeqCst);
+    // Delete means delete: the row goes, and both logs cascade with it.
+    state.writer.send(Write::Delete { session: id.clone() });
     harness::log(&format!("[serve] session {id} deleted"));
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
@@ -518,12 +694,74 @@ async fn resolve_tailscale_ip(timeout: Duration) -> Result<Ipv4Addr, String> {
     }
 }
 
+/// Bring every stored session back as an ordinary live session, and advance
+/// the id counter past the ids already in use.
+///
+/// A session whose working directory has gone away is still restored: the
+/// transcript is worth keeping and the user may want to read or delete it, so
+/// it comes back with a note rather than silently vanishing.
+fn restore_sessions(state: &AppState, store: &Store) -> Result<usize, String> {
+    let stored = store.sessions()?;
+    let mut highest = 0u64;
+    for row in &stored {
+        if let Some(n) = row.id.strip_prefix('s').and_then(|n| n.parse::<u64>().ok()) {
+            highest = highest.max(n);
+        }
+        let mut events: Vec<EventKind> = store
+            .events(&row.id)?
+            .iter()
+            .filter_map(|body| match serde_json::from_str(body) {
+                Ok(kind) => Some(kind),
+                Err(e) => {
+                    harness::log(&format!("[store] dropping unreadable event in {}: {e}", row.id));
+                    None
+                }
+            })
+            .collect();
+        let cwd = PathBuf::from(&row.cwd);
+        if !cwd.is_dir() {
+            events.push(EventKind::Note {
+                text: format!("[working directory {} no longer exists]", row.cwd),
+            });
+        }
+        start_session(
+            state,
+            Restore {
+                id: row.id.clone(),
+                cwd,
+                model: Some(row.model.clone()),
+                created_at: row.created_at,
+                messages: store.messages(&row.id)?,
+                events,
+            },
+        );
+    }
+    // Fresh ids continue past every restored one, so a new session can never
+    // collide with (and overwrite) a resumed one.
+    state.next_id.store(highest, Ordering::Relaxed);
+    Ok(stored.len())
+}
+
 pub async fn serve(args: ServeArgs) -> Result<(), String> {
     let ip = match args.bind {
         Some(ip) => ip,
         None => IpAddr::V4(resolve_tailscale_ip(Duration::from_secs(60)).await?),
     };
-    let state = Arc::new(AppState::default());
+    let db_path = args.db_path();
+    let store = Arc::new(Store::open(&db_path)?);
+    harness::log(&format!("[serve] sessions at {}", db_path.display()));
+    let state = Arc::new(AppState {
+        sessions: Mutex::new(HashMap::new()),
+        next_id: AtomicU64::new(0),
+        writer: spawn_writer(Arc::clone(&store)),
+    });
+    match restore_sessions(&state, &store) {
+        Ok(0) => {}
+        Ok(n) => harness::log(&format!("[serve] resumed {n} session(s)")),
+        // A restore failure must not cost the user a working server; they can
+        // still start fresh sessions, and the stored ones are untouched.
+        Err(e) => harness::log(&format!("[serve] could not restore sessions: {e}")),
+    }
     let app = axum::Router::new()
         .route("/", axum::routing::get(index))
         .route("/api/healthz", axum::routing::get(healthz))

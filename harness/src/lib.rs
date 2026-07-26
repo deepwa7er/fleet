@@ -7,13 +7,16 @@
 //!
 //! A frontend implements [agent::TurnIo] (output events in, mid-turn user
 //! input out); the loop ([agent::Session::run_turn]) drives the model,
-//! executes tool calls, and reports everything through that trait. Async on
+//! executes tool calls, and reports everything through that trait. A frontend
+//! that wants its conversations to outlive the process also supplies an
+//! [agent::MessageSink] — `harness serve` backs one with [store]. Async on
 //! tokio + reqwest: SSE streaming, cancellation, and mid-turn interjections
 //! are all `select!` branches. No compaction, no sandbox — see README.md.
 
 pub mod agent;
 pub mod auth;
 pub mod prompt;
+pub mod store;
 pub mod tools;
 pub mod usage;
 pub mod util;

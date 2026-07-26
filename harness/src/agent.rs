@@ -94,6 +94,23 @@ pub trait TurnIo: Send {
     }
 }
 
+/// Where a session's message history is durably recorded.
+///
+/// The loop appends; whether that goes anywhere is the frontend's business —
+/// the terminal REPL records nothing, `harness serve` records to SQLite. Only
+/// the *history* travels this way; the streamed transcript a UI renders is a
+/// [TurnIo] concern, and the two are stored separately for that reason.
+///
+/// The system prompt at index 0 is never announced: [Session::start] composes
+/// it before a sink can be attached, so a restored session gets a freshly
+/// composed prompt rather than a frozen copy.
+pub trait MessageSink: Send + Sync {
+    /// `message` was appended to the history at `index`.
+    fn appended(&self, index: usize, message: &Value);
+    /// The history was cleared back to the system prompt alone.
+    fn cleared(&self);
+}
+
 /// Everything needed to start a session. See [Session::start].
 pub struct SessionConfig {
     pub model: String,
@@ -139,6 +156,8 @@ pub struct Session {
     pub cancel: Arc<AtomicBool>,
     pub messages: Vec<Value>,
     pub stats: SessionStats,
+    /// Durable record of [Session::messages], if the frontend keeps one.
+    pub sink: Option<Arc<dyn MessageSink>>,
 }
 
 impl Session {
@@ -157,16 +176,39 @@ impl Session {
             cancel: Arc::new(AtomicBool::new(false)),
             messages: vec![json!({ "role": "system", "content": system })],
             stats: SessionStats::default(),
+            sink: None,
         })
+    }
+
+    /// Re-append a persisted history on top of the freshly composed system
+    /// prompt. Not reported to the sink — these messages came *from* it.
+    /// Call before attaching the sink, so the ordering can't be misread.
+    ///
+    /// The history is repaired on the way in (see [answer_orphaned_tool_calls])
+    /// so a session cut short mid-turn resumes cleanly.
+    pub fn restore(&mut self, messages: Vec<Value>) {
+        self.messages.extend(answer_orphaned_tool_calls(messages));
     }
 
     /// Clear the conversation history (the system prompt stays).
     pub fn reset(&mut self) {
         self.messages.truncate(1);
+        if let Some(sink) = &self.sink {
+            sink.cleared();
+        }
     }
 
     pub fn push_user(&mut self, text: &str) {
-        self.messages.push(json!({ "role": "user", "content": text }));
+        self.push(json!({ "role": "user", "content": text }));
+    }
+
+    /// The one place the history grows, so the sink can never drift from it.
+    fn push(&mut self, message: Value) {
+        self.messages.push(message);
+        if let Some(sink) = &self.sink {
+            let index = self.messages.len() - 1;
+            sink.appended(index, &self.messages[index]);
+        }
     }
 
     fn tool_ctx(&self) -> ToolCtx {
@@ -210,7 +252,7 @@ impl Session {
                 }
                 ChatOutcome::Fatal(e) => return Some(e),
             };
-            self.messages.push(msg.clone());
+            self.push(msg.clone());
             if let Some(tcs) = msg["tool_calls"].as_array()
                 && !tcs.is_empty() {
                     let mut guidance: Option<String> = None;
@@ -234,7 +276,7 @@ impl Session {
                             io.tool_result(name, &result);
                             result
                         };
-                        self.messages.push(json!({
+                        self.push(json!({
                             "role": "tool",
                             "tool_call_id": tc["id"],
                             "content": result,
@@ -262,6 +304,52 @@ impl Session {
         chat_stream(&self.client, &self.messages, &mut self.auth, &self.base_url, &self.model, io)
             .await
     }
+}
+
+/// Give every `tool_calls` entry a matching `role: "tool"` message, inventing
+/// results for any left unanswered.
+///
+/// A persisted history can stop anywhere — the process is killed between the
+/// assistant's tool-call message and the results it was about to append. The
+/// API requires the pairing to be complete, so a history restored with a hole
+/// in it would fail *every* subsequent request, permanently. Filling the hole
+/// costs one synthetic result and matches what the loop already does when a
+/// turn is interrupted: answer every call so the history stays valid.
+fn answer_orphaned_tool_calls(messages: Vec<Value>) -> Vec<Value> {
+    /// Emit results for calls still owed, immediately after the tool run they
+    /// belong to.
+    fn settle(out: &mut Vec<Value>, owed: &mut Vec<String>) {
+        for id in owed.drain(..) {
+            out.push(json!({
+                "role": "tool",
+                "tool_call_id": id,
+                "content": "error: harness restarted before this tool call ran",
+            }));
+        }
+    }
+
+    let mut out: Vec<Value> = Vec::with_capacity(messages.len());
+    let mut owed: Vec<String> = Vec::new();
+    for message in messages {
+        let is_tool = message["role"] == "tool";
+        // The tool run for the previous assistant message is over.
+        if !is_tool {
+            settle(&mut out, &mut owed);
+        }
+        if is_tool && let Some(id) = message["tool_call_id"].as_str() {
+            owed.retain(|owed_id| owed_id != id);
+        }
+        if message["role"] == "assistant"
+            && let Some(calls) = message["tool_calls"].as_array() {
+                owed = calls
+                    .iter()
+                    .filter_map(|call| call["id"].as_str().map(str::to_string))
+                    .collect();
+            }
+        out.push(message);
+    }
+    settle(&mut out, &mut owed);
+    out
 }
 
 /// Resolves once `flag` is set. All cancellable waits select on this rather
@@ -665,6 +753,70 @@ mod tests {
         let (msg, served_model) = state.finish(&mut io).unwrap();
         assert_eq!(msg["content"], "hi");
         assert_eq!(served_model.as_deref(), Some("kimi-for-coding"));
+    }
+
+    /// Helpers mirroring the two message shapes the repair cares about.
+    fn calls(ids: &[&str]) -> Value {
+        json!({
+            "role": "assistant",
+            "content": Value::Null,
+            "tool_calls": ids.iter().map(|id| json!({
+                "id": id, "type": "function",
+                "function": { "name": "read_file", "arguments": "{}" }
+            })).collect::<Vec<_>>(),
+        })
+    }
+    fn answer(id: &str) -> Value {
+        json!({ "role": "tool", "tool_call_id": id, "content": "ok" })
+    }
+
+    #[test]
+    fn a_history_cut_off_mid_tool_run_is_repaired() {
+        // Killed after the assistant asked for two tools and only one answered.
+        let repaired = answer_orphaned_tool_calls(vec![
+            json!({ "role": "user", "content": "go" }),
+            calls(&["a", "b"]),
+            answer("a"),
+        ]);
+        assert_eq!(repaired.len(), 4);
+        assert_eq!(repaired[3]["role"], "tool");
+        assert_eq!(repaired[3]["tool_call_id"], "b");
+        assert!(repaired[3]["content"].as_str().unwrap().contains("restarted"));
+    }
+
+    #[test]
+    fn a_history_cut_off_before_any_result_is_repaired() {
+        let repaired = answer_orphaned_tool_calls(vec![json!({"role":"user"}), calls(&["a"])]);
+        assert_eq!(repaired.len(), 3);
+        assert_eq!(repaired[2]["tool_call_id"], "a");
+    }
+
+    #[test]
+    fn a_complete_history_is_left_alone() {
+        let original = vec![
+            json!({ "role": "user", "content": "go" }),
+            calls(&["a", "b"]),
+            answer("a"),
+            answer("b"),
+            json!({ "role": "assistant", "content": "done" }),
+        ];
+        assert_eq!(answer_orphaned_tool_calls(original.clone()), original);
+    }
+
+    /// The gap can also be interior — an older turn that was interrupted, with
+    /// ordinary turns after it. Results must land in their own turn, not at the
+    /// end of the history.
+    #[test]
+    fn an_interior_gap_is_filled_in_place() {
+        let repaired = answer_orphaned_tool_calls(vec![
+            calls(&["a"]),
+            json!({ "role": "user", "content": "never mind, do this instead" }),
+            json!({ "role": "assistant", "content": "sure" }),
+        ]);
+        assert_eq!(repaired.len(), 4);
+        assert_eq!(repaired[1]["role"], "tool", "the result belongs right after its call");
+        assert_eq!(repaired[1]["tool_call_id"], "a");
+        assert_eq!(repaired[2]["role"], "user");
     }
 
     #[test]

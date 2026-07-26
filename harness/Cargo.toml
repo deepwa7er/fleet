@@ -6,6 +6,11 @@ description = "Minimal Kimi coding-agent harness — terminal REPL and a tailnet
 
 [dependencies]
 clap = { workspace = true, features = ["derive"] }
+# Session persistence (`harness serve`): the fleet's SQLite open+migrate
+# helper, so harness gets the FK-off migration bracket and the append-only
+# migration fingerprinting rather than its own copy of both.
+fleet-common = { path = "../crates/fleet-common" }
+rusqlite = { workspace = true, features = ["bundled"] }
 futures-util = "0.3"
 # rustls (not native-tls): matches the fleet's TLS choice; the static-musl
 # cross-build stays possible if harness ever needs to ship to a Linux host.
