@@ -1,23 +1,53 @@
 //! Credentials: a KIMI_API_KEY env var, or reuse of the Kimi Code CLI's OAuth
 //! login from ~/.kimi-code/credentials/kimi-code.json with self-serve refresh.
 //!
-//! Access tokens live ~15 minutes. On expiry (and once on any mid-session 401)
-//! the refresh token is POSTed to the OAuth endpoint and the rotated pair is
+//! Access tokens live ~15 minutes. On expiry (and on any mid-session 401) the
+//! refresh token is POSTed to the OAuth endpoint and the rotated pair is
 //! written back to the shared credentials file atomically (tmp → fsync →
-//! rename, 0600), so the CLI keeps using it too. The file is shared without
-//! locking; concurrent refreshes (CLI, REPL, web sessions) self-heal through
-//! [OAuthCred::reload_if_changed] on the next 401.
+//! rename, 0600), so the CLI keeps using it too.
+//!
+//! The whole read → refresh → write cycle runs under an advisory lock on a
+//! sibling `.lock` file ([CredLock]), because the server *rotates* the refresh
+//! token: two harness processes racing would have the loser POST a token the
+//! winner already spent, and their saves could interleave into a spliced
+//! credentials file that breaks the CLI login too. Under the lock the file is
+//! re-read first, so a process that waited adopts the winner's result instead
+//! of duplicating — or invalidating — it.
 
 use crate::util::{now_secs, truncate_chars};
 use serde_json::{Value, json};
+use std::ffi::OsStr;
 use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 const OAUTH_CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const OAUTH_DEFAULT_HOST: &str = "https://auth.kimi.com";
 
 const RELOGIN_HINT: &str = "Run `kimi` to log in again, or set KIMI_API_KEY.";
+
+/// How long to wait for the credentials lock before giving up. A healthy
+/// holder releases within its OAuth request timeout (30s) and a crashed one
+/// releases immediately (the kernel drops flock when the fd closes), so
+/// exceeding this means a process is wedged while holding it — better to fail
+/// with that diagnosis than to hang a turn forever.
+const LOCK_TIMEOUT: Duration = Duration::from_secs(60);
+const LOCK_POLL: Duration = Duration::from_millis(100);
+
+/// Why we are refreshing — it decides whether an unchanged, unexpired token
+/// already on disk is an acceptable outcome.
+#[derive(Clone, Copy, PartialEq)]
+enum RefreshReason {
+    /// The access token is at or near expiry. Any usable token will do.
+    Expiring,
+    /// The server rejected the current access token (401). Adopting the same
+    /// token back off disk would just fail again — only a *different* token,
+    /// or a fresh network refresh, resolves it.
+    Rejected,
+}
 
 pub enum Auth {
     ApiKey(String),
@@ -49,7 +79,10 @@ impl Auth {
             if let Some(mut oauth) = OAuthCred::from_file(&cred) {
                 if oauth.expiring() {
                     crate::log("[auth] access token expired — refreshing via refresh_token");
-                    oauth.refresh(client).await.map_err(|e| format!("{e}\n{RELOGIN_HINT}"))?;
+                    oauth
+                        .refresh(client, RefreshReason::Expiring)
+                        .await
+                        .map_err(|e| format!("{e}\n{RELOGIN_HINT}"))?;
                 }
                 return Ok(Auth::OAuth(oauth));
             }
@@ -68,25 +101,24 @@ impl Auth {
             Auth::OAuth(cred) => {
                 if cred.expiring() {
                     crate::log("[auth] token near expiry — refreshing");
-                    cred.refresh(client).await.map_err(|e| format!("{e}\n{RELOGIN_HINT}"))?;
+                    cred.refresh(client, RefreshReason::Expiring)
+                        .await
+                        .map_err(|e| format!("{e}\n{RELOGIN_HINT}"))?;
                 }
                 Ok(cred.access_token.clone())
             }
         }
     }
 
-    /// Second chance after a 401: maybe the CLI refreshed the file on disk,
-    /// otherwise refresh ourselves. Returns true if a retry is worthwhile.
+    /// Second chance after a 401: maybe another process refreshed the file on
+    /// disk, otherwise refresh ourselves. [OAuthCred::refresh] picks between
+    /// those under the lock. Returns true if a retry is worthwhile.
     pub async fn handle_401(&mut self, client: &reqwest::Client) -> bool {
         match self {
             Auth::ApiKey(_) => false,
             Auth::OAuth(cred) => {
-                if cred.reload_if_changed() {
-                    crate::log("[auth] 401 — picked up newer credentials from disk");
-                    return true;
-                }
-                crate::log("[auth] 401 — attempting token refresh");
-                cred.refresh(client).await.is_ok()
+                crate::log("[auth] 401 — reloading or refreshing credentials");
+                cred.refresh(client, RefreshReason::Rejected).await.is_ok()
             }
         }
     }
@@ -109,19 +141,43 @@ impl OAuthCred {
         self.expires_at <= now_secs() as f64 + 60.0
     }
 
-    fn reload_if_changed(&mut self) -> bool {
-        if let Some(fresh) = Self::from_file(&self.path)
-            && fresh.access_token != self.access_token && !fresh.expiring() {
-                *self = fresh;
-                return true;
+    /// Bring the credentials up to date, holding the shared lock across the
+    /// whole read → refresh → write cycle.
+    ///
+    /// The re-read under the lock is the point: whoever held it before us may
+    /// have rotated the pair, which both makes our in-memory refresh token
+    /// spent and makes their new access token good enough to reuse. So we
+    /// adopt the file first and only POST when that leaves us short — which
+    /// also collapses a burst of concurrent expiries into one network refresh.
+    async fn refresh(
+        &mut self,
+        client: &reqwest::Client,
+        reason: RefreshReason,
+    ) -> Result<(), String> {
+        // Must outlive the save() below — a plain `_` would drop it here.
+        let _lock = CredLock::acquire(&self.path).await?;
+        if let Some(fresh) = Self::from_file(&self.path) {
+            // Disk is authoritative: our in-memory copy only ever diverges
+            // from it by a save() we already completed, or one that failed
+            // and propagated its error.
+            let changed = fresh.access_token != self.access_token;
+            *self = fresh;
+            if disk_is_enough(reason, self.expiring(), changed) {
+                if changed {
+                    crate::log("[auth] adopted credentials refreshed by another process");
+                }
+                return Ok(());
             }
-        false
+        }
+        self.refresh_locked(client).await
     }
 
     /// Standard OAuth refresh against the Kimi auth server. The server rotates
     /// the refresh token, so the new pair is persisted back to the shared
     /// credentials file (atomically) for the CLI to pick up as well.
-    async fn refresh(&mut self, client: &reqwest::Client) -> Result<(), String> {
+    ///
+    /// Caller must hold the [CredLock]; [OAuthCred::refresh] is the entry point.
+    async fn refresh_locked(&mut self, client: &reqwest::Client) -> Result<(), String> {
         let rt = self
             .refresh_token
             .clone()
@@ -172,8 +228,14 @@ impl OAuthCred {
     }
 
     /// Write the updated credentials back: tmp file (0600) → fsync → rename.
+    ///
+    /// The tmp name carries our pid. Callers hold the [CredLock], which
+    /// serializes harness against harness, but the Kimi CLI takes no such lock
+    /// — a shared tmp path would let its save and ours truncate and write the
+    /// same file concurrently, renaming a spliced result into place. A
+    /// per-process name keeps the worst case at "last rename wins", which
+    /// leaves a valid file either way.
     fn save(&mut self) -> Result<(), String> {
-        use std::os::unix::fs::OpenOptionsExt;
         self.raw["access_token"] = json!(self.access_token);
         if let Some(rt) = &self.refresh_token {
             self.raw["refresh_token"] = json!(rt);
@@ -182,14 +244,9 @@ impl OAuthCred {
         if let Some(ei) = self.expires_in {
             self.raw["expires_in"] = json!(ei);
         }
-        let name = self
-            .path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "kimi-code.json".to_string());
-        let tmp = self.path.with_file_name(format!("{name}.tmp"));
+        let tmp = sibling(&self.path, &format!(".{}.tmp", std::process::id()));
         let body = serde_json::to_string(&self.raw).map_err(|e| e.to_string())?;
-        (|| -> std::io::Result<()> {
+        let written = (|| -> std::io::Result<()> {
             let mut f = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -199,7 +256,204 @@ impl OAuthCred {
             f.write_all(body.as_bytes())?;
             f.sync_all()?;
             std::fs::rename(&tmp, &self.path)
-        })()
-        .map_err(|e| format!("could not save {}: {e}", self.path.display()))
+        })();
+        if written.is_err() {
+            std::fs::remove_file(&tmp).ok(); // don't leave a half-written token behind
+        }
+        written.map_err(|e| format!("could not save {}: {e}", self.path.display()))
+    }
+}
+
+/// Whether credentials just re-read from disk settle the matter, or we still
+/// owe a network refresh. `changed` is whether the file's access token differs
+/// from the one we arrived with.
+fn disk_is_enough(reason: RefreshReason, expiring: bool, changed: bool) -> bool {
+    match reason {
+        // Any unexpired token will do, including our own unchanged one.
+        RefreshReason::Expiring => !expiring,
+        // The server rejected the token we came in with, so reading that same
+        // token back is no help — only a different one is.
+        RefreshReason::Rejected => !expiring && changed,
+    }
+}
+
+/// A path next to `path` with `suffix` appended to its file name.
+fn sibling(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_else(|| OsStr::new("kimi-code.json")).to_os_string();
+    name.push(suffix);
+    path.with_file_name(name)
+}
+
+/// An advisory `flock` serializing credential refreshes between processes,
+/// released by the kernel when the fd closes — including on a crash, so it
+/// cannot go stale.
+///
+/// The lock lives in a sibling `.lock` file rather than the credentials file
+/// itself: [OAuthCred::save] replaces that path via rename, so a lock taken on
+/// it would guard an inode the next process never opens. A dedicated path is
+/// stable for the lock's whole lifetime.
+///
+/// This serializes harness against harness — the Kimi CLI does not participate.
+/// What protects that case is narrower: the per-process tmp name in [save], and
+/// the re-read under the lock that keeps us from POSTing a rotated-away token.
+#[derive(Debug)]
+struct CredLock {
+    /// Held open for the lock's lifetime — the kernel releases the flock when
+    /// this file closes, so the guard's only job is to stay alive.
+    _file: std::fs::File,
+}
+
+impl CredLock {
+    /// Acquire the lock guarding `cred_path`, waiting up to [LOCK_TIMEOUT].
+    async fn acquire(cred_path: &Path) -> Result<CredLock, String> {
+        let path = sibling(cred_path, ".lock");
+        tokio::task::spawn_blocking(move || lock_blocking(&path, LOCK_TIMEOUT))
+            .await
+            .map_err(|e| format!("credential lock task failed: {e}"))?
+    }
+}
+
+/// Blocking half of [CredLock::acquire]: poll `LOCK_EX | LOCK_NB` until the
+/// lock is ours or `timeout` elapses. Non-blocking + poll rather than a
+/// blocking `LOCK_EX` so a wedged holder surfaces as an error instead of
+/// hanging the turn that needed a token.
+fn lock_blocking(path: &Path, timeout: Duration) -> Result<CredLock, String> {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| format!("could not open credential lock {}: {e}", path.display()))?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        // Safe: `file` owns the fd for the duration of the call, and flock on a
+        // valid fd has no preconditions beyond that.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(CredLock { _file: file });
+        }
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() != Some(libc::EWOULDBLOCK) {
+            return Err(format!("could not lock {}: {err}", path.display()));
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out after {}s waiting for the credential lock {} — \
+                 another process may be stuck holding it",
+                timeout.as_secs_f32().round(),
+                path.display()
+            ));
+        }
+        thread::sleep(LOCK_POLL);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh scratch directory, unique per test and per process.
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("harness-auth-{}-{tag}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_cred(path: &Path, access: &str, refresh: &str, expires_at: u64) {
+        let body = json!({
+            "access_token": access,
+            "refresh_token": refresh,
+            "expires_at": expires_at,
+            "custom_cli_field": "keep me",
+        });
+        std::fs::write(path, serde_json::to_string(&body).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn lock_excludes_a_second_holder_and_frees_on_drop() {
+        let dir = scratch("lock");
+        let cred = dir.join("kimi-code.json");
+        // flock is per open-file-description, so a second open() in this same
+        // process contends exactly like another process would.
+        let held = lock_blocking(&cred, Duration::from_millis(50)).unwrap();
+        let err = lock_blocking(&cred, Duration::from_millis(50)).unwrap_err();
+        assert!(err.contains("timed out"), "{err}");
+        drop(held);
+        lock_blocking(&cred, Duration::from_millis(50)).expect("free once released");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_is_atomic_preserves_unknown_fields_and_leaves_no_tmp() {
+        let dir = scratch("save");
+        let cred = dir.join("kimi-code.json");
+        write_cred(&cred, "old-access", "old-refresh", 1);
+        let mut c = OAuthCred::from_file(&cred).unwrap();
+        c.access_token = "new-access".into();
+        c.refresh_token = Some("new-refresh".into());
+        c.save().unwrap();
+
+        let back: Value = serde_json::from_str(&std::fs::read_to_string(&cred).unwrap()).unwrap();
+        assert_eq!(back["access_token"], "new-access");
+        assert_eq!(back["refresh_token"], "new-refresh");
+        // Fields harness doesn't model belong to the CLI; they must survive.
+        assert_eq!(back["custom_cli_field"], "keep me");
+
+        let litter: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(litter.is_empty(), "left tmp files behind: {litter:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tmp_path_is_process_unique() {
+        let tmp = sibling(Path::new("/creds/kimi-code.json"), &format!(".{}.tmp", 4321));
+        assert_eq!(tmp, PathBuf::from("/creds/kimi-code.json.4321.tmp"));
+        assert_eq!(
+            sibling(Path::new("/creds/kimi-code.json"), ".lock"),
+            PathBuf::from("/creds/kimi-code.json.lock")
+        );
+    }
+
+    /// The race this whole change exists to close: our token expired, but
+    /// another process refreshed while we waited for the lock. We must adopt
+    /// its result — POSTing our own (now rotated away) refresh token would
+    /// spend a dead credential. Reaching the network here fails the test,
+    /// which is the assertion: adoption happens before any request.
+    #[tokio::test]
+    async fn refresh_adopts_what_another_process_already_wrote() {
+        let dir = scratch("adopt");
+        let cred = dir.join("kimi-code.json");
+        write_cred(&cred, "expired-access", "spent-refresh", 1);
+        let mut c = OAuthCred::from_file(&cred).unwrap();
+        assert!(c.expiring());
+
+        // Another process wins the lock and rotates the pair.
+        write_cred(&cred, "winner-access", "winner-refresh", now_secs() + 3600);
+
+        c.refresh(&reqwest::Client::new(), RefreshReason::Expiring).await.unwrap();
+        assert_eq!(c.access_token, "winner-access");
+        assert_eq!(c.refresh_token.as_deref(), Some("winner-refresh"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn disk_is_enough_distinguishes_expiry_from_rejection() {
+        use RefreshReason::{Expiring, Rejected};
+        // Expiring: any unexpired token settles it, even our own unchanged one
+        // (another process may have simply written the same token back).
+        assert!(disk_is_enough(Expiring, false, false));
+        assert!(disk_is_enough(Expiring, false, true));
+        assert!(!disk_is_enough(Expiring, true, true));
+        // Rejected: reading back the very token the server refused would just
+        // repeat the failed request — only a different, unexpired one helps.
+        assert!(!disk_is_enough(Rejected, false, false));
+        assert!(disk_is_enough(Rejected, false, true));
+        assert!(!disk_is_enough(Rejected, true, true));
     }
 }

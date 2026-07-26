@@ -84,6 +84,13 @@ itself is dead, run `kimi` once to re-login. Under launchd there is no shell
 environment, so in practice serve mode always uses the OAuth path — the CLI
 login must be present.
 
+Because the server *rotates* the refresh token on every use, the whole read →
+refresh → write cycle runs under an advisory `flock` on a sibling
+`kimi-code.json.lock`. A process that waits for the lock re-reads the file
+first, so it adopts the winner's new pair instead of POSTing a refresh token
+the winner already spent — which also collapses a burst of concurrent
+expiries (several web sessions at once) into a single network refresh.
+
 ## System prompt
 
 The base system prompt lives in `~/.config/harness/system.md` — created with
@@ -103,9 +110,11 @@ show the last request as a percentage of the window).
 - No sandbox or permission system: yolo mode is the default everywhere and
   the only mode in the web UI. The model can run anything you can, in whatever
   directory the session points at. The tailnet is the only boundary.
-- The credentials file is shared without locking; concurrent refreshes (CLI,
-  REPL, web sessions) can make one writer's token stale, which self-heals via
-  reload-from-disk on the next 401.
+- Credential refreshes are serialized between harness processes (REPL and web
+  sessions) by an advisory lock on `kimi-code.json.lock`, but the Kimi Code CLI
+  does not take that lock. A CLI refresh concurrent with ours can still leave
+  one side holding a rotated-away token; that self-heals via reload-from-disk
+  on the next 401.
 - Web sessions are ephemeral (in-memory); a server restart ends them all.
 - `/model` can only report the served model if the API includes a `model`
   field in chat responses.
