@@ -1,2 +1,6 @@
 /target
 node_modules/
+
+# JetBrains project files — per-developer IDE state, created anywhere in the
+# tree (the workspace root or any service dir), never part of the build.
+.idea/
