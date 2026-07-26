@@ -81,6 +81,42 @@ bootstraps `net.deepwa7er.harness` (RunAtLoad + KeepAlive, logs to
 need `rg`. There is no `deploy.toml`: harness is not a VPS service, so tugboat
 rightly doesn't discover it.
 
+### Context compaction
+
+Long sessions no longer just grow. When a *measured* prompt passes 75% of the
+context window, the loop replaces the older messages with a model-written
+summary and keeps the newest ones verbatim — so a session can run past the
+window instead of walking into a context-length error with no recovery.
+
+```
+[compacting: last prompt was 4011 tokens, over 75% of the 4000 window]
+[compacted 7 older messages into a summary; kept the newest 2]
+```
+
+The window comes from `KIMI_CONTEXT_WINDOW`, else a conservative default. The
+retained tail is sized to ~30% of the window, so a compaction buys back real
+room rather than triggering again on the next turn.
+
+Three things make it safe rather than merely clever:
+
+- **It never cuts inside a tool run.** A retained tail may not begin with a
+  tool result whose call is in the dropped prefix — the API requires the pair,
+  and a history that violates it fails every later request.
+- **It only runs at the top of the loop**, the one point where every tool call
+  issued so far has its result appended.
+- **Failure changes nothing.** If the summary request errors or comes back
+  empty, the history is left untouched and a note says so. Running out of
+  context is bad; silently destroying the conversation because a network call
+  failed is worse.
+
+The summary request is sent without tools (offering them invites a tool call
+where prose was asked for) and its streamed output never reaches the
+transcript, though Ctrl-C / Stop still aborts it. A line typed during
+compaction stays queued and lands as an ordinary interjection afterwards.
+
+`/compact` in the REPL forces one immediately — the same path, so it is also
+how you see what the summaries actually look like.
+
 ## The REPL
 
 ```sh
@@ -92,8 +128,9 @@ cargo build -p harness
 ```
 
 Multi-turn chat with history (rustyline). `/help` lists the commands: `exit` /
-`/quit` / Ctrl-D quits, `/reset` clears history, `/context` shows the context
-footprint, `/model` shows requested vs API-reported model, `/system` prints
+`/quit` / Ctrl-D quits, `/reset` clears history, `/compact` summarizes older
+messages now, `/context` shows the context footprint (and where it sits
+against the window), `/model` shows requested vs API-reported model, `/system` prints
 the system prompt, `/usage` shows subscription quota, `/yolo` toggles command
 auto-approval live. Ctrl-C at the prompt quits; Ctrl-C mid-turn aborts the
 current turn; a second Ctrl-C force-quits. You can **steer the model
@@ -127,14 +164,19 @@ substituted at load; HTML comments are stripped. Appended after it, in order:
 `--system-file`, `--system`.
 
 Env vars: `KIMI_API_KEY`, `KIMI_MODEL` (default `k3`), `KIMI_BASE_URL`,
-`KIMI_CODE_HOME`, `KIMI_SYSTEM_PROMPT`, `KIMI_CONTEXT_WINDOW` (makes `/context`
-show the last request as a percentage of the window), `HARNESS_DB` (the serve
-session database; `--db` wins over it).
+`KIMI_CODE_HOME`, `KIMI_SYSTEM_PROMPT`, `KIMI_CONTEXT_WINDOW` (the window
+compaction triggers against and `/context` reports on; default 128,000),
+`HARNESS_DB` (the serve session database; `--db` wins over it).
 
 ## Deliberate limitations
 
-- No context compaction — long sessions just grow; watch `/context` in the
-  REPL and `/reset` (or Reset in the web UI) when it gets slow or expensive.
+- The context window is an *assumption*, not something the API reports:
+  `KIMI_CONTEXT_WINDOW` if set, else a conservative 128,000. Compaction errs
+  toward firing early, so a wrong guess costs an extra summary rather than a
+  failed request — but set it to the model's real window if you know it.
+- The summarizer sees tool results clipped to 500 chars each. It is told so
+  (and told the tool succeeded), but a summary can still be thinner than the
+  transcript it replaces.
 - No sandbox or permission system: yolo mode is the default everywhere and
   the only mode in the web UI. The model can run anything you can, in whatever
   directory the session points at. The tailnet is the only boundary.

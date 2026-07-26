@@ -10,7 +10,7 @@
 use clap::Args;
 use harness::agent::{Session, SessionConfig, Steer, TurnIo, cancelled};
 use harness::usage;
-use harness::util::fmt_num;
+use harness::util::{est_tokens, fmt_num, message_chars};
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 use std::collections::BTreeMap;
@@ -51,6 +51,7 @@ pub struct ReplArgs {
 /// REPL commands, printed by /help. Keep in sync with the dispatch in run().
 const COMMANDS: &[(&str, &str)] = &[
     ("/help", "list available commands"),
+    ("/compact", "summarize older messages now (happens automatically near the window)"),
     ("/context", "show context size and session token usage"),
     ("/model", "show requested and API-reported model"),
     ("/reset", "clear conversation history"),
@@ -304,15 +305,11 @@ async fn next_input(stdin: &mut StdinInput) -> Option<String> {
 /// Rough local token estimate from character count (~4 chars/token for
 /// English/code). The API's own prompt_tokens (shown as "last request") is
 /// the exact figure; this estimate exists to size individual messages.
-fn est_tokens(chars: usize) -> u64 {
-    (chars / 4) as u64
-}
-
 /// The /context command: what's currently in the conversation and how big it
-/// is, so you can decide when to /reset. Per-message sizes are local
-/// estimates; the per-request and session totals come from the API's usage
-/// reports and are exact. If KIMI_CONTEXT_WINDOW is set, the last request is
-/// also shown as a percentage of the window.
+/// is. Per-message sizes are local estimates; the per-request and session
+/// totals come from the API's usage reports and are exact. The last request is
+/// also shown against the session's context window — the same number
+/// compaction triggers on.
 fn show_context(session: &Session) {
     let messages = &session.messages;
     let stats = &session.stats;
@@ -322,11 +319,7 @@ fn show_context(session: &Session) {
     for (i, m) in messages.iter().enumerate() {
         let role = m["role"].as_str().unwrap_or("?");
         *by_role.entry(role).or_default() += 1;
-        let chars = m["content"].as_str().map_or(0, |c| c.chars().count())
-            + m["reasoning_content"].as_str().map_or(0, |c| c.chars().count())
-            + m["tool_calls"].as_array().map_or(0, |t| {
-                t.iter().map(|tc| tc.to_string().chars().count()).sum()
-            });
+        let chars = message_chars(m);
         total_chars += chars;
         sizes.push((i, role, est_tokens(chars)));
     }
@@ -342,17 +335,9 @@ fn show_context(session: &Session) {
                 fmt_num(t.prompt),
                 fmt_num(t.completion)
             );
-            let window = std::env::var("KIMI_CONTEXT_WINDOW")
-                .ok()
-                .and_then(|s| s.parse::<u64>().ok())
-                .filter(|w| *w > 0);
-            if let Some(window) = window {
-                let pct = t.prompt as f64 / window as f64 * 100.0;
-                print!(" — {pct:.0}% of the {} window", fmt_num(window));
-                if pct >= 80.0 {
-                    print!(" — nearing the limit, consider /reset");
-                }
-            }
+            let window = session.context_window;
+            let pct = t.prompt as f64 / window as f64 * 100.0;
+            print!(" — {pct:.0}% of the {} window", fmt_num(window));
             println!();
         }
         None => println!("  last request   no API round trip yet this session"),
@@ -530,6 +515,15 @@ pub async fn run(args: ReplArgs) {
                 }
                 if line == "/context" {
                     show_context(&session);
+                    continue;
+                }
+                if line == "/compact" {
+                    // Same path the loop takes automatically near the window;
+                    // doing it on demand is how you can see what it produced.
+                    match session.compact(&mut io).await {
+                        Ok(report) => harness::log(&format!("[{report}]")),
+                        Err(e) => harness::log(&format!("[compaction skipped: {e}]")),
+                    }
                     continue;
                 }
                 if line == "/model" {

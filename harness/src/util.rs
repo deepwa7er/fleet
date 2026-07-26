@@ -1,6 +1,23 @@
 //! Small shared helpers: string/number formatting, dates, paths.
 
 use serde_json::Value;
+
+/// Rough local token estimate: ~4 characters per token. Only ever used to
+/// *choose* where to compact and to render `/context`; exact counts come back
+/// from the API's usage report and are what compaction triggers on.
+pub fn est_tokens(chars: usize) -> u64 {
+    (chars / 4) as u64
+}
+
+/// Characters one message contributes to the context — content, the reasoning
+/// the model streamed alongside it, and any tool calls it carries.
+pub fn message_chars(message: &Value) -> usize {
+    message["content"].as_str().map_or(0, |c| c.chars().count())
+        + message["reasoning_content"].as_str().map_or(0, |c| c.chars().count())
+        + message["tool_calls"]
+            .as_array()
+            .map_or(0, |calls| calls.iter().map(|c| c.to_string().chars().count()).sum())
+}
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 

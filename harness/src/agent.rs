@@ -17,7 +17,7 @@ use crate::auth::Auth;
 use crate::prompt;
 use crate::tools::{self, ToolCtx};
 use crate::usage::usage_int;
-use crate::util::{short_args, truncate_chars};
+use crate::util::{est_tokens, message_chars, short_args, truncate_chars};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -28,6 +28,41 @@ use std::time::Duration;
 
 const MAX_TURNS: usize = 40; // tool-call round trips per user message
 const REQ_TIMEOUT: Duration = Duration::from_secs(600); // whole API round trip
+
+/// Assumed context window when `KIMI_CONTEXT_WINDOW` is unset.
+///
+/// Deliberately conservative: the API does not report its window, so this is
+/// the one number here that is an assumption rather than a measurement. Being
+/// low costs an earlier compaction; being high would let a request hit the
+/// wall, so it errs low. Set `KIMI_CONTEXT_WINDOW` to the model's real window.
+pub const DEFAULT_CONTEXT_WINDOW: u64 = 128_000;
+
+/// Compact once a *measured* prompt passes this fraction of the window. The
+/// gap to 1.0 is the headroom the next request needs while compaction runs.
+const COMPACT_AT: f64 = 0.75;
+
+/// Fraction of the window the retained tail should fit in, so a compaction
+/// buys back a useful amount of room rather than triggering again immediately.
+const KEEP_TAIL: f64 = 0.30;
+
+/// Per-tool-result cap when rendering dropped messages for the summarizer.
+/// Tool output is the bulk of a long history and the least worth summarizing
+/// verbatim — what it *showed* matters, not every line of it.
+const SUMMARY_RESULT_CAP: usize = 500;
+
+const SUMMARY_SYSTEM: &str = "You summarize a software engineering conversation so that it can \
+continue in a smaller context window. Be dense and factual. Preserve: what the user asked for, \
+decisions taken and the reasons for them, files and paths touched, commands run and how they \
+turned out, what was tried and failed, and anything still outstanding. Omit pleasantries and \
+any reasoning that can be re-derived. Write prose, not a replay of every step. Never invent \
+anything: if something is unclear from the transcript, leave it out.";
+
+const SUMMARY_ASK: &str = "Summarize the conversation below. Your summary replaces these \
+messages verbatim in an ongoing session, so it must carry everything needed to continue the \
+work without them.";
+
+const SUMMARY_PREFIX: &str = "[The earlier part of this conversation was compacted to fit the \
+context window. What happened so far:]";
 
 /// The mid-turn user actions the loop can receive.
 pub enum Steer {
@@ -124,6 +159,8 @@ pub struct SessionConfig {
     pub system_extra: Option<String>,
     /// File of extra system-prompt instructions (--system-file).
     pub system_file: Option<PathBuf>,
+    /// Context window in tokens, used to decide when to compact.
+    pub context_window: u64,
 }
 
 impl SessionConfig {
@@ -138,6 +175,11 @@ impl SessionConfig {
             yolo,
             system_extra: None,
             system_file: None,
+            context_window: std::env::var("KIMI_CONTEXT_WINDOW")
+                .ok()
+                .and_then(|w| w.parse::<u64>().ok())
+                .filter(|w| *w > 0)
+                .unwrap_or(DEFAULT_CONTEXT_WINDOW),
         }
     }
 }
@@ -158,6 +200,12 @@ pub struct Session {
     pub stats: SessionStats,
     /// Durable record of [Session::messages], if the frontend keeps one.
     pub sink: Option<Arc<dyn MessageSink>>,
+    /// Context window this session compacts against.
+    pub context_window: u64,
+    /// `stats.round_trips` as of the last compaction. Compaction waits for a
+    /// *newer* measurement than that, so it can never fire twice on the same
+    /// (now stale) prompt size.
+    compacted_after: u64,
 }
 
 impl Session {
@@ -173,6 +221,8 @@ impl Session {
             base_url: config.base_url,
             cwd: config.cwd,
             yolo: config.yolo,
+            context_window: config.context_window,
+            compacted_after: 0,
             cancel: Arc::new(AtomicBool::new(false)),
             messages: vec![json!({ "role": "system", "content": system })],
             stats: SessionStats::default(),
@@ -211,6 +261,120 @@ impl Session {
         }
     }
 
+    /// Swap the history wholesale (compaction). The sink is an append-only
+    /// log, so a rewrite is expressed as the clear-and-re-append it is; the
+    /// store applies writes in order, which makes that safe.
+    fn replace_history(&mut self, messages: Vec<Value>) {
+        self.messages = messages;
+        if let Some(sink) = &self.sink {
+            sink.cleared();
+            for (index, message) in self.messages.iter().enumerate().skip(1) {
+                sink.appended(index, message);
+            }
+        }
+    }
+
+    /// Compact if the last *measured* prompt crossed [COMPACT_AT].
+    ///
+    /// Called at the top of each loop iteration, where the history is always
+    /// at a settled boundary — never between an assistant's tool calls and
+    /// the results that answer them.
+    async fn maybe_compact<T: TurnIo>(&mut self, io: &mut T) {
+        let Some(last) = self.stats.last else { return };
+        // Wait for a measurement newer than the last compaction, so one large
+        // prompt cannot trigger compaction repeatedly.
+        if self.stats.round_trips <= self.compacted_after {
+            return;
+        }
+        if (last.prompt as f64) < self.context_window as f64 * COMPACT_AT {
+            return;
+        }
+        io.note(&format!(
+            "[compacting: last prompt was {} tokens, over {:.0}% of the {} window]",
+            last.prompt,
+            COMPACT_AT * 100.0,
+            self.context_window
+        ));
+        match self.compact(io).await {
+            Ok(report) => io.note(&format!("[{report}]")),
+            Err(e) => io.note(&format!("[compaction skipped: {e} — history unchanged]")),
+        }
+        // Either way, wait for a fresh measurement before trying again: on
+        // success the old number is stale, and on failure retrying against the
+        // same number would just repeat the same expensive request.
+        self.compacted_after = self.stats.round_trips;
+    }
+
+    /// Replace the older half of the history with a model-written summary,
+    /// keeping the system prompt and the newest messages verbatim.
+    ///
+    /// On any failure the history is left **untouched** and the error is
+    /// returned: running out of context is bad, but quietly destroying the
+    /// conversation because a network call failed is worse.
+    pub async fn compact<T: TurnIo>(&mut self, io: &mut T) -> Result<String, String> {
+        let budget = (self.context_window as f64 * KEEP_TAIL) as u64;
+        let Some(cut) = compaction_cut(&self.messages, budget) else {
+            return Err("nothing old enough to compact".to_string());
+        };
+        let transcript = transcript_for_summary(&self.messages[1..cut]);
+        let summary = self.summarize(io, &transcript).await?;
+
+        let mut rebuilt = Vec::with_capacity(self.messages.len() - cut + 2);
+        rebuilt.push(self.messages[0].clone()); // the system prompt survives
+        rebuilt.push(json!({
+            "role": "user",
+            "content": format!("{SUMMARY_PREFIX}\n\n{summary}"),
+        }));
+        rebuilt.extend_from_slice(&self.messages[cut..]);
+        let dropped = cut - 1;
+        let kept = self.messages.len() - cut;
+        self.replace_history(rebuilt);
+        Ok(format!("compacted {dropped} older messages into a summary; kept the newest {kept}"))
+    }
+
+    /// One side request asking the model to summarize `transcript`.
+    ///
+    /// Sent without tools — this is not an agent turn, and offering tools
+    /// invites a tool call where a summary was asked for.
+    async fn summarize<T: TurnIo>(
+        &mut self,
+        io: &mut T,
+        transcript: &str,
+    ) -> Result<String, String> {
+        let messages = vec![
+            json!({ "role": "system", "content": SUMMARY_SYSTEM }),
+            json!({ "role": "user", "content": format!("{SUMMARY_ASK}\n\n{transcript}") }),
+        ];
+        let mut quiet = Quiet { inner: io, cancel: Arc::clone(&self.cancel) };
+        let outcome = chat_stream(
+            &self.client,
+            &messages,
+            &mut self.auth,
+            &self.base_url,
+            &self.model,
+            None,
+            &mut quiet,
+        )
+        .await;
+        match outcome {
+            ChatOutcome::Message(reply) => {
+                if let Some(t) = reply.tokens {
+                    self.stats.record_side(t);
+                }
+                reply.message["content"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .ok_or_else(|| "the model returned an empty summary".to_string())
+            }
+            ChatOutcome::Interrupted | ChatOutcome::Interjected(_) => {
+                Err("interrupted".to_string())
+            }
+            ChatOutcome::Fatal(e) => Err(e),
+        }
+    }
+
     fn tool_ctx(&self) -> ToolCtx {
         ToolCtx {
             cwd: self.cwd.clone(),
@@ -224,6 +388,9 @@ impl Session {
     /// turn is over but the session stays usable.
     pub async fn run_turn<T: TurnIo>(&mut self, io: &mut T) -> Option<String> {
         for _ in 0..MAX_TURNS {
+            // Top of the loop is the only settled boundary: every tool call
+            // issued so far has its result appended.
+            self.maybe_compact(io).await;
             let msg = match self.chat_stream(io).await {
                 ChatOutcome::Message(reply) => {
                     if let Some(t) = reply.tokens {
@@ -301,8 +468,114 @@ impl Session {
     /// One API round trip over SSE. Cancellation and interjection are ordinary
     /// `select!` branches. Partial output is discarded from history either way.
     async fn chat_stream<T: TurnIo>(&mut self, io: &mut T) -> ChatOutcome {
-        chat_stream(&self.client, &self.messages, &mut self.auth, &self.base_url, &self.model, io)
-            .await
+        chat_stream(
+            &self.client,
+            &self.messages,
+            &mut self.auth,
+            &self.base_url,
+            &self.model,
+            Some(tools::tools()),
+            io,
+        )
+        .await
+    }
+}
+
+/// Where the retained tail should start: the newest messages that fit in
+/// `budget` estimated tokens, then moved forward so the tail never begins in
+/// the middle of a tool run — a `role: "tool"` message whose call sits in the
+/// dropped prefix would leave the history unusable.
+///
+/// The newest message is always kept, however large. Returns `None` when
+/// there is nothing worth dropping (index 0 is the system prompt, which always
+/// survives) or nothing left to keep.
+fn compaction_cut(messages: &[Value], budget: u64) -> Option<usize> {
+    let mut kept = 0u64;
+    let mut cut = messages.len();
+    for i in (1..messages.len()).rev() {
+        let size = est_tokens(message_chars(&messages[i]));
+        if cut < messages.len() && kept + size > budget {
+            break;
+        }
+        kept += size;
+        cut = i;
+    }
+    while cut < messages.len() && messages[cut]["role"] == "tool" {
+        cut += 1;
+    }
+    (cut > 1 && cut < messages.len()).then_some(cut)
+}
+
+/// Render messages for the summarizer as plain text rather than replaying
+/// them as a conversation: a flat transcript carries no `tool_call_id`
+/// pairing constraints, so the slice can be cut anywhere and still be a valid
+/// request. Streamed reasoning is left out — it is the bulkiest part of a
+/// history and the least useful thing to summarize.
+fn transcript_for_summary(messages: &[Value]) -> String {
+    let mut out = String::new();
+    for message in messages {
+        let content = message["content"].as_str().unwrap_or("").trim();
+        match message["role"].as_str().unwrap_or("") {
+            "user" => out.push_str(&format!("User: {content}\n")),
+            "assistant" => {
+                if !content.is_empty() {
+                    out.push_str(&format!("Assistant: {content}\n"));
+                }
+                for call in message["tool_calls"].as_array().unwrap_or(&Vec::new()) {
+                    let name = call["function"]["name"].as_str().unwrap_or("?");
+                    let args = call["function"]["arguments"].as_str().unwrap_or("");
+                    out.push_str(&format!("Assistant ran {name}({})\n", truncate_chars(args, 200)));
+                }
+            }
+            "tool" => {
+                // Say *why* it is cut off. Without this the summarizer reads a
+                // clipped result as a failed command and writes the truncation
+                // into the summary as an outstanding problem to go re-run.
+                let total = content.chars().count();
+                if total > SUMMARY_RESULT_CAP {
+                    out.push_str(&format!(
+                        "Result ({total} chars, clipped to {SUMMARY_RESULT_CAP} for this \
+                         summary — the tool itself succeeded): {}…\n",
+                        truncate_chars(content, SUMMARY_RESULT_CAP)
+                    ));
+                } else {
+                    out.push_str(&format!("Result: {content}\n"));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Wraps a frontend for a side request the user did not ask for (the
+/// compaction summary): the summary must not stream into the transcript as if
+/// it were an answer, but Ctrl-C / Stop must still abort it.
+///
+/// `steer` resolves only on the cancel flag, never on typed input. A line
+/// typed during compaction therefore stays queued in the frontend and is
+/// picked up as an ordinary interjection when the turn resumes, instead of
+/// being consumed here and dropped.
+struct Quiet<'a, T: TurnIo> {
+    inner: &'a mut T,
+    cancel: Arc<AtomicBool>,
+}
+
+impl<T: TurnIo> TurnIo for Quiet<'_, T> {
+    // Forwarded so the spinner still covers the wait; content, reasoning and
+    // notes fall through to the no-op defaults.
+    fn waiting(&mut self) {
+        self.inner.waiting();
+    }
+    fn first_token(&mut self) {
+        self.inner.first_token();
+    }
+    fn stream_end(&mut self) {
+        self.inner.stream_end();
+    }
+    async fn steer(&mut self) -> Steer {
+        cancelled(&self.cancel).await;
+        Steer::Interrupted
     }
 }
 
@@ -395,6 +668,16 @@ impl SessionStats {
         self.prompt_tokens += t.prompt;
         self.completion_tokens += t.completion;
         self.last = Some(t);
+    }
+
+    /// A round trip that is not part of the conversation (the compaction
+    /// summary). It costs real tokens, so it counts toward the totals — but
+    /// not toward `last`, which answers "how big is the context now" and
+    /// would otherwise report the summarizer's own prompt.
+    pub fn record_side(&mut self, t: TokenCount) {
+        self.round_trips += 1;
+        self.prompt_tokens += t.prompt;
+        self.completion_tokens += t.completion;
     }
 }
 
@@ -567,15 +850,20 @@ async fn chat_stream<T: TurnIo>(
     auth: &mut Auth,
     base_url: &str,
     model: &str,
+    // None for a request that is not an agent turn (the compaction summary):
+    // offering tools there invites a tool call where prose was asked for.
+    tools: Option<Value>,
     io: &mut T,
 ) -> ChatOutcome {
-    let body = json!({
+    let mut body = json!({
         "model": model,
         "messages": messages,
-        "tools": tools::tools(),
         "stream": true,
         "stream_options": { "include_usage": true },
     });
+    if let Some(tools) = tools {
+        body["tools"] = tools;
+    }
     let url = format!("{base_url}/chat/completions");
     let mut retried = false;
     loop {
@@ -817,6 +1105,112 @@ mod tests {
         assert_eq!(repaired[1]["role"], "tool", "the result belongs right after its call");
         assert_eq!(repaired[1]["tool_call_id"], "a");
         assert_eq!(repaired[2]["role"], "user");
+    }
+
+    /// A message of roughly `tokens` estimated size.
+    fn bulk(role: &str, tokens: usize) -> Value {
+        json!({ "role": role, "content": "x".repeat(tokens * 4) })
+    }
+
+    #[test]
+    fn compaction_keeps_the_newest_messages_within_budget() {
+        let messages = vec![
+            bulk("system", 10),
+            bulk("user", 100),
+            bulk("assistant", 100),
+            bulk("user", 100),
+            bulk("assistant", 100),
+        ];
+        // Budget for ~two of the 100-token messages.
+        let cut = compaction_cut(&messages, 250).unwrap();
+        assert_eq!(cut, 3, "keeps the last two, drops indexes 1..3");
+        assert!(cut > 0, "the system prompt is never dropped");
+    }
+
+    /// The constraint that makes this more than a slice: a retained tail may
+    /// not begin with a tool result, because its call would be in the dropped
+    /// prefix and the API requires the pair.
+    #[test]
+    fn compaction_never_cuts_inside_a_tool_run() {
+        let messages = vec![
+            bulk("system", 10),
+            bulk("user", 100),
+            calls(&["a", "b"]),
+            answer("a"),
+            answer("b"),
+            bulk("assistant", 10),
+        ];
+        // A budget that would naturally cut between the two tool results.
+        let cut = compaction_cut(&messages, 15).unwrap();
+        assert_ne!(messages[cut]["role"], "tool", "tail must not start on a tool result");
+        assert_eq!(cut, 5, "advanced past the whole tool run");
+    }
+
+    #[test]
+    fn compaction_declines_when_there_is_nothing_to_drop() {
+        // Only a system prompt and one message: dropping it would leave
+        // nothing to keep.
+        assert!(compaction_cut(&[bulk("system", 10), bulk("user", 5)], 1_000).is_none());
+        assert!(compaction_cut(&[bulk("system", 10)], 1_000).is_none());
+        // A generous budget keeps everything, so there is nothing older to
+        // summarize.
+        let messages = vec![bulk("system", 10), bulk("user", 5), bulk("assistant", 5)];
+        assert!(compaction_cut(&messages, 1_000).is_none());
+    }
+
+    #[test]
+    fn compaction_always_keeps_the_newest_message_however_large() {
+        let messages = vec![bulk("system", 10), bulk("user", 10), bulk("assistant", 100_000)];
+        let cut = compaction_cut(&messages, 10).unwrap();
+        assert_eq!(cut, 2, "the last message is kept even though it blows the budget");
+    }
+
+    #[test]
+    fn summary_transcript_is_flat_text_without_reasoning() {
+        let messages = vec![
+            json!({ "role": "user", "content": "fix the bug" }),
+            json!({
+                "role": "assistant",
+                "content": "looking",
+                "reasoning_content": "SECRET-CHAIN-OF-THOUGHT",
+                "tool_calls": [{
+                    "id": "a", "type": "function",
+                    "function": { "name": "read_file", "arguments": "{\"path\":\"x.rs\"}" }
+                }],
+            }),
+            json!({ "role": "tool", "tool_call_id": "a", "content": "file contents" }),
+        ];
+        let text = transcript_for_summary(&messages);
+        assert!(text.contains("User: fix the bug"), "{text}");
+        assert!(text.contains("Assistant: looking"), "{text}");
+        assert!(text.contains("read_file"), "{text}");
+        assert!(text.contains("Result: file contents"), "{text}");
+        // Reasoning is the bulkiest and least useful part to summarize.
+        assert!(!text.contains("SECRET-CHAIN-OF-THOUGHT"), "{text}");
+    }
+
+    /// Long tool results are clipped, and the clip is *labelled* — otherwise
+    /// the summarizer reads it as a command that failed halfway and records a
+    /// phantom problem in the summary.
+    #[test]
+    fn summary_transcript_labels_clipped_tool_results() {
+        let messages = vec![
+            json!({ "role": "tool", "tool_call_id": "a", "content": "y".repeat(10_000) }),
+        ];
+        let text = transcript_for_summary(&messages);
+        assert!(text.chars().count() < SUMMARY_RESULT_CAP + 200, "len {}", text.chars().count());
+        assert!(text.contains("10000 chars"), "{text}");
+        assert!(text.contains("the tool itself succeeded"), "{text}");
+    }
+
+    #[test]
+    fn side_round_trips_count_in_totals_but_not_in_context_size() {
+        let mut s = SessionStats::default();
+        s.record(TokenCount { prompt: 1_000, completion: 10 });
+        s.record_side(TokenCount { prompt: 90_000, completion: 500 });
+        assert_eq!(s.prompt_tokens, 91_000, "the summary costs real tokens");
+        assert_eq!(s.round_trips, 2);
+        assert_eq!(s.last.unwrap().prompt, 1_000, "`last` still means the conversation");
     }
 
     #[test]
