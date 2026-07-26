@@ -11,6 +11,7 @@
 mod agent;
 mod deploy;
 mod docs;
+mod events;
 mod fleet;
 mod gen;
 mod git;

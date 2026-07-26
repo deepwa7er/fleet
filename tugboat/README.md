@@ -437,6 +437,48 @@ though a running ELF can't be written in place), restart the unit, then
 health-check. If the check never passes, every artifact is restored from its
 backup and the unit restarted on the old version; tugboat exits non-zero.
 
+## Deploy events (local)
+
+Every deploy attempt appends one JSON line to
+`${XDG_DATA_HOME:-~/.local/share}/tugboat/deploys.jsonl` on the machine that ran
+it — the timing breakdown, and the failures that never reach the host at all.
+
+```json
+{"v":1,"at":1785087648,"name":"tide","host":"deepwa7er","source":"default_branch",
+ "sha":"a99c146b…","short":"a99c146b","branch":"main","dirty":false,
+ "result":"deployed","build_ms":14245,"ship_ms":1786,"install_ms":2364,"total_ms":20173}
+```
+
+This is **not** the host ledger, and the split is deliberate:
+
+| | host ledger (`tugboat-ledger`) | this file |
+|---|---|---|
+| answers | what is this service running *now* | how did the deploy go |
+| written | inside the remote transaction, on the host | locally, after the deploy |
+| durability | must never be lost — a dashboard would lie | best-effort; a lost line costs a chart row |
+| read by | lighthouse | depot (the fleet data warehouse), eventually |
+
+The ledger's entry is composed *before* the deploy runs (both outcomes are baked
+into the remote script, so the host can pick one inside the same transaction as
+the install) — which is precisely why nothing measured *during* a deploy can go
+there. Hence a second, separate record.
+
+- `result` is `deployed` or `failed`; `stage` names where a failure happened
+  (`build`, `artifacts`, `ship`, `install`).
+- **`rolled_back` is deliberately absent.** When the remote transaction fails,
+  tugboat sees only a non-zero exit — it can't distinguish a health-check
+  rollback from a failed `sudo` or a dropped ssh connection. The host ledger
+  *does* know, so join the two on `at`: both sides stamp it from the same value,
+  as does the transcript id.
+- `build_ms` is absent (not `0`) when the build was skipped.
+- Writing is best-effort — a deploy's outcome never changes because an analytics
+  write failed; problems are warned about and dropped.
+
+```sh
+# slowest deploys
+jq -r '[.total_ms,.name,.result]|@tsv' ~/.local/share/tugboat/deploys.jsonl | sort -rn | head
+```
+
 ## Scope and limits
 
 Built for services that **build locally** and ship a binary (± an asset tree).

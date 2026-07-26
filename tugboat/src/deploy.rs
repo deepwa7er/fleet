@@ -12,10 +12,11 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 
+use crate::events;
 use crate::git;
 use crate::manifest::{ArtifactKind, Health, Manifest, Verify};
 
@@ -213,8 +214,6 @@ pub fn run(
     dry_run: bool,
     log: &dyn LogSink,
 ) -> Result<()> {
-    let host = manifest.host();
-
     let workdir = std::env::temp_dir()
         .join(format!("tugboat-{}-{}", manifest.name, std::process::id()));
     let workdir_str = workdir.to_string_lossy().into_owned();
@@ -229,10 +228,45 @@ pub fn run(
     }
 
     // Stamp the deploy at its start so the id (transcript filename), the ledger
-    // `at`, and the on-host transcript all agree on one timestamp. Tee the live
-    // sink through a capturing one so we can persist the full transcript below —
-    // set up first so the source-prep steps (fetch/checkout) are captured too.
+    // `at`, the deploy event, and the on-host transcript all agree on one
+    // timestamp — that shared value is what joins them.
     let at = now_unix();
+    let mut rec = events::Recorder::new(
+        at,
+        &manifest.name,
+        manifest.host(),
+        match source {
+            Source::WorkingTree { .. } => "working_tree",
+            Source::DefaultBranch => "default_branch",
+        },
+    );
+
+    // Emit the event on every exit path, success or failure — the failures that
+    // never reach the host (a build that didn't compile, a missing artifact) are
+    // exactly the ones the host ledger can't see. Warned about, never fatal.
+    let outcome = run_measured(manifest, project_dir, source, log, at, &workdir, &workdir_str, &mut rec);
+    events::append(&rec.finish(&outcome), log);
+    outcome
+}
+
+/// The deploy proper. Split from [`run`] so that every `?` here still produces a
+/// deploy event.
+#[allow(clippy::too_many_arguments)]
+fn run_measured(
+    manifest: &Manifest,
+    project_dir: &Path,
+    source: Source,
+    log: &dyn LogSink,
+    at: u64,
+    workdir: &Path,
+    workdir_str: &str,
+    rec: &mut events::Recorder,
+) -> Result<()> {
+    let host = manifest.host();
+
+    // Tee the live sink through a capturing one so we can persist the full
+    // transcript below — set up first so the source-prep steps (fetch/checkout)
+    // are captured too.
     let cap = CapturingSink::new(log);
     let orig = log;
     let log: &dyn LogSink = &cap;
@@ -254,31 +288,40 @@ pub fn run(
         }
     };
     let checkout_str = checkout_root.to_string_lossy().into_owned();
-    let build_cmd = subst(&manifest.build.cmd, &workdir_str, &checkout_str);
+    let build_cmd = subst(&manifest.build.cmd, workdir_str, &checkout_str);
     let id = deploy_id(at, stamp.as_ref());
+
+    // Which commit this deploy resolved to — known only after source prep.
+    if let Some(stamp) = &stamp {
+        rec.stamped(&stamp.sha, &stamp.short, stamp.branch.as_deref(), stamp.dirty);
+    }
 
     // Resolve artifact sources (relative paths are relative to the build dir; an
     // absolute path, e.g. one under {workdir} or {workspace}, is used as-is).
     let artifacts: Vec<(PathBuf, &crate::manifest::Artifact)> = manifest
         .artifacts
         .iter()
-        .map(|a| (build_dir.join(subst(&a.src, &workdir_str, &checkout_str)), a))
+        .map(|a| (build_dir.join(subst(&a.src, workdir_str, &checkout_str)), a))
         .collect();
 
-    std::fs::create_dir_all(&workdir)
+    std::fs::create_dir_all(workdir)
         .with_context(|| format!("creating work dir {}", workdir.display()))?;
-    let _guard = WorkDir(workdir.clone());
+    let _guard = WorkDir(workdir.to_path_buf());
 
     // 1. Build.
+    rec.entering(events::Stage::Build);
     if skip_build {
         note(log, "skipping build (--skip-build)");
     } else {
         step(log, "BUILD", &build_cmd);
+        let t = Instant::now();
         run_local(&build_cmd, &build_dir, log).context("build failed")?;
+        rec.completed(events::Stage::Build, t);
     }
 
     // 2. Confirm every artifact exists locally, of the right kind, before
     //    touching the host.
+    rec.entering(events::Stage::Artifacts);
     for (src, artifact) in &artifacts {
         match artifact.kind {
             ArtifactKind::File if !src.is_file() => {
@@ -294,6 +337,8 @@ pub fn run(
     // 3. Ship each artifact next to its destination (same filesystem, so the
     //    install step's rename is atomic). Both files and directories go over
     //    rsync — one transfer path, with compression on the binary for free.
+    rec.entering(events::Stage::Ship);
+    let t = Instant::now();
     for (src, artifact) in &artifacts {
         let staged = format!("{host}:{}.tug-new", artifact.dest);
         match artifact.kind {
@@ -306,6 +351,7 @@ pub fn run(
         }
         rsync(src, &staged, artifact.kind, log)?;
     }
+    rec.completed(events::Stage::Ship, t);
 
     // 4. Atomic install, restart, health-check, rollback-on-failure, enroll,
     //    and record what was deployed — all in one remote transaction.
@@ -314,7 +360,10 @@ pub fn run(
         "INSTALL",
         &format!("{host}: swap binary, restart {}, health-check", manifest.name),
     );
+    rec.entering(events::Stage::Install);
+    let t = Instant::now();
     let install = ssh_script(host, &remote_script(manifest, stamp.as_ref(), &id), log);
+    rec.completed(events::Stage::Install, t);
 
     // 5. End-to-end verify from this machine (informational) — only on success.
     if install.is_ok() {
