@@ -44,8 +44,6 @@ pub struct AppState {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Load up front so a broken config fails at startup, and to learn the
-    // listen address, port, and static directory.
     let config = Config::load_or_create(&cli.config)?;
     let addr = SocketAddr::new(config.bind, config.port);
     // The frontend does client-side path routing (e.g. /services/<unit>), so a
