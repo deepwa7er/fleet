@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>harness</title>
+<style>
+  :root {
+    --text: #1d1d1f;
+    --gray: #86868b;
+    --hairline: rgba(0, 0, 0, 0.08);
+    --panel: #f5f5f7;
+    --accent: #0071e3;
+    --accent-soft: rgba(0, 113, 227, 0.08);
+    --red: #ff3b30;
+    --green: #28c840;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: var(--text);
+    background: #fff;
+    display: flex;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+
+  /* ── sidebar ─────────────────────────────────────────── */
+  #sidebar {
+    width: 272px; flex: 0 0 272px;
+    background: var(--panel);
+    border-right: 1px solid var(--hairline);
+    display: flex; flex-direction: column;
+    padding: 28px 16px 16px;
+    gap: 16px;
+  }
+  .brand { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; padding: 0 10px; }
+  #sessions { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .session {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 12px;
+    text-align: left; width: 100%;
+  }
+  .session:hover { background: rgba(0, 0, 0, 0.04); }
+  .session.active { background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08); }
+  .session .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: 0 0 8px; }
+  .session.busy .dot { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  .session .meta { flex: 1; min-width: 0; }
+  .session .name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .session .sub { font-size: 12px; color: var(--gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .session .del { color: var(--gray); font-size: 15px; padding: 2px 6px; border-radius: 6px; visibility: hidden; }
+  .session:hover .del { visibility: visible; }
+  .session .del:hover { color: var(--red); background: rgba(0,0,0,0.05); }
+  #new-session { display: flex; flex-direction: column; gap: 8px; }
+  #new-cwd {
+    font: inherit; font-size: 13px; padding: 9px 12px;
+    border: 1px solid var(--hairline); border-radius: 10px; background: #fff; color: var(--text);
+    outline: none;
+  }
+  #new-cwd:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  #new-btn {
+    font-size: 13px; font-weight: 500; color: #fff; background: var(--accent);
+    border-radius: 10px; padding: 9px 12px;
+  }
+  #new-btn:hover { background: #0077ed; }
+  .foot { font-size: 11px; color: var(--gray); padding: 0 10px; }
+
+  /* ── main ────────────────────────────────────────────── */
+  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 28px; border-bottom: 1px solid var(--hairline);
+  }
+  #session-title { font-size: 13px; color: var(--gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #topbar .actions { display: flex; gap: 8px; flex: 0 0 auto; }
+  .pill {
+    font-size: 12px; font-weight: 500; color: var(--gray);
+    border: 1px solid var(--hairline); border-radius: 999px; padding: 5px 14px;
+  }
+  .pill:hover { color: var(--text); background: var(--panel); }
+  #stop-btn { color: var(--red); display: none; }
+  #stop-btn:hover { background: rgba(255, 59, 48, 0.08); color: var(--red); }
+  body.busy #stop-btn { display: block; }
+
+  #chat { flex: 1; overflow-y: auto; }
+  #chat-inner { max-width: 720px; margin: 0 auto; padding: 40px 28px 24px; display: flex; flex-direction: column; gap: 18px; }
+
+  .msg-user {
+    align-self: flex-end; max-width: 78%;
+    background: var(--accent); color: #fff;
+    border-radius: 20px; padding: 10px 16px;
+    font-size: 15px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word;
+  }
+  .msg-user .caption { display: block; font-size: 11px; opacity: 0.75; margin-bottom: 2px; }
+  .msg-assistant { align-self: stretch; font-size: 15px; line-height: 1.6; word-wrap: break-word; }
+  .msg-assistant p { margin: 0.6em 0; }
+  .msg-assistant p:first-child { margin-top: 0; }
+  .msg-assistant p:last-child { margin-bottom: 0; }
+  .msg-assistant h1, .msg-assistant h2, .msg-assistant h3, .msg-assistant h4 {
+    font-weight: 600; letter-spacing: -0.01em; margin: 1em 0 0.4em;
+  }
+  .msg-assistant h1 { font-size: 20px; } .msg-assistant h2 { font-size: 18px; }
+  .msg-assistant h3 { font-size: 16px; } .msg-assistant h4 { font-size: 15px; }
+  .msg-assistant ul, .msg-assistant ol { margin: 0.5em 0; padding-left: 1.5em; }
+  .msg-assistant li { margin: 0.25em 0; }
+  .msg-assistant a { color: var(--accent); text-decoration: none; }
+  .msg-assistant a:hover { text-decoration: underline; }
+  .msg-assistant blockquote {
+    border-left: 3px solid var(--hairline); padding-left: 14px; color: var(--gray); margin: 0.6em 0;
+  }
+  .msg-assistant table { border-collapse: collapse; margin: 0.6em 0; font-size: 14px; }
+  .msg-assistant th, .msg-assistant td { border: 1px solid var(--hairline); padding: 6px 12px; text-align: left; }
+  .msg-assistant th { background: var(--panel); font-weight: 600; }
+  code.inline {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px;
+    background: var(--panel); border-radius: 5px; padding: 2px 5px;
+  }
+  pre.code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; line-height: 1.5;
+    background: var(--panel); border-radius: 12px; padding: 14px 16px;
+    overflow-x: auto; margin: 0.7em 0;
+  }
+  pre.code code { font: inherit; }
+
+  details.reasoning summary {
+    font-size: 13px; color: var(--gray); cursor: pointer; user-select: none;
+  }
+  details.reasoning .body {
+    font-size: 13px; color: var(--gray); line-height: 1.55;
+    white-space: pre-wrap; word-wrap: break-word;
+    border-left: 2px solid var(--hairline); padding-left: 12px; margin: 8px 0 4px;
+  }
+  details.tool {
+    background: var(--panel); border-radius: 12px; padding: 8px 14px;
+    font-size: 13px;
+  }
+  details.tool summary {
+    cursor: pointer; user-select: none;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+    color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  details.tool.error summary { color: var(--red); }
+  details.tool pre {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; line-height: 1.5;
+    white-space: pre-wrap; word-wrap: break-word;
+    max-height: 260px; overflow-y: auto; margin-top: 8px; color: var(--gray);
+  }
+  .ask {
+    background: var(--accent-soft); border-radius: 14px; padding: 14px 18px;
+    font-size: 14px; line-height: 1.5;
+  }
+  .ask .hint { font-size: 12px; color: var(--gray); margin-top: 4px; }
+  .note { font-size: 12px; color: var(--gray); }
+  .note.fatal { color: var(--red); }
+  .thinking { color: var(--gray); font-size: 15px; letter-spacing: 2px; }
+  .thinking span { animation: blink 1.4s infinite; }
+  .thinking span:nth-child(2) { animation-delay: 0.2s; }
+  .thinking span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes blink { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  /* ── composer ────────────────────────────────────────── */
+  #composer {
+    padding: 12px 28px calc(16px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--hairline);
+  }
+  #composer-inner {
+    max-width: 720px; margin: 0 auto;
+    display: flex; align-items: flex-end; gap: 10px;
+    background: #fff; border: 1px solid rgba(0, 0, 0, 0.12); border-radius: 24px;
+    padding: 8px 8px 8px 18px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
+  }
+  #composer-inner:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  #input {
+    flex: 1; font: inherit; font-size: 15px; line-height: 1.45;
+    border: none; outline: none; resize: none; background: none; color: var(--text);
+    padding: 6px 0; max-height: 160px;
+  }
+  #send {
+    flex: 0 0 34px; width: 34px; height: 34px; border-radius: 50%;
+    background: var(--accent); color: #fff; font-size: 17px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #send:disabled { background: #d2d2d7; cursor: default; }
+
+  @media (max-width: 760px) {
+    body { flex-direction: column; }
+    #sidebar { width: 100%; flex: 0 0 auto; border-right: none; border-bottom: 1px solid var(--hairline); padding: 16px; }
+    #sessions { flex-direction: row; overflow-x: auto; }
+    .session { min-width: 180px; }
+    .foot { display: none; }
+  }
+</style>
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="brand">harness</div>
+    <div id="sessions"></div>
+    <div id="new-session">
+      <input id="new-cwd" placeholder="Working directory — default ~" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <button id="new-btn">New session</button>
+    </div>
+    <div class="foot">tailnet only · no auth · yolo mode</div>
+  </aside>
+  <main>
+    <header id="topbar">
+      <div id="session-title">no session</div>
+      <div class="actions">
+        <button id="stop-btn" class="pill">Stop</button>
+        <button id="reset-btn" class="pill">Reset</button>
+      </div>
+    </header>
+    <div id="chat"><div id="chat-inner"></div></div>
+    <div id="composer">
+      <div id="composer-inner">
+        <textarea id="input" rows="1" placeholder="Message — send mid-turn to steer"></textarea>
+        <button id="send" aria-label="Send" disabled>↑</button>
+      </div>
+    </div>
+  </main>
+
+<script>
+"use strict";
+
+/* ── state ─────────────────────────────────────────────── */
+const chatInner = document.getElementById("chat-inner");
+const chat = document.getElementById("chat");
+const input = document.getElementById("input");
+const sendBtn = document.getElementById("send");
+const titleEl = document.getElementById("session-title");
+let currentId = null;
+let source = null;          // EventSource
+let cur = null;             // current assistant block being streamed
+let openTool = null;        // last tool <details> awaiting its result
+let thinkingEl = null;
+let pinned = true;          // auto-scroll while the user is near the bottom
+
+chat.addEventListener("scroll", () => {
+  pinned = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 120;
+});
+function maybeScroll() {
+  if (pinned) chat.scrollTop = chat.scrollHeight;
+}
+
+/* ── minimal markdown ──────────────────────────────────── */
+/* Deliberately a subset: headings, lists, tables, quotes, fenced code,
+   inline code/bold/italic/links. HTML is escaped before any transform. */
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function renderMarkdown(src) {
+  const blocks = [];
+  src = src.replace(/(```|~~~)[^\n]*\n([\s\S]*?)(?:\1|$)/g, (m, fence, code) => {
+    blocks.push('<pre class="code"><code>' + escapeHtml(code.replace(/\n$/, "")) + "</code></pre>");
+    return " " + (blocks.length - 1) + " ";
+  });
+  let html = escapeHtml(src);
+  html = html.replace(/`([^`\n]+)`/g, (m, c) => '<code class="inline">' + c + "</code>");
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  html = html.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+  const lines = html.split("\n");
+  const out = [];
+  let para = [], list = null, quote = [], table = [];
+  const flushPara = () => { if (para.length) { out.push("<p>" + para.join("<br>") + "</p>"); para = []; } };
+  const flushList = () => { if (list) { out.push("<" + list.tag + ">" + list.items.map(i => "<li>" + i + "</li>").join("") + "</" + list.tag + ">"); list = null; } };
+  const flushQuote = () => { if (quote.length) { out.push("<blockquote>" + quote.join("<br>") + "</blockquote>"); quote = []; } };
+  const flushTable = () => {
+    if (!table.length) return;
+    let rows = table.filter(r => !/^\|[\s:|-]+\|$/.test(r.trim()));
+    let body = rows.map((r, i) => {
+      const cells = r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      const tag = i === 0 && rows.length > 1 ? "th" : "td";
+      return "<tr>" + cells.map(c => "<" + tag + ">" + c + "</" + tag + ">").join("") + "</tr>";
+    }).join("");
+    out.push("<table>" + body + "</table>");
+    table = [];
+  };
+  const flushAll = () => { flushPara(); flushList(); flushQuote(); flushTable(); };
+
+  for (const line of lines) {
+    const block = line.match(/^ (\d+) $/);
+    if (block) { flushAll(); out.push(blocks[+block[1]]); continue; }
+    const heading = line.match(/^(#{1,4})\s+(.*)$/);
+    if (heading) { flushAll(); out.push("<h" + heading[1].length + ">" + heading[2] + "</h" + heading[1].length + ">"); continue; }
+    const ul = line.match(/^\s*[-*]\s+(.*)$/);
+    if (ul) { flushPara(); flushQuote(); flushTable(); if (!list || list.tag !== "ul") { flushList(); list = { tag: "ul", items: [] }; } list.items.push(ul[1]); continue; }
+    const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (ol) { flushPara(); flushQuote(); flushTable(); if (!list || list.tag !== "ol") { flushList(); list = { tag: "ol", items: [] }; } list.items.push(ol[1]); continue; }
+    const q = line.match(/^&gt;\s?(.*)$/);
+    if (q) { flushPara(); flushList(); flushTable(); quote.push(q[1]); continue; }
+    if (line.trim().startsWith("|") && line.trim().endsWith("|")) { flushPara(); flushList(); flushQuote(); table.push(line); continue; }
+    if (line.trim() === "") { flushAll(); continue; }
+    flushList(); flushQuote(); flushTable();
+    para.push(line);
+  }
+  flushAll();
+  return out.join("");
+}
+
+/* ── rendering ─────────────────────────────────────────── */
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function addBubble(text, caption) {
+  const b = el("div", "msg-user");
+  if (caption) b.appendChild(el("span", "caption", caption));
+  b.appendChild(document.createTextNode(text));
+  chatInner.appendChild(b);
+  endAssistant();
+  maybeScroll();
+}
+function newAssistant() {
+  const e = el("div", "msg-assistant");
+  chatInner.appendChild(e);
+  return { root: e, reasoningText: "", contentText: "", reasoningEl: null, contentEl: null };
+}
+function endAssistant() { cur = null; openTool = null; removeThinking(); }
+function showThinking() {
+  removeThinking();
+  thinkingEl = el("div", "thinking");
+  thinkingEl.innerHTML = "<span>·</span><span>·</span><span>·</span>";
+  chatInner.appendChild(thinkingEl);
+  maybeScroll();
+}
+function removeThinking() { if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; } }
+
+const handlers = {
+  user(ev) { addBubble(ev.text); },
+  interjection(ev) { addBubble(ev.text, "steering"); },
+  turn_start() {
+    document.body.classList.add("busy");
+    cur = newAssistant();
+    showThinking();
+    maybeScroll();
+  },
+  turn_end(ev) {
+    document.body.classList.remove("busy");
+    removeThinking();
+    if (ev.fatal) addNote("turn failed: " + ev.fatal, true);
+    endAssistant();
+    refreshSessions();
+  },
+  note(ev) { addNote(ev.text, false); },
+  fatal(ev) { addNote("session failed: " + ev.message, true); },
+  reasoning(ev) {
+    if (!cur) cur = newAssistant();
+    removeThinking();
+    cur.reasoningText += ev.delta;
+    if (!cur.reasoningEl) {
+      cur.reasoningEl = el("details", "reasoning");
+      cur.reasoningEl.appendChild(el("summary", "", "Reasoning"));
+      cur.reasoningEl.appendChild(el("div", "body"));
+      cur.root.appendChild(cur.reasoningEl);
+    }
+    cur.reasoningEl.querySelector(".body").textContent = cur.reasoningText;
+    maybeScroll();
+  },
+  content(ev) {
+    if (!cur) cur = newAssistant();
+    removeThinking();
+    cur.contentText += ev.delta;
+    if (!cur.contentEl) {
+      cur.contentEl = el("div", "answer");
+      cur.root.appendChild(cur.contentEl);
+    }
+    cur.contentEl.innerHTML = renderMarkdown(cur.contentText);
+    maybeScroll();
+  },
+  stream_end() {},
+  tool_call(ev) {
+    if (!cur) cur = newAssistant();
+    removeThinking();
+    const d = el("details", "tool");
+    d.appendChild(el("summary", "", ev.name + (ev.args ? "  " + ev.args : "")));
+    d.appendChild(el("pre", "", "…"));
+    cur.root.appendChild(d);
+    openTool = d;
+    maybeScroll();
+  },
+  tool_result(ev) {
+    const d = openTool;
+    if (d) {
+      d.querySelector("pre").textContent = ev.preview;
+      if (!ev.ok) d.classList.add("error");
+      openTool = null;
+    }
+    maybeScroll();
+  },
+  ask(ev) {
+    const a = el("div", "ask");
+    a.appendChild(el("div", "", ev.question));
+    a.appendChild(el("div", "hint", "Reply below to answer."));
+    chatInner.appendChild(a);
+    endAssistant();
+    maybeScroll();
+  },
+  reset() { clearChat(); },
+};
+function addNote(text, isFatal) {
+  chatInner.appendChild(el("div", "note" + (isFatal ? " fatal" : ""), text));
+  maybeScroll();
+}
+function clearChat() { chatInner.innerHTML = ""; endAssistant(); }
+
+/* ── session events (SSE) ──────────────────────────────── */
+function connect(id) {
+  if (source) source.close();
+  source = new EventSource("/api/sessions/" + id + "/events");
+  source.onopen = () => { clearChat(); }; // server replays the full history
+  source.onmessage = (msg) => {
+    let ev;
+    try { ev = JSON.parse(msg.data); } catch { return; }
+    const h = handlers[ev.type];
+    if (h) h(ev);
+  };
+}
+
+/* ── sessions ──────────────────────────────────────────── */
+async function api(path, opts) {
+  const resp = await fetch(path, opts);
+  if (!resp.ok) throw new Error((await resp.text()) || resp.statusText);
+  return resp.status === 204 ? null : resp.json();
+}
+function selectSession(id, cwd) {
+  currentId = id;
+  titleEl.textContent = cwd || id;
+  document.querySelectorAll(".session").forEach(s => s.classList.toggle("active", s.dataset.id === id));
+  connect(id);
+  input.focus();
+}
+async function refreshSessions() {
+  let data;
+  try { data = await api("/api/sessions"); } catch { return; }
+  const list = document.getElementById("sessions");
+  list.innerHTML = "";
+  for (const s of data.sessions) {
+    const row = el("button", "session" + (s.busy ? " busy" : ""));
+    row.dataset.id = s.id;
+    row.appendChild(el("span", "dot"));
+    const meta = el("span", "meta");
+    const path = s.cwd.replace(/^\/Users\/[^/]+/, "~");
+    meta.appendChild(el("div", "name", path.split("/").filter(Boolean).pop() || "~"));
+    meta.appendChild(el("div", "sub", s.id + " · " + path));
+    row.appendChild(meta);
+    const del = el("span", "del", "×");
+    del.title = "Delete session";
+    del.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      try { await api("/api/sessions/" + s.id, { method: "DELETE" }); } catch { return; }
+      if (currentId === s.id) { currentId = null; titleEl.textContent = "no session"; clearChat(); if (source) source.close(); }
+      refreshSessions();
+    });
+    row.appendChild(del);
+    row.addEventListener("click", () => selectSession(s.id, s.cwd));
+    if (s.id === currentId) row.classList.add("active");
+    list.appendChild(row);
+  }
+}
+async function newSession(cwd) {
+  const created = await api("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cwd ? { cwd } : {}),
+  });
+  await refreshSessions();
+  const data = await api("/api/sessions");
+  const s = data.sessions.find(x => x.id === created.id);
+  selectSession(created.id, s ? s.cwd : "");
+}
+async function ensureSession() {
+  if (currentId) return;
+  await newSession("");
+}
+
+document.getElementById("new-btn").addEventListener("click", async () => {
+  const cwdEl = document.getElementById("new-cwd");
+  try { await newSession(cwdEl.value.trim()); cwdEl.value = ""; } catch (e) { alert(e.message); }
+});
+document.getElementById("stop-btn").addEventListener("click", () => {
+  if (currentId) api("/api/sessions/" + currentId + "/interrupt", { method: "POST" }).catch(() => {});
+});
+document.getElementById("reset-btn").addEventListener("click", () => {
+  if (currentId) api("/api/sessions/" + currentId + "/reset", { method: "POST" }).catch(e => alert(e.message));
+});
+
+/* ── composer ──────────────────────────────────────────── */
+function autogrow() {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 160) + "px";
+  sendBtn.disabled = input.value.trim() === "";
+}
+input.addEventListener("input", autogrow);
+input.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); send(); }
+});
+sendBtn.addEventListener("click", send);
+async function send() {
+  const text = input.value.trim();
+  if (!text) return;
+  try { await ensureSession(); } catch (e) { alert(e.message); return; }
+  input.value = "";
+  autogrow();
+  api("/api/sessions/" + currentId + "/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  }).catch(e => addNote("send failed: " + e.message, true));
+  refreshSessions();
+}
+
+/* ── boot ──────────────────────────────────────────────── */
+refreshSessions();
+setInterval(refreshSessions, 5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+[package]
+name = "harness"
+version = "0.2.0"
+edition = "2024"
+description = "Minimal Kimi coding-agent harness — terminal REPL and a tailnet web UI (harness serve)."
+
+[dependencies]
+clap = { workspace = true, features = ["derive"] }
+futures-util = "0.3"
+# rustls (not native-tls): matches the fleet's TLS choice; the static-musl
+# cross-build stays possible if harness ever needs to ship to a Linux host.
+reqwest = { workspace = true, features = ["json", "rustls-tls", "stream"] }
+rustyline = "15"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+# default-fancy: pure-Rust regex engine (no C oniguruma), default syntaxes + themes
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "io-std", "io-util", "time", "sync", "net"] }
+
+# serve mode (`harness serve`): the web UI and its SSE event stream.
+axum = { workspace = true }
+tokio-stream = { version = "0.1", features = ["sync"] }
+# Enumerate interface addresses to find the MacBook's Tailscale IPv4 at
+# startup (100.64.0.0/10) — same approach as breakwater/src/tailscale.rs.
+if-addrs = "0.13"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

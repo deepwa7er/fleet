@@ -1,0 +1,19 @@
+[package]
+name = "depot"
+version = "0.1.0"
+edition = "2021"
+description = "The fleet's data warehouse — a historian for facts the fleet would otherwise overwrite or prune."
+
+[dependencies]
+fleet-common = { path = "../crates/fleet-common" }
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "process", "time"] }
+tower-http = { workspace = true, features = ["fs", "trace"] }
+# "bundled": compile SQLite from source so the static-musl cross-build carries
+# its own copy, exactly as clothes/recipes/drydock do.
+rusqlite = { workspace = true, features = ["bundled"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

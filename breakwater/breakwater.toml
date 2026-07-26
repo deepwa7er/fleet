@@ -147,6 +147,19 @@ upstream = "deepwater-1.tailcfab97.ts.net:7879"
 label = "atlas"
 upstream = "deepwater-1.tailcfab97.ts.net:7880"
 
+# Coding-agent harness (harness) — dev-box upstream like source and atlas: the
+# agent loop runs commands against the working trees, which live there.
+#
+# NOTE, deliberately different from every other route here: the services above
+# are CRUD over their own data, so "tailnet only, no auth" bounds what a caller
+# can do. harness executes arbitrary commands as the logged-in user, so this
+# route publishes an unauthenticated remote-code-execution surface to every
+# device on the tailnet. That is a decision, not an oversight — revisit it if
+# the tailnet ever gains a device you trust less than this laptop.
+[[routes]]
+label = "harness"
+upstream = "deepwater-1.tailcfab97.ts.net:8098"
+
 # Note: tidepool is intentionally NOT routed here. It runs as its own Tailscale
 # node (tsnet, `-tls`) and serves HTTPS itself at https://tidepool — there is no
 # plain-HTTP backend to proxy to.

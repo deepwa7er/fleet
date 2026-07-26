@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchd agent for `harness serve`. __HOME__ is substituted by provision.sh.
+     PATH must include /opt/homebrew/bin: launchd's default PATH lacks it, and
+     the agent's tools need rg (and whatever the model runs) on PATH. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>net.deepwa7er.harness</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__HOME__/.local/bin/harness</string>
+		<string>serve</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>__HOME__</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/harness.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/harness.log</string>
+</dict>
+</plist>
