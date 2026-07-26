@@ -29,13 +29,15 @@ use std::time::Duration;
 const MAX_TURNS: usize = 40; // tool-call round trips per user message
 const REQ_TIMEOUT: Duration = Duration::from_secs(600); // whole API round trip
 
-/// Assumed context window when `KIMI_CONTEXT_WINDOW` is unset.
+/// Context window assumed when `KIMI_CONTEXT_WINDOW` is unset: K3's, which is
+/// the default model.
 ///
-/// Deliberately conservative: the API does not report its window, so this is
-/// the one number here that is an assumption rather than a measurement. Being
-/// low costs an earlier compaction; being high would let a request hit the
-/// wall, so it errs low. Set `KIMI_CONTEXT_WINDOW` to the model's real window.
-pub const DEFAULT_CONTEXT_WINDOW: u64 = 128_000;
+/// The API does not report its window, so this tracks the *default model* and
+/// nothing else. Point `--model` / `KIMI_MODEL` at anything with a smaller
+/// window (K2.7 Code, say) without also setting `KIMI_CONTEXT_WINDOW`, and
+/// compaction will trigger too late to save the request — the one direction
+/// this gets expensive rather than merely wasteful.
+pub const DEFAULT_CONTEXT_WINDOW: u64 = 1_000_000;
 
 /// Compact once a *measured* prompt passes this fraction of the window. The
 /// gap to 1.0 is the headroom the next request needs while compaction runs.

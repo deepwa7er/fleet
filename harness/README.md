@@ -93,9 +93,15 @@ window instead of walking into a context-length error with no recovery.
 [compacted 7 older messages into a summary; kept the newest 2]
 ```
 
-The window comes from `KIMI_CONTEXT_WINDOW`, else a conservative default. The
-retained tail is sized to ~30% of the window, so a compaction buys back real
-room rather than triggering again on the next turn.
+The window comes from `KIMI_CONTEXT_WINDOW`, else K3's 1,000,000 — so in
+practice this fires on genuinely long sessions (past ~750k tokens) rather than
+routinely. The retained tail is sized to ~30% of the window, so a compaction
+buys back real room rather than triggering again on the next turn.
+
+**If you switch models, set `KIMI_CONTEXT_WINDOW`.** The default tracks K3 and
+the API does not report a window; pointing `--model` at something smaller
+without setting it is the one direction that gets expensive, because
+compaction would then trigger too late to save the request.
 
 Three things make it safe rather than merely clever:
 
@@ -114,8 +120,10 @@ where prose was asked for) and its streamed output never reaches the
 transcript, though Ctrl-C / Stop still aborts it. A line typed during
 compaction stays queued and lands as an ordinary interjection afterwards.
 
-`/compact` in the REPL forces one immediately — the same path, so it is also
-how you see what the summaries actually look like.
+`/compact` in the REPL forces one immediately, down to the same ~30% tail. At
+K3's window that means it reports "nothing old enough to compact" until a
+session is genuinely large — which is the honest answer, not a failure. To
+watch the machinery work, run with a small `KIMI_CONTEXT_WINDOW`.
 
 ## The REPL
 
@@ -165,15 +173,14 @@ substituted at load; HTML comments are stripped. Appended after it, in order:
 
 Env vars: `KIMI_API_KEY`, `KIMI_MODEL` (default `k3`), `KIMI_BASE_URL`,
 `KIMI_CODE_HOME`, `KIMI_SYSTEM_PROMPT`, `KIMI_CONTEXT_WINDOW` (the window
-compaction triggers against and `/context` reports on; default 128,000),
-`HARNESS_DB` (the serve session database; `--db` wins over it).
+compaction triggers against and `/context` reports on; default 1,000,000 =
+K3's), `HARNESS_DB` (the serve session database; `--db` wins over it).
 
 ## Deliberate limitations
 
-- The context window is an *assumption*, not something the API reports:
-  `KIMI_CONTEXT_WINDOW` if set, else a conservative 128,000. Compaction errs
-  toward firing early, so a wrong guess costs an extra summary rather than a
-  failed request — but set it to the model's real window if you know it.
+- The context window is not something the API reports. The default (1,000,000)
+  tracks **K3 specifically**, so it is only right for the default model — see
+  the compaction section if you change `--model` / `KIMI_MODEL`.
 - The summarizer sees tool results clipped to 500 chars each. It is told so
   (and told the tool succeeded), but a summary can still be thinner than the
   transcript it replaces.
