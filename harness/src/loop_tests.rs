@@ -163,6 +163,8 @@ struct Recorder {
     content: String,
     tools_run: Vec<String>,
     results: Vec<String>,
+    /// (prompt, completion, window) per round trip.
+    usage: Vec<(u64, u64, u64)>,
     /// Handed back by `steer()` the first time it is polled, cancelling the
     /// in-flight request. `None` means steering never fires.
     steer: Option<Steer>,
@@ -182,6 +184,9 @@ impl TurnIo for Recorder {
     }
     fn note(&mut self, text: &str) {
         self.notes.push(text.to_string());
+    }
+    fn tokens(&mut self, prompt: u64, completion: u64, window: u64) {
+        self.usage.push((prompt, completion, window));
     }
     fn tool_call(&mut self, name: &str, _args: &Value) {
         self.tools_run.push(name.to_string());
@@ -275,6 +280,7 @@ async fn a_plain_turn_streams_content_and_records_usage() {
 
     assert_eq!(io.content, "hello there", "both deltas reached the frontend");
     assert_eq!(s.stats.last.unwrap().prompt, 120, "usage is taken from the stream");
+    assert_eq!(io.usage, [(120, 7, 1_000_000)], "usage is reported with its window");
     assert_eq!(s.messages.len(), 3, "system, user, assistant");
     assert_eq!(s.messages[2]["content"], "hello there");
     assert!(api.request(0)["tools"].is_array(), "an agent turn offers tools");
@@ -444,6 +450,9 @@ async fn compaction_fires_inside_the_loop_and_asks_without_tools() {
     assert!(io.noted("compacting"), "{:?}", io.notes);
     assert!(io.noted("compacted"), "{:?}", io.notes);
     assert_eq!(api.request_count(), 3, "turn, summary, turn");
+    // The summarizer's own round trip is not part of the conversation's
+    // footprint, so it must not be reported as context usage.
+    assert_eq!(io.usage, [(900, 7, 1_000), (200, 7, 1_000)], "{:?}", io.usage);
     assert!(
         api.request(1)["tools"].is_null(),
         "the summary request must not offer tools: {}",

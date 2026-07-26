@@ -99,8 +99,17 @@ pub trait TurnIo: Send {
     fn content(&mut self, _delta: &str) {}
     /// The SSE stream ended: flush/close any half-open output.
     fn stream_end(&mut self) {}
-    /// A status line ([auth] retries, [tokens], model changes, …).
+    /// A status line ([auth] retries, model changes, …).
     fn note(&mut self, _text: &str) {}
+    /// Measured usage for one round trip, with the window it counts against.
+    ///
+    /// A callback rather than a formatted note because how full the context is
+    /// is a *number a frontend may want to render as a number* — the terminal
+    /// prints a line, the web UI feeds a gauge. The default keeps the old
+    /// behaviour for anything that does not care.
+    fn tokens(&mut self, prompt: u64, completion: u64, _window: u64) {
+        self.note(&format!("[tokens] prompt={prompt} completion={completion}"));
+    }
     /// A tool call is about to execute.
     fn tool_call(&mut self, name: &str, args: &Value) {
         self.note(&format!("[tool] {name} {}", short_args(args)));
@@ -403,6 +412,7 @@ impl Session {
                 ChatOutcome::Message(reply) => {
                     if let Some(t) = reply.tokens {
                         self.stats.record(t);
+                        io.tokens(t.prompt, t.completion, self.context_window);
                     }
                     if let Some(served) = &reply.served_model
                         && self.stats.served_model.as_deref() != Some(served.as_str()) {
@@ -986,9 +996,9 @@ async fn chat_stream<T: TurnIo>(
                     Ok(done) => done,
                     Err(e) => return ChatOutcome::Fatal(e),
                 };
-                if let Some(t) = tokens {
-                    io.note(&format!("[tokens] prompt={} completion={}", t.prompt, t.completion));
-                }
+                // Usage is *reported* by run_turn, not here: this function does
+                // not know the context window, and the summarizer's own round
+                // trip is not part of the conversation's footprint.
                 return ChatOutcome::Message(AssistantReply { message, tokens, served_model });
             }
             StreamEnd::Interrupted => {

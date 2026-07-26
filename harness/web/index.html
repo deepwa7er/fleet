@@ -350,6 +350,12 @@ const handlers = {
     refreshSessions();
   },
   note(ev) { addNote(ev.text, false); },
+  tokens(ev) {
+    // Same line the server used to send as a note, plus how full the window
+    // is now that the client is told what the window is.
+    const pct = ev.window ? ` — ${Math.round(ev.prompt / ev.window * 100)}% of ${ev.window.toLocaleString()}` : "";
+    addNote(`[tokens] prompt=${ev.prompt} completion=${ev.completion}${pct}`, false);
+  },
   fatal(ev) { addNote("session failed: " + ev.message, true); },
   reasoning(ev) {
     if (!cur) cur = newAssistant();

@@ -95,8 +95,11 @@ enum EventKind {
     User { text: String },
     /// Guidance typed while the model was working.
     Interjection { text: String },
-    /// A status line ([auth], [tokens], model changes, …).
+    /// A status line ([auth], model changes, …).
     Note { text: String },
+    /// Measured usage for one round trip. Structured rather than a note so a
+    /// client can render how full the context is instead of parsing prose.
+    Tokens { prompt: u64, completion: u64, window: u64 },
     /// Streamed reasoning delta.
     Reasoning { delta: String },
     /// Streamed answer-text delta.
@@ -311,6 +314,10 @@ impl WebIo {
 impl TurnIo for WebIo {
     fn note(&mut self, text: &str) {
         self.emit.emit(EventKind::Note { text: text.to_string() });
+    }
+
+    fn tokens(&mut self, prompt: u64, completion: u64, window: u64) {
+        self.emit.emit(EventKind::Tokens { prompt, completion, window });
     }
 
     fn reasoning(&mut self, delta: &str) {
