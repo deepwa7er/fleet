@@ -15,6 +15,9 @@
 
 pub mod agent;
 pub mod auth;
+/// End-to-end tests for the agent loop against a scripted API server.
+#[cfg(test)]
+mod loop_tests;
 pub mod prompt;
 pub mod store;
 pub mod tools;

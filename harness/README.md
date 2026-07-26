@@ -176,6 +176,25 @@ Env vars: `KIMI_API_KEY`, `KIMI_MODEL` (default `k3`), `KIMI_BASE_URL`,
 compaction triggers against and `/context` reports on; default 1,000,000 =
 K3's), `HARNESS_DB` (the serve session database; `--db` wins over it).
 
+## Tests
+
+`cargo test -p harness`. Nothing here touches the network, your credentials, or
+`~/.config/harness` — the loop tests (`src/loop_tests.rs`) run against an axum
+server on an ephemeral loopback port that replays scripted SSE and records what
+was sent to it, and they build a `Session` directly rather than through
+`Session::start`, which would load real credentials and create `system.md`.
+
+They cover the paths where a bug is expensive rather than annoying: a tool-call
+round trip feeding its result back, `MAX_TURNS` stopping instead of spinning, an
+API error ending the turn without killing the session, guidance arriving at a
+tool boundary still answering *every* call (an unanswered one makes the history
+permanently unusable), compaction firing inside the loop and asking without
+tools, and a failed summary leaving the history untouched.
+
+The 401-retry loop is **not** covered: it needs a credentials file and an OAuth
+endpoint to rotate against. Its pieces are tested in `auth.rs`; the API-key 401
+path, where no retry is possible, is covered here.
+
 ## Deliberate limitations
 
 - The context window is not something the API reports. The default (1,000,000)

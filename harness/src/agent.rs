@@ -26,7 +26,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-const MAX_TURNS: usize = 40; // tool-call round trips per user message
+// pub(crate) so the loop tests assert against the real bound rather than a
+// copy of it that could drift.
+pub(crate) const MAX_TURNS: usize = 40; // tool-call round trips per user message
 const REQ_TIMEOUT: Duration = Duration::from_secs(600); // whole API round trip
 
 /// Context window assumed when `KIMI_CONTEXT_WINDOW` is unset: K3's, which is
@@ -207,7 +209,11 @@ pub struct Session {
     /// `stats.round_trips` as of the last compaction. Compaction waits for a
     /// *newer* measurement than that, so it can never fire twice on the same
     /// (now stale) prompt size.
-    compacted_after: u64,
+    ///
+    /// pub(crate) only so the loop tests can build a [Session] directly — that
+    /// path skips credential loading and system-prompt composition, neither of
+    /// which a test should touch.
+    pub(crate) compacted_after: u64,
 }
 
 impl Session {
