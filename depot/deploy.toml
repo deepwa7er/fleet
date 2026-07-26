@@ -1,0 +1,42 @@
+# tugboat deploy manifest — github.com/deepwa7er/fleet
+#   deploy:  tugboat deploy      (from this directory)
+#
+# Routine deploy: cross-compile a static musl binary locally and ship it.
+# Infrastructure (service user, its systemd-journal membership, the unit, the
+# state dir) is deploy/provision.sh — a one-time/on-change step, not run here.
+# depot binds loopback; breakwater fronts it at
+# https://depot.intern.deepwa7er.net.
+name = "depot"
+host = "deepwa7er"
+# Loopback port the service binds; breakwater's route is GENERATED from this
+# (`tugboat fleet gen`).
+port = 8100
+
+[state]
+# The warehouse itself — the one thing here that is not reproducible from a
+# deploy, so fleet-backup snapshots it. The journald read cursor lives beside it
+# in /var/lib/depot but is disposable: deleting it re-ingests from the start of
+# the journal, which is safe because inserts are idempotent.
+db = "depot.db"
+
+[build]
+# Static musl release build for the VPS. depot bundles SQLite's C source via
+# rusqlite, so the cross C-compiler/archiver are wired up alongside the linker —
+# same shape as clothes.
+cmd = "(rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true) && CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc AR_x86_64_unknown_linux_musl=x86_64-linux-musl-ar CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --target x86_64-unknown-linux-musl -p depot"
+
+[[artifacts]]
+src = "{workspace}/target/x86_64-unknown-linux-musl/release/depot"
+dest = "/usr/local/bin/depot"
+
+# No web bundle yet: depot's surface is its JSON API, so `/` 404s until a view
+# lands. Add a `kind = "dir"` artifact for web/dist at that point.
+
+[health]
+# depot binds loopback, so health is a real HTTP check on it (the shared
+# /healthz from fleet-common).
+url = "http://127.0.0.1:8100/healthz"
+
+[lighthouse]
+# Monitor depot from the fleet dashboard (status + logs).
+enroll = true
