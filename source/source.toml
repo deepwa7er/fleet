@@ -4,9 +4,12 @@
 # breakwater (on the VPS) can reach it over the tailnet; for local development,
 # set it to 127.0.0.1 and run `cd web && bun run dev` (which proxies /api here).
 
-# The dev box's Tailscale IP. The launchd agent and breakwater's upstream both
-# reference this address.
-bind = "100.111.100.87"
+# The dev box's Tailscale IP. A bind needs a literal local address, so unlike
+# breakwater's upstream (which uses the MagicDNS name) this is the raw IP — and
+# it is therefore the one place that must be re-checked if the dev box's tailnet
+# address ever changes again. It last changed 2026-07-26, when a duplicate
+# Tailscale node on this machine was retired.
+bind = "100.74.202.93"
 port = 7879
 
 # The fleet manifest: the monorepo's top-level directories are the repos to

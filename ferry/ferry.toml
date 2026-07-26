@@ -52,6 +52,6 @@ open = "https://lagoon.intern.deepwa7er.net"
 # start if token_env names a variable that isn't set, so it's never assumed.
 # [[action]]
 # keyword = "tug"
-# url = "http://100.111.100.87:7878/deploy/{1}"
+# url = "http://deepwater-1.tailcfab97.ts.net:7878/deploy/{1}"
 # token_env = "FERRY_TUGBOAT_TOKEN"
 # open = "https://lighthouse.intern.deepwa7er.net"

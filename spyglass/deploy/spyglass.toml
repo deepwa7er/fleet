@@ -17,7 +17,7 @@ github_org = "deepwa7er"
 [[sources]]
 name = "source"
 kind = "code"
-url = "http://100.111.100.87:7879"
+url = "http://deepwater-1.tailcfab97.ts.net:7879"
 
 # Notes search — the `lagoon` service on this VPS (loopback, same box as breakwater
 # routes it to).
