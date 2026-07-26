@@ -245,7 +245,7 @@ pub fn run(
     // never reach the host (a build that didn't compile, a missing artifact) are
     // exactly the ones the host ledger can't see. Warned about, never fatal.
     let outcome = run_measured(manifest, project_dir, source, log, at, &workdir, &workdir_str, &mut rec);
-    events::append(&rec.finish(&outcome), log);
+    events::record(&rec.finish(&outcome), log);
     outcome
 }
 

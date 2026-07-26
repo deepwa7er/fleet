@@ -225,11 +225,60 @@ fn resolve_log_path(xdg_data_home: Option<OsString>, home: Option<OsString>) -> 
     Ok(base.join("tugboat").join("deploys.jsonl"))
 }
 
-/// Append one event. Best-effort by design: a deploy's outcome must never change
-/// because an analytics write failed, so a problem is warned about and dropped.
-pub fn append(event: &DeployEvent, log: &dyn LogSink) {
+/// Where deploy events are forwarded for the fleet-wide view.
+const DEPOT_URL_DEFAULT: &str = "https://depot.intern.deepwa7er.net/api/events/deploy";
+
+/// How long a deploy will wait on the warehouse before giving up on it.
+const PUSH_TIMEOUT_SECS: &str = "5";
+
+/// Record one event: append it locally, then forward it to depot.
+///
+/// Both halves are best-effort by design — a deploy's outcome must never change
+/// because an analytics write failed. The local append is the durable record and
+/// happens first; depot is the aggregate view and may be down, unreachable from
+/// this network, or not yet deployed.
+pub fn record(event: &DeployEvent, log: &dyn LogSink) {
     if let Err(err) = try_append(event) {
         log.line(&format!("    warning: could not record deploy event: {err:#}"));
+    }
+    if let Err(err) = try_push(event) {
+        // Not a warning: the dev box is often off the tailnet, and the local
+        // JSONL still holds the event for a later backfill. Noise here would
+        // train the reader to ignore the deploy's real output.
+        log.line(&format!("    note: deploy event not forwarded to depot ({err})"));
+    }
+}
+
+/// Forward one event to depot.
+///
+/// Shells out to `curl` rather than pulling an HTTP+TLS client into the
+/// deployer, the same call tugboat's own health probe makes. depot's ingest is
+/// idempotent on `(name, at)`, so a resend after a failure is always safe.
+fn try_push(event: &DeployEvent) -> Result<(), String> {
+    let url = std::env::var("DEPOT_URL").unwrap_or_else(|_| DEPOT_URL_DEFAULT.to_string());
+    if url.is_empty() {
+        return Ok(()); // Explicitly disabled.
+    }
+    let body = serde_json::to_string(event).map_err(|e| e.to_string())?;
+    let out = std::process::Command::new("curl")
+        .args([
+            "-fsS",
+            "--max-time",
+            PUSH_TIMEOUT_SECS,
+            "-X",
+            "POST",
+            "-H",
+            "content-type: application/json",
+            "--data-binary",
+            &body,
+            &url,
+        ])
+        .output()
+        .map_err(|e| format!("running curl: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
 }
 
