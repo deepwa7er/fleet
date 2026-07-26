@@ -331,7 +331,14 @@ fn target_dir(repo: &Path) -> Result<PathBuf> {
 fn verify_tugboat_repo(repo: &Path) -> Result<()> {
     #[derive(Deserialize)]
     struct CargoToml {
-        package: CargoPackage,
+        // Both optional so that a manifest which is *valid TOML but the wrong
+        // manifest* is diagnosed here, with a remedy, rather than by serde. A
+        // workspace root has no `[package]`, and since tugboat moved into the
+        // monorepo that root is the likeliest thing `--repo` (default `.`)
+        // points at — it produced `missing field 'package'` against line 1 of a
+        // file the reader never knowingly chose.
+        package: Option<CargoPackage>,
+        workspace: Option<toml::Value>,
     }
     #[derive(Deserialize)]
     struct CargoPackage {
@@ -343,11 +350,28 @@ fn verify_tugboat_repo(repo: &Path) -> Result<()> {
         .with_context(|| format!("reading {} (is --repo a tugboat checkout?)", cargo.display()))?;
     let parsed: CargoToml =
         toml::from_str(&text).with_context(|| format!("parsing {}", cargo.display()))?;
-    if parsed.package.name != "tugboat" {
+
+    let Some(package) = parsed.package else {
+        if parsed.workspace.is_some() {
+            bail!(
+                "{} is a cargo workspace root, not a crate — \
+                 run `tugboat self-deploy` from the tugboat directory itself \
+                 (`cd {}/tugboat`), or pass `--repo {}/tugboat`",
+                cargo.display(),
+                repo.display(),
+                repo.display()
+            );
+        }
+        bail!(
+            "{} declares no [package]; point --repo at the tugboat checkout",
+            cargo.display()
+        );
+    };
+    if package.name != "tugboat" {
         bail!(
             "{} is the `{}` crate, not tugboat; point --repo at the tugboat checkout",
             cargo.display(),
-            parsed.package.name
+            package.name
         );
     }
     Ok(())
@@ -367,4 +391,64 @@ fn step(tag: &str, msg: &str) {
 
 fn note(msg: &str) {
     println!("==> {msg}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A throwaway directory holding one `Cargo.toml`. Named per test so
+    /// concurrent tests can't collide.
+    fn repo_with(name: &str, manifest: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tugboat-selfdeploy-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), manifest).unwrap();
+        dir
+    }
+
+    #[test]
+    fn accepts_the_tugboat_crate() {
+        let dir = repo_with("ok", "[package]\nname = \"tugboat\"\nversion = \"0.1.0\"\n");
+        assert!(verify_tugboat_repo(&dir).is_ok());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_workspace_root_names_the_remedy() {
+        // The mistake this exists for: `--repo` defaults to `.`, and since
+        // tugboat moved into the monorepo the root is what you're standing in.
+        // Before, serde reported `missing field 'package'` against line 1.
+        let dir = repo_with("ws", "# The fleet workspace\n[workspace]\nmembers = [\"tugboat\"]\n");
+        let err = verify_tugboat_repo(&dir).unwrap_err().to_string();
+        assert!(err.contains("workspace root"), "got: {err}");
+        assert!(err.contains("/tugboat"), "must name the directory to use; got: {err}");
+        assert!(!err.contains("missing field"), "serde's message must not surface; got: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn another_crate_is_named() {
+        let dir = repo_with("other", "[package]\nname = \"depot\"\nversion = \"0.1.0\"\n");
+        let err = verify_tugboat_repo(&dir).unwrap_err().to_string();
+        assert!(err.contains("`depot` crate"), "got: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_manifest_with_neither_section_still_explains_itself() {
+        let dir = repo_with("empty", "[dependencies]\nserde = \"1\"\n");
+        let err = verify_tugboat_repo(&dir).unwrap_err().to_string();
+        assert!(err.contains("no [package]"), "got: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_missing_manifest_is_reported_as_such() {
+        let dir = std::env::temp_dir().join(format!("tugboat-selfdeploy-none-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = format!("{:#}", verify_tugboat_repo(&dir).unwrap_err());
+        assert!(err.contains("tugboat checkout"), "got: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
