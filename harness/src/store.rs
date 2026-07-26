@@ -67,6 +67,19 @@ pub const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (session_id, seq)
     );
     "#,
+    // 1 — APNs device tokens for push notifications.
+    r#"
+    -- One iOS device to notify when a turn ends. Deliberately not tied to a
+    -- session: the phone wants to hear about every session it started, and a
+    -- device registers once rather than per conversation.
+    --
+    -- Rows are removed when APNs reports the token is dead (410 Unregistered),
+    -- which is the only reliable signal that an app was deleted.
+    CREATE TABLE push_devices (
+        token    TEXT    PRIMARY KEY,
+        added_at INTEGER NOT NULL
+    );
+    "#,
 ];
 
 /// One durable write. Applied in channel order, which is emission order.
@@ -81,6 +94,10 @@ pub enum Write {
     Event { session: String, seq: u64, body: String },
     /// Remove the session and, by cascade, both of its logs.
     Delete { session: String },
+    /// Remember an iOS device to notify. Re-registering refreshes `added_at`.
+    RegisterDevice { token: String, added_at: u64 },
+    /// Drop a device APNs has told us is gone.
+    ForgetDevice { token: String },
 }
 
 /// A session as it was found on disk.
@@ -150,6 +167,16 @@ impl Store {
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
     }
 
+    /// Every registered device token, newest first.
+    pub fn devices(&self) -> Result<Vec<String>, String> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare("SELECT token FROM push_devices ORDER BY added_at DESC")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
+    }
+
     fn bodies(&self, sql: &str, session: &str) -> Result<Vec<Value>, String> {
         let conn = self.conn();
         let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
@@ -201,6 +228,14 @@ impl Store {
                 // so the ON DELETE CASCADE in the schema does the rest.
                 Write::Delete { session } => {
                     tx.execute("DELETE FROM sessions WHERE id = ?1", [session])
+                }
+                Write::RegisterDevice { token, added_at } => tx.execute(
+                    "INSERT INTO push_devices (token, added_at) VALUES (?1, ?2) \
+                     ON CONFLICT(token) DO UPDATE SET added_at = excluded.added_at",
+                    (token, *added_at as i64),
+                ),
+                Write::ForgetDevice { token } => {
+                    tx.execute("DELETE FROM push_devices WHERE token = ?1", [token])
                 }
             };
             result.map_err(|e| e.to_string())?;

@@ -26,6 +26,7 @@ use clap::Args;
 use fleet_common::util::default_db_path;
 use futures_util::{Stream, StreamExt};
 use harness::agent::{MessageSink, Session, SessionConfig, Steer, TurnIo, cancelled};
+use harness::push::{Notification, Pusher};
 use harness::store::{Store, Write, Writer, spawn_writer};
 use harness::util::{home, now_secs, resolve_path, short_args, truncate_chars};
 use serde::{Deserialize, Serialize};
@@ -279,6 +280,8 @@ struct AppState {
     sessions: Mutex<HashMap<String, Arc<SessionHandle>>>,
     next_id: AtomicU64,
     writer: Writer,
+    /// None until an APNs key is configured; push is optional everywhere.
+    pusher: Option<Arc<Pusher>>,
 }
 
 /// The web [TurnIo]: events out on the broadcast channel, mid-turn input
@@ -287,6 +290,22 @@ struct WebIo {
     emit: Arc<Emit>,
     input: mpsc::Receiver<UserMsg>,
     cancel: Arc<AtomicBool>,
+    session_id: String,
+    /// Human name for the session (its directory), used as a notification title.
+    label: String,
+    pusher: Option<Arc<Pusher>>,
+    /// Answer text streamed so far this turn, so the notification can preview
+    /// what the model actually said rather than just "done".
+    answer: String,
+}
+
+impl WebIo {
+    /// Fire a notification without making the turn wait for Apple.
+    fn push(&self, note: Notification) {
+        let Some(pusher) = &self.pusher else { return };
+        let pusher = Arc::clone(pusher);
+        tokio::spawn(async move { pusher.notify(note).await });
+    }
 }
 
 impl TurnIo for WebIo {
@@ -299,6 +318,7 @@ impl TurnIo for WebIo {
     }
 
     fn content(&mut self, delta: &str) {
+        self.answer.push_str(delta);
         self.emit.emit(EventKind::Content { delta: delta.to_string() });
     }
 
@@ -345,6 +365,9 @@ impl TurnIo for WebIo {
 
     async fn ask(&mut self, question: &str) -> Result<String, String> {
         self.emit.emit(EventKind::Ask { question: question.to_string() });
+        // A question stalls the turn until it is answered, so this is the one
+        // moment the agent genuinely needs the user's attention.
+        self.push(Notification::asked(&self.session_id, &self.label, question));
         loop {
             tokio::select! {
                 _ = cancelled(&self.cancel) => return Err("error: interrupted by user".into()),
@@ -369,21 +392,38 @@ impl TurnIo for WebIo {
     }
 }
 
-/// One task per session: owns the library Session and feeds it user lines.
-/// Exits when the last input sender is dropped (session deleted).
-///
-/// `restored` is a persisted history to resume from, appended after
-/// [Session::start] composes a fresh system prompt — so a resumed session
-/// keeps its memory but picks up any edits to system.md / AGENTS.md.
-async fn drive_session(
+/// Everything one session's driver task owns.
+struct Driver {
     emit: Arc<Emit>,
     input: mpsc::Receiver<UserMsg>,
     cancel: Arc<AtomicBool>,
     busy: Arc<AtomicBool>,
     config: SessionConfig,
+    /// A persisted history to resume from, appended after [Session::start]
+    /// composes a fresh system prompt — so a resumed session keeps its memory
+    /// but picks up any edits to system.md / AGENTS.md.
     restored: Vec<Value>,
     sink: Arc<dyn MessageSink>,
-) {
+    session_id: String,
+    label: String,
+    pusher: Option<Arc<Pusher>>,
+}
+
+/// One task per session: owns the library Session and feeds it user lines.
+/// Exits when the last input sender is dropped (session deleted).
+async fn drive_session(driver: Driver) {
+    let Driver {
+        emit,
+        input,
+        cancel,
+        busy,
+        config,
+        restored,
+        sink,
+        session_id,
+        label,
+        pusher,
+    } = driver;
     let mut session = match Session::start(config).await {
         Ok(mut s) => {
             s.cancel = Arc::clone(&cancel);
@@ -404,7 +444,15 @@ async fn drive_session(
             return;
         }
     };
-    let mut io = WebIo { emit: Arc::clone(&emit), input, cancel };
+    let mut io = WebIo {
+        emit: Arc::clone(&emit),
+        input,
+        cancel,
+        session_id,
+        label,
+        pusher,
+        answer: String::new(),
+    };
     while let Some(msg) = io.input.recv().await {
         // Between turns: forget interrupts delivered while idle.
         session.cancel.store(false, Ordering::SeqCst);
@@ -414,8 +462,17 @@ async fn drive_session(
                 session.push_user(&text);
                 busy.store(true, Ordering::SeqCst);
                 emit.emit(EventKind::TurnStart);
+                io.answer.clear();
                 let fatal = session.run_turn(&mut io).await;
                 busy.store(false, Ordering::SeqCst);
+                // The point of push: this is where a turn started from a phone
+                // and left to run finally has something to say.
+                io.push(Notification::turn_ended(
+                    &io.session_id,
+                    &io.label,
+                    &io.answer,
+                    fatal.as_deref(),
+                ));
                 emit.emit(EventKind::TurnEnd { fatal });
             }
             UserMsg::Reset => {
@@ -539,8 +596,28 @@ fn start_session(state: &AppState, restore: Restore) {
         created_at,
     });
     let sink = Arc::new(StoreSink { session: id.clone(), writer: state.writer.clone() });
-    tokio::spawn(drive_session(emit, input_rx, cancel, busy, config, messages, sink));
+    tokio::spawn(drive_session(Driver {
+        emit,
+        input: input_rx,
+        cancel,
+        busy,
+        config,
+        restored: messages,
+        sink,
+        session_id: id.clone(),
+        label: session_label(&cwd),
+        pusher: state.pusher.clone(),
+    }));
     state.sessions.lock().unwrap_or_else(|e| e.into_inner()).insert(id, handle);
+}
+
+/// A session's short name: the last path component of its working directory,
+/// which is what distinguishes one session from another at a glance.
+fn session_label(cwd: &std::path::Path) -> String {
+    cwd.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "harness".to_string())
 }
 
 async fn delete_session(
@@ -578,6 +655,30 @@ async fn post_message(
         .await
         .map_err(|_| (axum::http::StatusCode::GONE, "session closed".to_string()))?;
     Ok(axum::http::StatusCode::ACCEPTED)
+}
+
+#[derive(Deserialize)]
+struct RegisterDevice {
+    /// APNs device token, hex, as the app receives it from iOS.
+    token: String,
+}
+
+/// Register a phone to be notified when turns end. Idempotent — the app
+/// re-registers on every launch, because iOS can hand out a new token at any
+/// time and only the app finds out.
+async fn register_device(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    axum::Json(body): axum::Json<RegisterDevice>,
+) -> ApiResult<axum::http::StatusCode> {
+    let token = body.token.trim().to_string();
+    if token.is_empty() || !token.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "token must be a non-empty hex string".to_string(),
+        ));
+    }
+    state.writer.send(Write::RegisterDevice { token, added_at: now_secs() });
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 async fn interrupt(
@@ -750,10 +851,14 @@ pub async fn serve(args: ServeArgs) -> Result<(), String> {
     let db_path = args.db_path();
     let store = Arc::new(Store::open(&db_path)?);
     harness::log(&format!("[serve] sessions at {}", db_path.display()));
+    let writer = spawn_writer(Arc::clone(&store));
     let state = Arc::new(AppState {
         sessions: Mutex::new(HashMap::new()),
         next_id: AtomicU64::new(0),
-        writer: spawn_writer(Arc::clone(&store)),
+        // Push is optional: absent an APNs key this is None and everything
+        // else behaves exactly as it did before.
+        pusher: Pusher::load(Arc::clone(&store), writer.clone()).map(Arc::new),
+        writer,
     });
     match restore_sessions(&state, &store) {
         Ok(0) => {}
@@ -771,6 +876,7 @@ pub async fn serve(args: ServeArgs) -> Result<(), String> {
         .route("/api/sessions/{id}/interrupt", axum::routing::post(interrupt))
         .route("/api/sessions/{id}/reset", axum::routing::post(reset))
         .route("/api/sessions/{id}/events", axum::routing::get(events))
+        .route("/api/devices", axum::routing::post(register_device))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind((ip, args.port))
         .await

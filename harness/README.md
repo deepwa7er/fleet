@@ -32,6 +32,7 @@ POST   /api/sessions/{id}/messages {text} send a message (mid-turn = steer)
 POST   /api/sessions/{id}/interrupt       abort the current turn
 POST   /api/sessions/{id}/reset           clear history (409 while busy)
 GET    /api/sessions/{id}/events          SSE: full replay, then live events
+POST   /api/devices            {token}    register an iOS device for push
 ```
 
 Each session is a driver task owning a library `Session` with its own working
@@ -175,6 +176,46 @@ Env vars: `KIMI_API_KEY`, `KIMI_MODEL` (default `k3`), `KIMI_BASE_URL`,
 `KIMI_CODE_HOME`, `KIMI_SYSTEM_PROMPT`, `KIMI_CONTEXT_WINDOW` (the window
 compaction triggers against and `/context` reports on; default 1,000,000 =
 K3's), `HARNESS_DB` (the serve session database; `--db` wins over it).
+
+## Push notifications
+
+`harness serve` can notify the [Harness iOS app](https://github.com/deepwa7er/Harness)
+when a turn ends or the model asks a question — the point being that you can
+start something long from your phone, lock it, and have the answer find you.
+
+**Off until configured, and it fails soft.** `~/.config/harness/push.toml` is
+seeded on first run with everything harness already knows (team and bundle id)
+and one blank to fill in. Until the blank is filled and the `.p8` exists, push
+is disabled and the server behaves exactly as before — a deploy on a machine
+without the key must not fail, and the key is not in this repo and never will
+be. Every disabled path logs a distinct reason:
+
+```
+[push] disabled — created ~/.config/harness/push.toml; fill in key_id to enable
+[push] disabled — key_id is blank in ~/.config/harness/push.toml (see the comments there)
+[push] disabled — cannot read ~/.config/harness/apns.p8: No such file or directory
+[push] disabled — ~/.config/harness/apns.p8 is not a usable APNs key: InvalidKeyFormat
+[push] enabled — com.deepwa7er.Harness (sandbox)
+```
+
+To turn it on: enable Push Notifications on the `com.deepwa7er.Harness` App ID,
+create an APNs key, save it as `~/.config/harness/apns.p8`, and put its key id
+in `push.toml`. The full steps are in the seeded file's comments.
+
+**`sandbox` must match the app's `aps-environment`.** A token minted for one
+APNs environment is rejected by the other, and that mismatch is the single most
+common reason a correctly-built push silently never arrives. An Xcode build
+onto your own device is `development`/`sandbox = true`; TestFlight and the App
+Store are `production`/`sandbox = false`.
+
+Devices register themselves (`POST /api/devices {token}`, idempotent — iOS can
+reissue a token at any time and only the app finds out). A `410 Unregistered`
+from APNs drops the token, which is the only reliable signal that an app was
+deleted.
+
+Delivery is best-effort by design: a notification is a courtesy, the transcript
+is the record. Sending happens off the turn's task, and nothing in this path
+can fail a turn.
 
 ## Tests
 

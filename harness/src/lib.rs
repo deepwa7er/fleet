@@ -19,6 +19,7 @@ pub mod auth;
 #[cfg(test)]
 mod loop_tests;
 pub mod prompt;
+pub mod push;
 pub mod store;
 pub mod tools;
 pub mod usage;

@@ -11,6 +11,11 @@ clap = { workspace = true, features = ["derive"] }
 # migration fingerprinting rather than its own copy of both.
 fleet-common = { path = "../crates/fleet-common" }
 rusqlite = { workspace = true, features = ["bundled"] }
+# APNs push (optional at runtime): ES256 JWTs for Apple's token auth.
+# Pulls in `ring`, which rustls already puts in the tree — no new native surface.
+# use_pem: APNs hands you a PKCS#8 .p8, so PEM parsing is the whole point.
+jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
+toml = { workspace = true }
 futures-util = "0.3"
 # rustls (not native-tls): matches the fleet's TLS choice; the static-musl
 # cross-build stays possible if harness ever needs to ship to a Linux host.
