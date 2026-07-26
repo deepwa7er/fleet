@@ -21,7 +21,10 @@ tower-http = { workspace = true, features = ["fs"] }
 
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+# "sync" + "io-std": the access log's mpsc channel and its stdout writer task
+# (src/access.rs) — records leave the request path over a bounded channel and are
+# written to the journal by one background task.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "io-std", "sync", "time"] }
 toml = { workspace = true }
 
 # Enumerate local interface addresses to discover the host's Tailscale IPv4 at

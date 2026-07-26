@@ -63,6 +63,46 @@ cache_dir = "/var/lib/breakwater/acme"
 DNS-01 propagation is confirmed against the zone's authoritative nameservers
 before the challenge is marked ready, so a slow record can't fail the order.
 
+## Access log
+
+Every request produces one JSON line on stdout, captured by journald. Because
+breakwater fronts the whole fleet, this is the only place that records **which
+services actually get used** — nothing else in the fleet knows.
+
+```sh
+journalctl -u breakwater -o cat | grep '"kind":"access"' | jq
+```
+
+```json
+{"kind":"access","at_ms":1785085129312,"route":"proxy","host":"spyglass.intern.deepwa7er.net",
+ "method":"GET","path":"/search","query":"q=axum","status":200,"ms":12,
+ "client_ip":"100.98.184.58","user_agent":"Mozilla/5.0 …"}
+```
+
+- `route` is the routing decision — `proxy` (forwarded to a local service),
+  `static` (served from disk), or `miss` (no route for the `Host`, a 404 from
+  breakwater itself). Every outcome is recorded, failures included.
+- `ms` is time to the response **head**, not the full response. Bodies stream
+  (SSE log tails, deploy consoles) and can outlive the head by minutes, so a
+  body-inclusive number would measure how long a client stayed connected rather
+  than how fast the fleet answered.
+- `query` and `user_agent` are omitted when absent.
+
+**Filter out monitoring traffic.** lighthouse probes every routed host on an
+interval and is the loudest client in the log; it identifies itself as
+`lighthouse-probe/1`. To see human use:
+
+```sh
+journalctl -u breakwater -o cat | grep '"kind":"access"' \
+  | jq -r 'select(.user_agent != "lighthouse-probe/1") | .host' | sort | uniq -c | sort -rn
+```
+
+Recording never blocks or slows a request: records cross a bounded channel to a
+single writer task, and on overflow they are **dropped rather than awaited** — a
+lost line is cheaper than a delayed request. Drops are counted and emitted as
+`{"kind":"access_dropped","count":N}`, so a gap in the data always shows up as a
+gap rather than silently vanishing.
+
 ## Build
 
 Cross-compiles to a static musl binary (ring crypto provider throughout, so no

@@ -21,6 +21,7 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
+use breakwater::access::{self, Recorder};
 use breakwater::cert::{self, CertMaterial};
 use breakwater::config::Config;
 use breakwater::proxy::{self, Router};
@@ -77,10 +78,14 @@ async fn main() -> anyhow::Result<()> {
         .map(|port| SocketAddr::new(IpAddr::V4(tailnet_ip), port));
     println!("breakwater: tailnet address {tailnet_ip}");
 
+    // One access-log writer task for the whole process; every connection records
+    // through a clone of the returned handle.
+    let recorder = access::spawn();
+
     // The TLS proxy is mandatory; the redirect and health listeners are optional
     // and degrade to a never-resolving future when not configured. Any bind
     // failure surfaces immediately and stops the process.
-    let https = serve_https(https_addr, acceptor, router);
+    let https = serve_https(https_addr, acceptor, router, recorder);
     let redirect = optional(redirect_addr, serve_redirect);
     let health = optional(config.health_addr, serve_health);
 
@@ -114,7 +119,7 @@ where
 /// Accept TLS connections and proxy each one. Per-connection failures (a TLS
 /// handshake that aborts, a client that hangs up) are logged and dropped; only
 /// a failure to accept at all propagates.
-async fn serve_https(addr: SocketAddr, acceptor: TlsAcceptor, router: Arc<Router>) -> anyhow::Result<()> {
+async fn serve_https(addr: SocketAddr, acceptor: TlsAcceptor, router: Arc<Router>, recorder: Recorder) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("failed to bind https listener on {addr}"))?;
@@ -127,6 +132,7 @@ async fn serve_https(addr: SocketAddr, acceptor: TlsAcceptor, router: Arc<Router
             .with_context(|| format!("accept failed on {addr}"))?;
         let acceptor = acceptor.clone();
         let router = router.clone();
+        let recorder = recorder.clone();
         tokio::spawn(async move {
             let tls = match acceptor.accept(stream).await {
                 Ok(tls) => tls,
@@ -138,7 +144,8 @@ async fn serve_https(addr: SocketAddr, acceptor: TlsAcceptor, router: Arc<Router
             let client_ip = peer.ip();
             let service = service_fn(move |req: Request<hyper::body::Incoming>| {
                 let router = router.clone();
-                async move { Ok::<_, Infallible>(proxy::handle(req, router, client_ip).await) }
+                let recorder = recorder.clone();
+                async move { Ok::<_, Infallible>(proxy::handle(req, router, recorder, client_ip).await) }
             });
             // `with_upgrades` lets WebSocket / other Upgrade tunnels hand off the
             // raw connection after the 101.

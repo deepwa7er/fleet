@@ -25,6 +25,15 @@ use crate::systemd;
 /// `systemctl` and `curl`.
 const MIN_INTERVAL_SECS: u64 = 10;
 
+/// The `User-Agent` the reachability probe sends.
+///
+/// The probe fetches *every* routed host on an interval, so in breakwater's
+/// access log it is by far the loudest client — and it is entirely synthetic.
+/// A distinctive agent makes monitoring traffic trivially separable from real
+/// use, which is the difference between "which services do I actually open"
+/// being answerable and being drowned out.
+const PROBE_USER_AGENT: &str = "lighthouse-probe/1";
+
 /// Run the collector loop. The caller only spawns this when history is enabled
 /// and the store opened, so it always has somewhere to write.
 pub async fn run(config: Config, store: Arc<Store>) {
@@ -89,6 +98,8 @@ async fn probe(url: &str, timeout_secs: u64) -> Probe {
             "/dev/null",
             "-m",
             &timeout_secs.to_string(),
+            "-A",
+            PROBE_USER_AGENT,
             "-w",
             "%{http_code} %{time_total}",
             url,

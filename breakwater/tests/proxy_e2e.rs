@@ -14,6 +14,7 @@ use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream};
 
+use breakwater::access;
 use breakwater::config::RouteTarget;
 use breakwater::proxy::{self, Router};
 
@@ -60,15 +61,20 @@ async fn spawn_upstream() -> SocketAddr {
 async fn spawn_proxy(router: Arc<Router>) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    // The real recorder: these tests drive the handler exactly as the binary
+    // wires it, access log included.
+    let recorder = access::spawn();
     tokio::spawn(async move {
         loop {
             let (stream, peer) = listener.accept().await.unwrap();
             let router = router.clone();
+            let recorder = recorder.clone();
             tokio::spawn(async move {
                 let ip = peer.ip();
                 let service = service_fn(move |req: Request<Incoming>| {
                     let router = router.clone();
-                    async move { Ok::<_, Infallible>(proxy::handle(req, router, ip).await) }
+                    let recorder = recorder.clone();
+                    async move { Ok::<_, Infallible>(proxy::handle(req, router, recorder, ip).await) }
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .serve_connection(TokioIo::new(stream), service)

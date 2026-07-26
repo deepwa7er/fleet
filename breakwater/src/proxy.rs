@@ -13,7 +13,7 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use bytes::Bytes;
@@ -24,6 +24,7 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 
+use crate::access::{Record, Recorder, Route};
 use crate::config::RouteTarget;
 use crate::static_files;
 
@@ -71,37 +72,69 @@ impl Router {
         Self { routes }
     }
 
-    /// Resolve a `Host` header value (which may carry a `:port`) to a target.
+    /// Resolve a normalized host (see [`normalize_host`]) to a target.
     fn target_for(&self, host: &str) -> Option<&RouteTarget> {
-        let host = host.split(':').next().unwrap_or(host).trim().to_ascii_lowercase();
-        self.routes.get(&host)
+        self.routes.get(host)
     }
+}
+
+/// Reduce a `Host` header value to the form routes are keyed by: no port, no
+/// surrounding whitespace, lowercased. Access records store the same normalized
+/// form, so one host aggregates to one bucket however a client spelled it.
+fn normalize_host(host: &str) -> String {
+    host.split(':').next().unwrap_or(host).trim().to_ascii_lowercase()
 }
 
 /// Entry point for one request. Never fails outward — routing misses become 404,
 /// upstream failures become 502, and static files are served by tower-http — so
 /// the caller's service is infallible.
-pub async fn handle(req: Request<Incoming>, router: Arc<Router>, client_ip: IpAddr) -> Response<ProxyBody> {
-    let host = req
-        .headers()
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
+///
+/// Every outcome, failures included, produces one access [`Record`]; routing all
+/// of them through this one function is what makes the log complete.
+pub async fn handle(
+    req: Request<Incoming>,
+    router: Arc<Router>,
+    recorder: Recorder,
+    client_ip: IpAddr,
+) -> Response<ProxyBody> {
+    let started = Instant::now();
+
+    // Captured up front: the branches below consume the request.
+    let host = normalize_host(req.headers().get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or(""));
+    let method = req.method().to_string();
+    let path = req.uri().path().to_string();
+    let query = req.uri().query().map(str::to_string);
+    let user_agent = req.headers().get(header::USER_AGENT).and_then(|v| v.to_str().ok()).map(str::to_string);
 
     // Resolve to an owned target so no borrow of the shared router is held across
     // the await; cloning a target is a single String/PathBuf clone per request.
-    match router.target_for(&host).cloned() {
-        None => status_page(StatusCode::NOT_FOUND, "no route for host"),
-        Some(RouteTarget::Static(root)) => static_files::serve(req, &root).await,
-        Some(RouteTarget::Proxy(upstream)) => match proxy(req, &upstream, client_ip).await {
-            Ok(response) => response,
-            Err(err) => {
-                eprintln!("breakwater: upstream error: {err:#}");
-                status_page(StatusCode::BAD_GATEWAY, "upstream error")
-            }
-        },
-    }
+    let (route, response) = match router.target_for(&host).cloned() {
+        None => (Route::Miss, status_page(StatusCode::NOT_FOUND, "no route for host")),
+        Some(RouteTarget::Static(root)) => (Route::Static, static_files::serve(req, &root).await),
+        Some(RouteTarget::Proxy(upstream)) => {
+            let response = match proxy(req, &upstream, client_ip).await {
+                Ok(response) => response,
+                Err(err) => {
+                    eprintln!("breakwater: upstream error: {err:#}");
+                    status_page(StatusCode::BAD_GATEWAY, "upstream error")
+                }
+            };
+            (Route::Proxy, response)
+        }
+    };
+
+    recorder.record(Record::new(
+        route,
+        host,
+        method,
+        path,
+        query,
+        response.status().as_u16(),
+        started.elapsed().as_millis() as u64,
+        client_ip.to_string(),
+        user_agent,
+    ));
+    response
 }
 
 async fn proxy(
