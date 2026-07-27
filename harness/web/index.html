@@ -547,8 +547,12 @@ function connect(id) {
 /* ── sessions ──────────────────────────────────────────── */
 async function api(path, opts) {
   const resp = await fetch(path, opts);
-  if (!resp.ok) throw new Error((await resp.text()) || resp.statusText);
-  return resp.status === 204 ? null : resp.json();
+  // Read the body once, then decide. Testing for 204 alone was wrong: sending
+  // a message answers 202 Accepted with no body, so the old code fed "" to
+  // JSON.parse and reported a failure for a request that had just succeeded.
+  const body = await resp.text();
+  if (!resp.ok) throw new Error(body || resp.statusText);
+  return body ? JSON.parse(body) : null;
 }
 function selectSession(id, cwd) {
   currentId = id;
