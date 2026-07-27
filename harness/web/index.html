@@ -353,8 +353,7 @@ const handlers = {
   tokens(ev) {
     // Same line the server used to send as a note, plus how full the window
     // is now that the client is told what the window is.
-    const pct = ev.window ? ` — ${Math.round(ev.prompt / ev.window * 100)}% of ${ev.window.toLocaleString()}` : "";
-    addNote(`[tokens] prompt=${ev.prompt} completion=${ev.completion}${pct}`, false);
+    addNote(`[tokens] prompt=${ev.prompt} completion=${ev.completion}${windowShare(ev)}`, false);
   },
   fatal(ev) { addNote("session failed: " + ev.message, true); },
   reasoning(ev) {
@@ -411,6 +410,16 @@ const handlers = {
   },
   reset() { clearChat(); },
 };
+/* How full the window is, as text. Floored at "<1%" on purpose: K3's window is
+   a million tokens, so a real session sits at a fraction of a percent for its
+   whole useful life, and a bare "0%" reads as broken rather than as "barely
+   used". */
+function windowShare(ev) {
+  if (!ev.window) return "";
+  const pct = ev.prompt / ev.window * 100;
+  const shown = pct > 0 && pct < 1 ? "<1" : Math.round(pct);
+  return ` — ${shown}% of ${ev.window.toLocaleString()}`;
+}
 function addNote(text, isFatal) {
   chatInner.appendChild(el("div", "note" + (isFatal ? " fatal" : ""), text));
   maybeScroll();
