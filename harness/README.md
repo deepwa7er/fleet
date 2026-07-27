@@ -23,6 +23,15 @@ it. `harness.py` is the original Python prototype, kept for reference.
 (deliberately styled outside the fleet's U.S. Graphics design system — a soft,
 minimal Jony Ive-style theme) plus a small JSON API:
 
+The stylesheet is **mobile-first**: the base rules are the phone layout and a
+single `@media (min-width: 760px)` adds the desktop chrome. On a phone the
+session list is an off-canvas drawer behind a ☰ button rather than a block
+above the chat, which is worth ~200px of vertical space. It follows the
+device's light/dark setting — sitting outside TRITIUM never meant "always
+light". Hover-only affordances are gated behind `@media (hover: hover)`, so
+the per-session delete button is permanently visible on touch instead of
+unreachable.
+
 ```
 GET    /api/healthz
 GET    /api/sessions                      list sessions (id, cwd, busy)

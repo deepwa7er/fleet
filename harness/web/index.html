@@ -5,95 +5,178 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>harness</title>
 <style>
+  /* Mobile-first: the base rules are the phone layout, and `min-width`
+     queries add the desktop chrome. On a phone the session list is an
+     off-canvas drawer rather than a block above the chat — it used to eat a
+     quarter of the viewport before you could read anything. */
   :root {
     --text: #1d1d1f;
     --gray: #86868b;
     --hairline: rgba(0, 0, 0, 0.08);
     --panel: #f5f5f7;
+    --bg: #fff;
+    --surface: #fff;
+    --disabled: #d2d2d7;
     --accent: #0071e3;
+    --accent-hover: #0077ed;
     --accent-soft: rgba(0, 113, 227, 0.08);
     --red: #ff3b30;
     --green: #28c840;
+    --shadow: rgba(0, 0, 0, 0.08);
+    --gutter: 16px;
+  }
+  /* Follows the device, like every other app on the phone. The iOS client
+     does the same; this UI deliberately sits outside the fleet's `tide`
+     theme, but "outside TRITIUM" never meant "always light". */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --text: #f5f5f7;
+      --gray: #98989d;
+      --hairline: rgba(255, 255, 255, 0.13);
+      --panel: #1c1c1e;
+      --bg: #000;
+      --surface: #1c1c1e;
+      --disabled: #3a3a3c;
+      --accent: #0a84ff;
+      --accent-hover: #3f9bff;
+      --accent-soft: rgba(10, 132, 255, 0.18);
+      --red: #ff453a;
+      --green: #32d74b;
+      --shadow: rgba(0, 0, 0, 0.6);
+    }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
     color: var(--text);
-    background: #fff;
+    background: var(--bg);
     display: flex;
     -webkit-font-smoothing: antialiased;
   }
   button { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
 
-  /* ── sidebar ─────────────────────────────────────────── */
+  /* ── sidebar / drawer ────────────────────────────────── */
   #sidebar {
-    width: 272px; flex: 0 0 272px;
+    /* Phone: an overlay drawer. `visibility` (not just transform) so a closed
+       drawer is not reachable by tab or a screen reader. */
+    position: fixed; top: 0; bottom: 0; left: 0;
+    width: 82vw; max-width: 320px;
+    z-index: 30;
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform 0.24s ease, visibility 0.24s;
     background: var(--panel);
     border-right: 1px solid var(--hairline);
     display: flex; flex-direction: column;
-    padding: 28px 16px 16px;
     gap: 16px;
+    padding: max(20px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    padding-left: max(16px, env(safe-area-inset-left));
   }
+  body.nav-open #sidebar { transform: none; visibility: visible; }
+  #scrim {
+    position: fixed; inset: 0; z-index: 20;
+    background: rgba(0, 0, 0, 0.35);
+  }
+  #scrim[hidden] { display: none; }
+
   .brand { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; padding: 0 10px; }
-  #sessions { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  #sessions { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
   .session {
     display: flex; align-items: center; gap: 10px;
-    padding: 10px 12px; border-radius: 12px;
-    text-align: left; width: 100%;
+    padding: 12px; border-radius: 12px;
+    text-align: left; width: 100%; min-height: 48px;
   }
-  .session:hover { background: rgba(0, 0, 0, 0.04); }
-  .session.active { background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08); }
+  .session.active { background: var(--surface); box-shadow: 0 1px 4px var(--shadow); }
   .session .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: 0 0 8px; }
   .session.busy .dot { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
   .session .meta { flex: 1; min-width: 0; }
   .session .name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .session .sub { font-size: 12px; color: var(--gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .session .del { color: var(--gray); font-size: 15px; padding: 2px 6px; border-radius: 6px; visibility: hidden; }
-  .session:hover .del { visibility: visible; }
-  .session .del:hover { color: var(--red); background: rgba(0,0,0,0.05); }
+  /* Always reachable: a touch device has no hover, so a hover-revealed
+     delete button simply cannot be used on a phone. */
+  .session .del {
+    color: var(--gray); font-size: 17px; border-radius: 8px;
+    flex: 0 0 auto; width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  @media (hover: hover) {
+    .session:hover { background: rgba(128, 128, 128, 0.12); }
+    .session .del { visibility: hidden; }
+    .session:hover .del { visibility: visible; }
+    .session .del:hover { color: var(--red); background: rgba(128, 128, 128, 0.16); }
+  }
   #new-session { display: flex; flex-direction: column; gap: 8px; }
   #new-cwd {
-    font: inherit; font-size: 13px; padding: 9px 12px;
-    border: 1px solid var(--hairline); border-radius: 10px; background: #fff; color: var(--text);
-    outline: none;
+    font: inherit; font-size: 16px; /* 16px: anything smaller makes iOS zoom on focus */
+    padding: 11px 12px;
+    border: 1px solid var(--hairline); border-radius: 10px;
+    background: var(--surface); color: var(--text);
+    outline: none; min-height: 44px;
   }
   #new-cwd:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
   #new-btn {
-    font-size: 13px; font-weight: 500; color: #fff; background: var(--accent);
-    border-radius: 10px; padding: 9px 12px;
+    font-size: 14px; font-weight: 500; color: #fff; background: var(--accent);
+    border-radius: 10px; padding: 11px 12px; min-height: 44px;
   }
-  #new-btn:hover { background: #0077ed; }
+  #new-btn:hover { background: var(--accent-hover); }
   .foot { font-size: 11px; color: var(--gray); padding: 0 10px; }
 
   /* ── main ────────────────────────────────────────────── */
-  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  #topbar {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 28px; border-bottom: 1px solid var(--hairline);
+  main {
+    flex: 1; display: flex; flex-direction: column;
+    /* Both matter in a flex column: without them a scrollable child refuses
+       to shrink and pushes the composer off-screen. */
+    min-width: 0; min-height: 0;
   }
-  #session-title { font-size: 13px; color: var(--gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #topbar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px var(--gutter);
+    padding-top: max(8px, env(safe-area-inset-top));
+    padding-left: max(var(--gutter), env(safe-area-inset-left));
+    padding-right: max(var(--gutter), env(safe-area-inset-right));
+    border-bottom: 1px solid var(--hairline);
+  }
+  #menu-btn {
+    flex: 0 0 auto; width: 40px; height: 40px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; color: var(--gray);
+  }
+  #menu-btn:hover { background: var(--panel); color: var(--text); }
+  #session-title {
+    flex: 1; min-width: 0;
+    font-size: 13px; color: var(--gray);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   #topbar .actions { display: flex; gap: 8px; flex: 0 0 auto; }
   .pill {
-    font-size: 12px; font-weight: 500; color: var(--gray);
-    border: 1px solid var(--hairline); border-radius: 999px; padding: 5px 14px;
+    font-size: 13px; font-weight: 500; color: var(--gray);
+    border: 1px solid var(--hairline); border-radius: 999px;
+    padding: 0 16px; min-height: 40px;
+    display: inline-flex; align-items: center;
   }
   .pill:hover { color: var(--text); background: var(--panel); }
   #stop-btn { color: var(--red); display: none; }
-  #stop-btn:hover { background: rgba(255, 59, 48, 0.08); color: var(--red); }
-  body.busy #stop-btn { display: block; }
+  #stop-btn:hover { background: rgba(255, 59, 48, 0.10); color: var(--red); }
+  body.busy #stop-btn { display: inline-flex; }
 
-  #chat { flex: 1; overflow-y: auto; }
-  #chat-inner { max-width: 720px; margin: 0 auto; padding: 40px 28px 24px; display: flex; flex-direction: column; gap: 18px; }
+  #chat { flex: 1; min-height: 0; overflow-y: auto; }
+  #chat-inner {
+    max-width: 720px; margin: 0 auto;
+    padding: 20px var(--gutter) 16px;
+    padding-left: max(var(--gutter), env(safe-area-inset-left));
+    padding-right: max(var(--gutter), env(safe-area-inset-right));
+    display: flex; flex-direction: column; gap: 16px;
+  }
 
   .msg-user {
-    align-self: flex-end; max-width: 78%;
+    align-self: flex-end; max-width: 85%;
     background: var(--accent); color: #fff;
     border-radius: 20px; padding: 10px 16px;
-    font-size: 15px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word;
+    font-size: 15px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere;
   }
   .msg-user .caption { display: block; font-size: 11px; opacity: 0.75; margin-bottom: 2px; }
-  .msg-assistant { align-self: stretch; font-size: 15px; line-height: 1.6; word-wrap: break-word; }
+  .msg-assistant { align-self: stretch; font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; min-width: 0; }
   .msg-assistant p { margin: 0.6em 0; }
   .msg-assistant p:first-child { margin-top: 0; }
   .msg-assistant p:last-child { margin-bottom: 0; }
@@ -109,42 +192,46 @@
   .msg-assistant blockquote {
     border-left: 3px solid var(--hairline); padding-left: 14px; color: var(--gray); margin: 0.6em 0;
   }
-  .msg-assistant table { border-collapse: collapse; margin: 0.6em 0; font-size: 14px; }
-  .msg-assistant th, .msg-assistant td { border: 1px solid var(--hairline); padding: 6px 12px; text-align: left; }
+  /* A wide table must scroll inside its own box; unwrapped it widens the
+     whole page and takes the layout with it. */
+  .table-wrap { overflow-x: auto; margin: 0.6em 0; -webkit-overflow-scrolling: touch; }
+  .msg-assistant table { border-collapse: collapse; font-size: 14px; }
+  .msg-assistant th, .msg-assistant td { border: 1px solid var(--hairline); padding: 6px 12px; text-align: left; white-space: nowrap; }
   .msg-assistant th { background: var(--panel); font-weight: 600; }
   code.inline {
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.87em;
     background: var(--panel); border-radius: 5px; padding: 2px 5px;
   }
   pre.code {
     font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; line-height: 1.5;
     background: var(--panel); border-radius: 12px; padding: 14px 16px;
-    overflow-x: auto; margin: 0.7em 0;
+    overflow-x: auto; margin: 0.7em 0; -webkit-overflow-scrolling: touch;
   }
   pre.code code { font: inherit; }
 
   details.reasoning summary {
     font-size: 13px; color: var(--gray); cursor: pointer; user-select: none;
+    padding: 6px 0; /* a comfortable tap target without looking like a button */
   }
   details.reasoning .body {
     font-size: 13px; color: var(--gray); line-height: 1.55;
-    white-space: pre-wrap; word-wrap: break-word;
+    white-space: pre-wrap; overflow-wrap: anywhere;
     border-left: 2px solid var(--hairline); padding-left: 12px; margin: 8px 0 4px;
   }
   details.tool {
     background: var(--panel); border-radius: 12px; padding: 8px 14px;
-    font-size: 13px;
+    font-size: 13px; min-width: 0;
   }
   details.tool summary {
     cursor: pointer; user-select: none;
     font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
-    color: var(--text);
+    color: var(--text); padding: 4px 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   details.tool.error summary { color: var(--red); }
   details.tool pre {
     font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; line-height: 1.5;
-    white-space: pre-wrap; word-wrap: break-word;
+    white-space: pre-wrap; overflow-wrap: anywhere;
     max-height: 260px; overflow-y: auto; margin-top: 8px; color: var(--gray);
   }
   .ask {
@@ -152,7 +239,7 @@
     font-size: 14px; line-height: 1.5;
   }
   .ask .hint { font-size: 12px; color: var(--gray); margin-top: 4px; }
-  .note { font-size: 12px; color: var(--gray); }
+  .note { font-size: 12px; color: var(--gray); overflow-wrap: anywhere; }
   .note.fatal { color: var(--red); }
   .thinking { color: var(--gray); font-size: 15px; letter-spacing: 2px; }
   .thinking span { animation: blink 1.4s infinite; }
@@ -163,39 +250,56 @@
 
   /* ── composer ────────────────────────────────────────── */
   #composer {
-    padding: 12px 28px calc(16px + env(safe-area-inset-bottom));
+    padding: 10px var(--gutter) calc(10px + env(safe-area-inset-bottom));
+    padding-left: max(var(--gutter), env(safe-area-inset-left));
+    padding-right: max(var(--gutter), env(safe-area-inset-right));
     border-top: 1px solid var(--hairline);
   }
   #composer-inner {
     max-width: 720px; margin: 0 auto;
     display: flex; align-items: flex-end; gap: 10px;
-    background: #fff; border: 1px solid rgba(0, 0, 0, 0.12); border-radius: 24px;
-    padding: 8px 8px 8px 18px;
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
+    background: var(--surface); border: 1px solid var(--hairline); border-radius: 24px;
+    padding: 6px 6px 6px 16px;
+    box-shadow: 0 8px 28px var(--shadow);
   }
   #composer-inner:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
   #input {
-    flex: 1; font: inherit; font-size: 15px; line-height: 1.45;
+    flex: 1; font: inherit;
+    font-size: 16px; /* 16px: anything smaller makes iOS zoom the page on focus */
+    line-height: 1.45;
     border: none; outline: none; resize: none; background: none; color: var(--text);
-    padding: 6px 0; max-height: 160px;
+    padding: 8px 0; max-height: 160px;
   }
   #send {
-    flex: 0 0 34px; width: 34px; height: 34px; border-radius: 50%;
+    flex: 0 0 36px; width: 36px; height: 36px; border-radius: 50%;
     background: var(--accent); color: #fff; font-size: 17px; line-height: 1;
     display: flex; align-items: center; justify-content: center;
   }
-  #send:disabled { background: #d2d2d7; cursor: default; }
+  #send:disabled { background: var(--disabled); cursor: default; }
 
-  @media (max-width: 760px) {
-    body { flex-direction: column; }
-    #sidebar { width: 100%; flex: 0 0 auto; border-right: none; border-bottom: 1px solid var(--hairline); padding: 16px; }
-    #sessions { flex-direction: row; overflow-x: auto; }
-    .session { min-width: 180px; }
-    .foot { display: none; }
+  /* ── desktop ─────────────────────────────────────────── */
+  @media (min-width: 760px) {
+    :root { --gutter: 28px; }
+    /* The drawer becomes an ordinary column and stops being an overlay. */
+    #sidebar {
+      position: static; transform: none; visibility: visible;
+      width: 272px; flex: 0 0 272px; max-width: none;
+      transition: none;
+      padding: 28px 16px 16px;
+    }
+    #scrim, #menu-btn { display: none; }
+    #topbar { padding-top: 14px; padding-bottom: 14px; }
+    #chat-inner { padding-top: 40px; padding-bottom: 24px; gap: 18px; }
+    .session { min-height: 0; padding: 10px 12px; }
+    .session .del { width: 28px; height: 28px; font-size: 15px; }
+    .pill { min-height: 0; padding: 5px 14px; font-size: 12px; }
+    .msg-user { max-width: 78%; }
+    #new-cwd, #new-btn { min-height: 0; font-size: 13px; padding: 9px 12px; }
   }
 </style>
 </head>
 <body>
+  <div id="scrim" hidden></div>
   <aside id="sidebar">
     <div class="brand">harness</div>
     <div id="sessions"></div>
@@ -207,6 +311,7 @@
   </aside>
   <main>
     <header id="topbar">
+      <button id="menu-btn" aria-label="Sessions" aria-expanded="false" aria-controls="sidebar">☰</button>
       <div id="session-title">no session</div>
       <div class="actions">
         <button id="stop-btn" class="pill">Stop</button>
@@ -278,7 +383,7 @@ function renderMarkdown(src) {
       const tag = i === 0 && rows.length > 1 ? "th" : "td";
       return "<tr>" + cells.map(c => "<" + tag + ">" + c + "</" + tag + ">").join("") + "</tr>";
     }).join("");
-    out.push("<table>" + body + "</table>");
+    out.push('<div class="table-wrap"><table>' + body + "</table></div>");
     table = [];
   };
   const flushAll = () => { flushPara(); flushList(); flushQuote(); flushTable(); };
@@ -450,7 +555,10 @@ function selectSession(id, cwd) {
   titleEl.textContent = cwd || id;
   document.querySelectorAll(".session").forEach(s => s.classList.toggle("active", s.dataset.id === id));
   connect(id);
-  input.focus();
+  setNav(false);
+  // Not on a phone: focusing here would throw the keyboard over the
+  // transcript you just asked to see.
+  if (window.matchMedia("(min-width: 760px)").matches) input.focus();
 }
 async function refreshSessions() {
   let data;
@@ -506,6 +614,21 @@ document.getElementById("stop-btn").addEventListener("click", () => {
 document.getElementById("reset-btn").addEventListener("click", () => {
   if (currentId) api("/api/sessions/" + currentId + "/reset", { method: "POST" }).catch(e => alert(e.message));
 });
+
+/* ── drawer (phone) ────────────────────────────────────── */
+/* On a phone the session list is an overlay; on a desktop the same markup is
+   a static column and these handlers are inert (the button is display:none
+   and the class has nothing to toggle). */
+const scrim = document.getElementById("scrim");
+const menuBtn = document.getElementById("menu-btn");
+function setNav(open) {
+  document.body.classList.toggle("nav-open", open);
+  menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  scrim.hidden = !open;
+}
+menuBtn.addEventListener("click", () => setNav(!document.body.classList.contains("nav-open")));
+scrim.addEventListener("click", () => setNav(false));
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") setNav(false); });
 
 /* ── composer ──────────────────────────────────────────── */
 function autogrow() {
