@@ -94,6 +94,10 @@ Each service directory has its own README covering its design in more detail.
 Rust (Tokio, Axum, rusqlite, Clap, tracing) · Go · React + TypeScript (Vite,
 Tailwind) · SQLite · systemd · Tailscale · GitHub Actions
 
+## License
+
+MIT — see [LICENSE](LICENSE).
+
 ---
 
 Each top-level directory was its own repository until 2026-07-01; history was
