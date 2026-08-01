@@ -8,3 +8,10 @@
  *
  * Consider organizing styles into separate files for maintainability.
  */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --accent: #6aa9ff;
+        --accent-hover: #9ac4ff;
+        --accent-text: #10141a;
+    }
+}
