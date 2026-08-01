@@ -1,0 +1,7 @@
+<%= turbo_stream.remove @comment %>
+
+<% if @topic.comments.none? %>
+  <%= turbo_stream.append "comments" do %>
+    <p id="no_comments">No comments.</p>
+  <% end %>
+<% end %>

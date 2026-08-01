@@ -7,6 +7,8 @@ class TopicsController < ApplicationController
 
   def show
     @topic = Topic.find(params[:id])
+    @comments = @topic.comments.order(created_at: :asc)
+    @comment = Comment.new
   end
   def new
     @topic = Topic.new
@@ -24,6 +26,6 @@ class TopicsController < ApplicationController
 
   private
   def topic_params
-    params.expect(topic: [:title, :body])
+    params.expect(topic: [ :title, :body ])
   end
 end

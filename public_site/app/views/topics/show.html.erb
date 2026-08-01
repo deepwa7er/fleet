@@ -4,4 +4,14 @@
   <p><%= @topic.created_at.strftime("%B %-d %Y") %></p>
   <%= simple_format @topic.body %>
 </article>
-<h2><%= link_to "<- Back to Forum", topics_path %></h2>
+
+<section>
+  <h2>Comments</h2>
+  <%= render "comments/list", comments: @comments %>
+  <h3>Add a comment</h3>
+  <div id="new_comment">
+    <%= render "comments/form", comment: @comment,
+               url: topic_comments_path(@topic), submit_label: "Post Comment"%>
+  </div>
+</section>
+<p><%= link_to "<- Back to Forum", topics_path %></p>

@@ -1,0 +1,8 @@
+<% content_for :title, "Edit comment" %>
+
+<h1>Edit comment</h1>
+
+<%= render "comments/form", comment: @comment,
+      url: comment_path(@comment), submit_label: "Update Comment"%>
+
+<%= link_to "Cancel", @comment.topic %>
