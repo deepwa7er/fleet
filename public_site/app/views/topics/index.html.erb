@@ -1,0 +1,13 @@
+<h1>Forum</h1>
+<%= link_to "New Topic", new_topic_path, class: "button" %>
+<% if @topics.any? %>
+  <% @topics.each do |topic| %>
+    <article>
+      <h2><%= link_to topic.title, topic_path(topic) %></h2>
+      <%= truncate topic.body, length: 150 %>
+      <p><%= topic.created_at.strftime("%B %-d %Y") %></p>
+    </article>
+  <% end %>
+  <% else %>
+    <p>No topics yet.</p>
+<% end %>

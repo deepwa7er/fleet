@@ -1,0 +1,7 @@
+<% content_for :title, @topic.title %>
+<article>
+  <h1><%= @topic.title %></h1>
+  <p><%= @topic.created_at.strftime("%B %-d %Y") %></p>
+  <%= simple_format @topic.body %>
+</article>
+<h2><%= link_to "<- Back to Forum", topics_path %></h2>
