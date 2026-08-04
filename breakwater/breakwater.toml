@@ -185,6 +185,31 @@ upstream = "deepwater-1.tailcfab97.ts.net:8098"
 label = "fizzy"
 upstream = "fedora-1.tailcfab97.ts.net:80"
 
+# Mailpit — the fleet's internal mail sink, on the fedora-1 laptop next to the
+# Once apps that generate mail. A plain Docker container (not an `once` app),
+# attached to the `once` bridge network so Fizzy and Campfire reach its SMTP
+# server by container name (`mailpit:1025`) with no published port and no
+# hardcoded IP.
+#
+# WHY A SINK RATHER THAN A MAIL SERVER: outbound :25 is blocked from both this
+# VPS (DigitalOcean policy) and the laptop's residential ISP, so no self-hosted
+# server here could ever deliver to the public internet. Mailpit accepts mail for
+# any recipient and delivers it nowhere — you read it in this web UI instead.
+# Nothing sent to it leaves the tailnet.
+#
+# The upstream is the UI port only. Mailpit's SMTP port is deliberately NOT
+# published to the host: it is reachable solely from inside the `once` docker
+# network, which is why running it with `--smtp-auth-accept-any` (needed because
+# Rails sends AUTH whenever SMTP_USERNAME is set, and `once` writes that variable
+# as an empty string it gives no way to unset) exposes nothing.
+#
+# On the laptop the UI is bound to the Tailscale IP rather than 0.0.0.0: it
+# renders sign-in codes in plaintext, so LAN exposure would let anyone on the
+# wifi read a code and sign in as the user.
+[[routes]]
+label = "mail"
+upstream = "fedora-1.tailcfab97.ts.net:8025"
+
 # Note: tidepool is intentionally NOT routed here. It runs as its own Tailscale
 # node (tsnet, `-tls`) and serves HTTPS itself at https://tidepool — there is no
 # plain-HTTP backend to proxy to.
