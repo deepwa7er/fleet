@@ -164,6 +164,27 @@ upstream = "deepwater-1.tailcfab97.ts.net:7880"
 label = "harness"
 upstream = "deepwater-1.tailcfab97.ts.net:8098"
 
+# Fizzy (37signals' kanban) — the first upstream that is neither a fleet service
+# nor on the VPS nor on the dev box: a Docker app on the `fedora-1` laptop,
+# managed by the `once` CLI (see also the Once Campfire install on the same box).
+#
+# The upstream is that laptop's :80, which belongs to Once's shared `kamal-proxy`
+# container, NOT to Fizzy directly — several Once apps sit behind it and it
+# selects among them strictly by `Host`. This route works because breakwater
+# forwards the inbound Host verbatim, so kamal-proxy sees the full
+# `fizzy.<base_domain>` and picks the right app. Install Fizzy with a matching
+# `once deploy --host`, or kamal-proxy 404s.
+#
+# Fizzy is deployed `--disable-tls`: its hostname resolves to a 100.x tailnet
+# address, which ACME HTTP-01 cannot reach, so kamal-proxy can never obtain a
+# cert for it. breakwater terminates TLS here instead, under the wildcard.
+#
+# Addressed by MagicDNS name rather than a raw 100.x address, for the same reason
+# as `source` above: a node's tailnet IP is not a constant.
+[[routes]]
+label = "fizzy"
+upstream = "fedora-1.tailcfab97.ts.net:80"
+
 # Note: tidepool is intentionally NOT routed here. It runs as its own Tailscale
 # node (tsnet, `-tls`) and serves HTTPS itself at https://tidepool — there is no
 # plain-HTTP backend to proxy to.
