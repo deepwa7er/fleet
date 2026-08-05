@@ -91,6 +91,10 @@ label = "lighthouse"
 upstream = "127.0.0.1:8080"
 
 [[routes]]
+label = "mirror"
+upstream = "127.0.0.1:8103"
+
+[[routes]]
 label = "recipes"
 upstream = "127.0.0.1:8097"
 

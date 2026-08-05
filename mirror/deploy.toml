@@ -1,0 +1,51 @@
+# tugboat deploy manifest — github.com/deepwa7er/fleet
+#   deploy:  tugboat deploy      (from this directory)
+#
+# Routine deploy: cross-compile a static musl binary locally and ship it.
+# Infrastructure (service user, systemd unit, state dir, the Fizzy token, the
+# public nginx vhost) is deploy/provision.sh — a one-time/on-change step, not
+# run here.
+#
+# mirror is the fleet's first PUBLIC service in this repo: breakwater fronts it
+# on the tailnet at https://mirror.intern.deepwa7er.net (route generated from
+# `port` below), and nginx serves it to the internet at
+# https://board.deepwa7er.com. Both point at the same loopback port; the public
+# vhost is deploy/nginx-mirror.conf.
+name = "mirror"
+host = "deepwa7er"
+# Loopback port the service binds; breakwater's route is GENERATED from this
+# (`tugboat fleet gen`).
+#
+# 8101 and 8102 look free in this file's neighbours but are NOT: readout and
+# blog hold them as Docker port mappings, and neither is a member of this
+# workspace, so nothing here would have caught the collision. Check
+# `ss -tlnp` on the box, not just the other deploy.toml files.
+port = 8103
+
+[state]
+# The snapshot, and the images pulled alongside it. Neither is a source of
+# truth — a sync rebuilds both from Fizzy — so losing them costs one sync
+# interval, not data. fleet-backup snapshots the DB anyway; it is cheap.
+db = "mirror.db"
+
+[build]
+# Static musl release build for the VPS. mirror bundles SQLite's C source via
+# rusqlite, so the cross C-compiler/archiver are wired up alongside the linker —
+# same shape as depot and clothes.
+cmd = "(rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true) && CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc AR_x86_64_unknown_linux_musl=x86_64-linux-musl-ar CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --target x86_64-unknown-linux-musl -p mirror"
+
+[[artifacts]]
+src = "{workspace}/target/x86_64-unknown-linux-musl/release/mirror"
+dest = "/usr/local/bin/mirror"
+
+# No web bundle: the pages are rendered by the binary itself (see src/render.rs
+# for why this service has no SPA), and its one stylesheet is inlined.
+
+[health]
+# mirror binds loopback, so health is a real HTTP check on it (the shared
+# /healthz from fleet-common).
+url = "http://127.0.0.1:8103/healthz"
+
+[lighthouse]
+# Monitor mirror from the fleet dashboard (status + logs).
+enroll = true

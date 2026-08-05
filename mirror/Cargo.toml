@@ -1,0 +1,50 @@
+[package]
+name = "mirror"
+version = "0.1.0"
+edition = "2021"
+description = "A public, read-only mirror of a published Fizzy board — pulls over the tailnet, serves server-rendered HTML from the VPS."
+
+[dependencies]
+fleet-common = { path = "../crates/fleet-common" }
+anyhow = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
+tower-http = { workspace = true, features = ["trace"] }
+# "bundled": compile SQLite from source so the static-musl cross-build carries
+# its own copy, exactly as clothes/recipes/depot do.
+rusqlite = { workspace = true, features = ["bundled"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+# rustls rather than the platform TLS, matching sonar/trawler/harness — the
+# workspace disables reqwest's default TLS backends for the musl builds.
+reqwest = { workspace = true, features = ["rustls-tls", "json", "gzip"] }
+
+# ── Dependencies unique to mirror, and why ──────────────────────────────────
+#
+# This is the fleet's first server-rendered UI (every other service ships a
+# React SPA). A public page has to survive without JavaScript, be crawlable,
+# and carry OpenGraph tags so shared links preview — none of which an SPA does
+# without a second rendering stack. Hence HTML on the server, and the three
+# crates that make that safe:
+#
+# maud — compile-time templates that HTML-escape every interpolation by
+# default. The alternative was `format!` into a String, where a single missed
+# escape on card text is an XSS hole on a public page.
+maud = "0.27"
+# ammonia — allowlist sanitizer (html5ever) for the rich text Fizzy hands us.
+# `card.description.to_s` is ActionText's raw body, NOT the sanitized render
+# path, so it must be sanitized here before it is stored. Doubles as the
+# rewrite pass that points <img> at our own asset cache (see assets.rs).
+ammonia = "4"
+# img-parts — losslessly drops metadata segments (EXIF/XMP) from JPEG, PNG and
+# WebP without re-encoding. Fizzy serves avatars and card images straight from
+# the phone that took them: the account owner's current avatar still carries
+# its full "Apple iPhone Air" EXIF block. Republishing that verbatim would put
+# camera and potentially GPS data on a public page.
+img-parts = "0.4"
+# sha2 — content addresses for the asset cache.
+sha2 = "0.10"

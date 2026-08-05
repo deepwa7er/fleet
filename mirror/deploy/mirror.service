@@ -1,0 +1,52 @@
+[Unit]
+Description=mirror — public read-only view of a published Fizzy board
+Documentation=https://github.com/deepwa7er/fleet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mirror
+Group=mirror
+# Creates /var/lib/mirror (owned by mirror, writable under ProtectSystem=strict)
+# for the snapshot database and the cached images.
+StateDirectory=mirror
+Environment=MIRROR_DB=/var/lib/mirror/mirror.db
+Environment=MIRROR_ASSETS=/var/lib/mirror/assets
+Environment=MIRROR_ADDR=127.0.0.1:8103
+Environment=MIRROR_SITE_NAME=board
+Environment=MIRROR_PUBLIC_URL=https://board.deepwa7er.com
+Environment=MIRROR_FIZZY_BASE=https://fizzy.intern.deepwa7er.net
+# Fizzy mounts itself under a numeric account slug; without this prefix every
+# request 302s to its sign-in menu instead of failing usefully.
+Environment=MIRROR_FIZZY_ACCOUNT=1
+# Read permission only — Identity::AccessToken#allows? rejects anything but GET
+# and HEAD for a `read` token. In a file rather than an Environment= line
+# because a unit's environment is readable via `systemctl show`.
+Environment=MIRROR_FIZZY_TOKEN_FILE=/etc/mirror/fizzy-token
+# Five minutes. The source is a kanban board a person edits by hand, and the
+# page states its own age, so a fresher poll would buy accuracy nobody can
+# perceive at the cost of waking a sleeping laptop twelve times an hour.
+Environment=MIRROR_SYNC_INTERVAL_SECS=300
+ExecStart=/usr/local/bin/mirror serve
+Restart=on-failure
+RestartSec=2
+
+# Hardening — mirror writes only its state dir, reads one secret out of /etc,
+# and makes outbound HTTPS requests to one tailnet host.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# This service listens on loopback and speaks to Fizzy over TCP. It has no
+# reason to hold a raw socket or an AF_PACKET socket, and saying so costs
+# nothing.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

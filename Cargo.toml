@@ -17,6 +17,7 @@ members = [
     "harbor/server",
     "harness",
     "lighthouse",
+    "mirror",
     "recipes",
     "regatta",
     "sonar",
