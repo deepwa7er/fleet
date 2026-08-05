@@ -181,13 +181,57 @@ final class WindowStack {
         let isFront: Bool
     }
 
-    /// Membership for the status menu and the switcher, in stack order.
+    /// Membership for the status menu and the panels, ordered by ⌘-digit.
+    ///
+    /// Digit order rather than stack order, so the list reads top to bottom as
+    /// ⌘1, ⌘2, ⌘3 — the order is the numbering. Windows holding no digit sort
+    /// last, keeping their relative stack order; the enumeration index is the
+    /// tiebreaker because Swift's sort is not stable, so equal keys would
+    /// otherwise shuffle between calls and make the list jitter.
     func windowList() -> [WindowEntry] {
         let front = front()
-        return windows.map {
-            WindowEntry(id: $0.id, number: $0.number, title: Windows.title(of: $0),
-                        pid: $0.pid, isFront: $0 === front)
+        return windows.enumerated()
+            .sorted { a, b in
+                (a.element.number ?? Int.max, a.offset) < (b.element.number ?? Int.max, b.offset)
+            }
+            .map {
+                WindowEntry(id: $0.element.id, number: $0.element.number,
+                            title: Windows.title(of: $0.element),
+                            pid: $0.element.pid, isFront: $0.element === front)
+            }
+    }
+
+    /// Renumber the stack from an explicit top-to-bottom order: the first
+    /// window becomes ⌘1, the second ⌘2, and so on. Past the ninth, windows
+    /// hold no digit — there are only nine keys.
+    ///
+    /// This is the drag-and-drop path, and it is a wholesale renumbering rather
+    /// than the swap `assignWindow` performs: the user is stating what the
+    /// order *is*, so every digit is rewritten to match rather than two windows
+    /// trading places.
+    func renumber(order ids: [CGWindowID]) {
+        for window in windows { window.number = nil }
+        var claimed: Set<Int> = []
+        for (index, id) in ids.prefix(9).enumerated() {
+            guard let window = windows.first(where: { $0.id == id }) else { continue }
+            window.number = index + 1
+            claimed.insert(index + 1)
         }
+
+        var map = Assignments.load()
+        // Reservations for apps that aren't here are kept — quitting an app
+        // still shouldn't forfeit its digit. But a reservation naming an app
+        // that *is* on the stack, at a digit the new order didn't give it, is
+        // now stale and would fight the order the user just set by hand.
+        let present = Set(windows.compactMap(\.appID))
+        for (digit, app) in map where present.contains(app) && !claimed.contains(digit) {
+            map[digit] = nil
+        }
+        for window in windows {
+            if let number = window.number, let app = window.appID { map[number] = app }
+        }
+        Assignments.save(map)
+        StateLog.append("renumbered \(min(ids.count, 9)) windows from drag order")
     }
 
     /// Put every enrolled window back where we found it.
