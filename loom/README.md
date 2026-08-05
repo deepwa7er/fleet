@@ -91,8 +91,9 @@ polling once a second, so a login launch needs no relaunch after you grant it.
 - Tiling happens at enrollment and when the display geometry changes. A window
   you drag or resize yourself is left where you put it rather than snapped
   back — **Retile all** in the command panel squares the whole stack up again,
-  front window first. That frame is the same one Rectangle's maximize produces
-  with a 10pt gap, which is where the habit of pressing ⌃⌥Enter came from. Apps
+  front window first. The stage is the visible area inset by 12pt on all four
+  sides, so it is centred by construction — 2pt tighter than Rectangle's
+  maximize, which is where the habit of pressing ⌃⌥Enter came from. Apps
   that refuse to resize past their own limits keep their size and are simply
   moved, exactly as at enrollment.
-- The gap around the stage lives in `Sources/Tiler/StageLayout.swift`.
+- The stage gap is 12pt on every side, in `Sources/Tiler/StageLayout.swift`.

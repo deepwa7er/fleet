@@ -255,9 +255,9 @@ final class WindowStack {
         guard let screen = screenFrame() else { return }
         let tile = StageLayout.tile(screen: screen)
         let front = front()
-        if let front { Windows.setFrame(front, tile) }
+        if let front { Windows.forceFrame(front, tile) }
         for window in windows where window !== front {
-            Windows.setFrame(window, tile)
+            Windows.forceFrame(window, tile)
         }
         StateLog.append("retiled \(windows.count) windows onto \(tile)")
     }
