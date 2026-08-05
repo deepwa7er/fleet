@@ -30,6 +30,13 @@ Clicking a row focuses that window and the panel stays put, so windows can be
 picked one after another. The panel sits above every ordinary window, so the
 window you pick is raised to just beneath it rather than over it.
 
+**Right-click a row** to send that window to another display. The display
+section turns into a picker naming the window — the display it is already on is
+left out, since sending it there is a no-op dressed up as a choice — and it
+lands on the destination's stage, the same frame it would get if Tiler managed
+it there. Tiler manages one display at a time, so the window then leaves the
+stack and its row drops out.
+
 Hovering a row reveals a **✕** at its trailing edge, which closes that window —
 the same thing ⌘W does, by pressing the window's own close button. It is not a
 process kill: the app decides what closing means, so unsaved-work prompts still

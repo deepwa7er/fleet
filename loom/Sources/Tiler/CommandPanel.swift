@@ -76,7 +76,13 @@ final class CommandPanel {
                 self?.toggleStartAtLogin()
                 self?.reload()
             },
-            onQuit: { NSApp.terminate(nil) })
+            onQuit: { NSApp.terminate(nil) },
+            onSend: { [weak self] id, uuid in
+                self?.stack.sendWindow(id: id, toDisplay: uuid)
+                // The window leaves the managed display, so the next membership
+                // poll drops its row on its own.
+                self?.reload()
+            })
 
         let anchor = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.main
@@ -172,6 +178,10 @@ private final class CommandContentView: NSView {
     private let onRetile: () -> Void
     private let onLoginToggle: () -> Void
     private let onQuit: () -> Void
+    private let onSend: (CGWindowID, String) -> Void
+    /// Set by right-clicking a row: the display section turns into a picker for
+    /// where to send that window, and turns back once one is chosen.
+    private var sendTarget: (id: CGWindowID, name: String)?
 
     private let scrollView = NSScrollView()
     private let list: WindowListView
@@ -194,7 +204,8 @@ private final class CommandContentView: NSView {
          onDisplay: @escaping (String) -> Void,
          onRetile: @escaping () -> Void,
          onLoginToggle: @escaping () -> Void,
-         onQuit: @escaping () -> Void) {
+         onQuit: @escaping () -> Void,
+         onSend: @escaping (CGWindowID, String) -> Void) {
         self.stack = stack
         self.onPick = onPick
         self.list = WindowListView(onPick: onPick, onClose: onClose, onReorder: onReorder)
@@ -202,7 +213,12 @@ private final class CommandContentView: NSView {
         self.onRetile = onRetile
         self.onLoginToggle = onLoginToggle
         self.onQuit = onQuit
+        self.onSend = onSend
         super.init(frame: .zero)
+        list.onSendRequest = { [weak self] id, name in
+            self?.sendTarget = (id, name)
+            self?.reload()
+        }
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
         scrollView.hasVerticalScroller = true
@@ -313,10 +329,26 @@ private final class CommandContentView: NSView {
         // Display picker: every connected screen as a chip, so there is no
         // submenu anywhere in the panel.
         let selected = Displays.screen(matching: stack.selectedUUID).flatMap(Displays.uuid(of:))
-        displayChips = NSScreen.screens.compactMap { screen in
-            guard let uuid = Displays.uuid(of: screen) else { return nil }
-            return Chip(title: screen.localizedName, isSelected: uuid == selected) {
-                [weak self] in self?.onDisplay(uuid)
+        if let target = sendTarget {
+            // Only the displays it could go to: sending a window to the one it
+            // is already on is a no-op dressed up as a choice.
+            displayChips = NSScreen.screens.compactMap { screen in
+                guard let uuid = Displays.uuid(of: screen), uuid != selected else { return nil }
+                return Chip(title: screen.localizedName, isSelected: false) { [weak self] in
+                    self?.sendTarget = nil
+                    self?.onSend(target.id, uuid)
+                }
+            }
+            displayChips.append(Chip(title: "Cancel", isSelected: false) { [weak self] in
+                self?.sendTarget = nil
+                self?.reload()
+            })
+        } else {
+            displayChips = NSScreen.screens.compactMap { screen in
+                guard let uuid = Displays.uuid(of: screen) else { return nil }
+                return Chip(title: screen.localizedName, isSelected: uuid == selected) {
+                    [weak self] in self?.onDisplay(uuid)
+                }
             }
         }
 
@@ -455,10 +487,11 @@ private final class CommandContentView: NSView {
                                      width: bounds.width - Panel.pad * 2, height: 16))
         }
 
-        label("DISPLAY", at: displaysLabelY)
+        label(sendTarget.map { "SEND \($0.name.uppercased()) TO" } ?? "DISPLAY",
+              at: displaysLabelY)
         label("ACTIONS", at: actionsLabelY)
 
-        Typeface.draw("CLICK FOCUS · DRAG REORDER · ✕ CLOSE · ESC HIDE",
+        Typeface.draw("CLICK FOCUS · RIGHT-CLICK SEND · DRAG REORDER · ✕ CLOSE",
                       Typeface.mono(10), Panel.faint,
                       in: NSRect(x: Panel.pad, y: hintY,
                                  width: bounds.width - Panel.pad * 2, height: 14))
@@ -513,6 +546,9 @@ private final class CommandContentView: NSView {
 private final class WindowListView: NSView {
     private let onPick: (CGWindowID) -> Void
     private let onClose: (CGWindowID) -> Void
+    /// Set after init: the content view handles this and cannot pass a closure
+    /// capturing itself while it is still building its own subviews.
+    var onSendRequest: ((CGWindowID, String) -> Void)?
     private let onReorder: ([CGWindowID]) -> Void
     private var rows: [WindowRow] = []
 
@@ -577,6 +613,10 @@ extension WindowListView: WindowRowDelegate {
         onClose(row.windowID)
     }
 
+    func rowRequestedSend(_ row: WindowRow) {
+        onSendRequest?(row.windowID, row.appName)
+    }
+
     func rowDidBeginDrag(_ row: WindowRow, grabOffset: CGFloat) {
         dragged = row
         grab = grabOffset
@@ -616,6 +656,7 @@ extension WindowListView: WindowRowDelegate {
 private protocol WindowRowDelegate: AnyObject {
     func rowWasClicked(_ row: WindowRow)
     func rowWasClosed(_ row: WindowRow)
+    func rowRequestedSend(_ row: WindowRow)
     func rowDidBeginDrag(_ row: WindowRow, grabOffset: CGFloat)
     /// `point` is in the list's coordinates — the row itself is moving, so its
     /// own coordinate space is not a fixed reference during a drag.
@@ -625,12 +666,12 @@ private protocol WindowRowDelegate: AnyObject {
 
 private final class WindowRow: NSView {
     let windowID: CGWindowID
+    let appName: String
     weak var delegate: (any WindowRowDelegate)?
     var isDragging = false { didSet { needsDisplay = true } }
     var isFront: Bool { didSet { if isFront != oldValue { needsDisplay = true } } }
 
     private let entry: WindowStack.WindowEntry
-    private let appName: String
     private let icon: NSImage?
     private var hovering = false
     private var tracking: NSTrackingArea?
@@ -684,6 +725,10 @@ private final class WindowRow: NSView {
     override func mouseExited(with event: NSEvent) {
         hovering = false
         needsDisplay = true
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        delegate?.rowRequestedSend(self)
     }
 
     override func mouseDown(with event: NSEvent) {
