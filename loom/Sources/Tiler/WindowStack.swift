@@ -79,6 +79,21 @@ final class WindowStack {
         Windows.focus(window)
     }
 
+    /// Close a window from the panel. Membership catches up on the next
+    /// reconcile pass, so nothing here has to prune the list by hand.
+    @discardableResult
+    func closeWindow(id: CGWindowID) -> Bool {
+        guard let window = windows.first(where: { $0.id == id }) else { return false }
+        let closed = Windows.close(window)
+        StateLog.append("close \(Windows.title(of: window)) -> \(closed)")
+        return closed
+    }
+
+    /// Membership only, with no accessibility round trip for titles. The panel
+    /// stays open now, so it has to notice windows arriving and leaving without
+    /// paying to rebuild itself every time it checks.
+    func windowIDs() -> [CGWindowID] { windows.map(\.id) }
+
     /// Which window currently holds the stage. Exposed for the command panel,
     /// which stays open across a switch and has to keep its marker honest
     /// without rebuilding its whole list — and without keeping a second copy of
