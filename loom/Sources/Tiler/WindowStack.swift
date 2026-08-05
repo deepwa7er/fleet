@@ -79,6 +79,12 @@ final class WindowStack {
         Windows.focus(window)
     }
 
+    /// Which window currently holds the stage. Exposed for the command panel,
+    /// which stays open across a switch and has to keep its marker honest
+    /// without rebuilding its whole list — and without keeping a second copy of
+    /// the stack's state to fall out of sync.
+    func frontWindowID() -> CGWindowID? { front()?.id }
+
     /// The stack member the WindowServer currently has in front, if any.
     private func front() -> ManagedWindow? {
         guard let id = Windows.frontmost(among: Set(windows.map(\.id))) else { return nil }
