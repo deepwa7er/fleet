@@ -96,24 +96,6 @@ private enum Ink {
     static let hover = NSColor(srgbRed: 0.110, green: 0.110, blue: 0.110, alpha: 1)      // #1C1C1C
 }
 
-private enum Type {
-    /// Berkeley Mono is the house face; fall back to the system monospace so a
-    /// missing font degrades to the right *kind* of type rather than to Helvetica.
-    static func mono(_ size: CGFloat, bold: Bool = false) -> NSFont {
-        NSFont(name: bold ? "BerkeleyMono-Bold" : "BerkeleyMono-Regular", size: size)
-            ?? NSFont(name: bold ? "Berkeley Mono Bold" : "Berkeley Mono", size: size)
-            ?? .monospacedSystemFont(ofSize: size, weight: bold ? .bold : .regular)
-    }
-
-    static func draw(_ text: String, _ font: NSFont, _ color: NSColor, in rect: NSRect) {
-        let style = NSMutableParagraphStyle()
-        style.lineBreakMode = .byTruncatingTail
-        NSAttributedString(string: text, attributes: [
-            .font: font, .foregroundColor: color, .paragraphStyle: style,
-        ]).draw(in: rect)
-    }
-}
-
 /// Fixed metrics on a 4pt scale — the design guide's modular spacing, so nothing
 /// in the panel floats off-grid.
 private enum Metric {
@@ -179,8 +161,8 @@ private final class SwitcherContentView: NSView {
 
         let count = entries.count
         let header = NSRect(x: Metric.pad, y: 9, width: bounds.width - Metric.pad * 2, height: 14)
-        Type.draw("TILER — \(count) WINDOW\(count == 1 ? "" : "S")",
-                  Type.mono(11, bold: true), Ink.secondary, in: header)
+        Typeface.draw("TILER — \(count) WINDOW\(count == 1 ? "" : "S")",
+                  Typeface.mono(11, bold: true), Ink.secondary, in: header)
 
         Ink.hairline.setFill()
         NSRect(x: 0, y: Metric.header - 1, width: bounds.width, height: 1).fill()
@@ -188,12 +170,12 @@ private final class SwitcherContentView: NSView {
 
         let footer = NSRect(x: Metric.pad, y: bounds.maxY - Metric.footer + 7,
                             width: bounds.width - Metric.pad * 2, height: 14)
-        Type.draw("CLICK TO SWITCH · ESC TO DISMISS", Type.mono(11), Ink.secondary, in: footer)
+        Typeface.draw("CLICK TO SWITCH · ESC TO DISMISS", Typeface.mono(11), Ink.secondary, in: footer)
 
         if entries.isEmpty {
             let empty = NSRect(x: Metric.pad, y: Metric.header + 13,
                                width: bounds.width - Metric.pad * 2, height: 16)
-            Type.draw("NO WINDOWS MANAGED", Type.mono(12), Ink.secondary, in: empty)
+            Typeface.draw("NO WINDOWS MANAGED", Typeface.mono(12), Ink.secondary, in: empty)
         }
 
         // Crisp 1px frame, inset by half a point so it lands on the pixel.
@@ -274,18 +256,18 @@ private final class SwitcherRow: NSView {
         NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
 
         let digit = NSRect(x: Metric.pad, y: 8, width: Metric.digitColumn, height: 14)
-        Type.draw(entry.number.map { "⌘\($0)" } ?? " ·",
-                  Type.mono(12), entry.number == nil ? Ink.secondary : Ink.accent, in: digit)
+        Typeface.draw(entry.number.map { "⌘\($0)" } ?? " ·",
+                  Typeface.mono(12), entry.number == nil ? Ink.secondary : Ink.accent, in: digit)
 
         let iconX = Metric.pad + Metric.digitColumn + 6
         icon?.draw(in: NSRect(x: iconX, y: 7, width: Metric.icon, height: Metric.icon))
 
         let textX = iconX + Metric.icon + 8
         let textWidth = bounds.width - textX - Metric.pad
-        Type.draw(appName, Type.mono(13, bold: true),
+        Typeface.draw(appName, Typeface.mono(13, bold: true),
                   entry.isFront ? Ink.accent : Ink.primary,
                   in: NSRect(x: textX, y: 5, width: textWidth, height: 16))
-        Type.draw(entry.title, Type.mono(11), Ink.secondary,
+        Typeface.draw(entry.title, Typeface.mono(11), Ink.secondary,
                   in: NSRect(x: textX, y: 22, width: textWidth, height: 14))
     }
 }

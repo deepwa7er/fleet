@@ -4,6 +4,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var stack: WindowStack?
     private var eventTap: EventTap?
     private var switcher: SwitcherPanel?
+    private var command: CommandPanel?
     private var statusItem: NSStatusItem?
     private var stateMenuItem: NSMenuItem?
     private var loginItemMenuItem: NSMenuItem?
@@ -40,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func boot() {
         let listen = CGPreflightListenEventAccess()
-        stateMenuItem?.title = "Tiler — ⌘1–9 switches windows"
+        stateMenuItem?.title = "Tiler — ⌘1–9 switches windows, 🎤 opens the panel"
 
         let stack = WindowStack()
         stack.start()
@@ -49,7 +50,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let switcher = SwitcherPanel(stack: stack)
         self.switcher = switcher
 
-        let eventTap = EventTap(stack: stack, switcher: switcher)
+        let command = CommandPanel(stack: stack)
+        self.command = command
+
+        let eventTap = EventTap(stack: stack, switcher: switcher, command: command)
         eventTap.start()
         self.eventTap = eventTap
 
@@ -83,6 +87,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switcher.target = self
         menu.addItem(switcher)
 
+        let panel = NSMenuItem(title: "Command Panel  🎤",
+                               action: #selector(showCommandPanel), keyEquivalent: "")
+        panel.target = self
+        menu.addItem(panel)
+
         let restore = NSMenuItem(title: "Restore Window Frames",
                                  action: #selector(restoreFrames), keyEquivalent: "r")
         restore.target = self
@@ -114,6 +123,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showSwitcher() {
         switcher?.show()
+    }
+
+    @objc private func showCommandPanel() {
+        command?.show()
     }
 
     @objc private func restoreFrames() {

@@ -24,11 +24,32 @@ events and move windows). Grant it and Tiler starts by itself a second later.
 | `⌘1`–`⌘9` | bring the numbered window to the front |
 | `⌥⌘1`–`⌥⌘9` | give the front window that number |
 | `⌥Space` | toggle the switcher panel (click a row to switch) |
+| 🎤 (top-row F5) | toggle the command panel — the menu, as a window |
+
+In the command panel the window column is always in ⌘-digit order, and **the
+order is the numbering**: drag a row and every digit is rewritten from the new
+top-to-bottom order, so the first row is ⌘1, the second ⌘2, and so on. Past the
+ninth row a window holds no digit — there are only nine keys. Dragging is a
+wholesale renumbering rather than the swap ⌥⌘1–9 performs, because the drag is a
+statement about the whole column.
+
+The microphone key is claimed outright. It arrives as an ordinary key-down
+carrying keycode 176 — not as an `NX_SYSDEFINED` media event like volume or
+brightness — so the existing tap already sees it, and swallowing it there is
+what stops Dictation: the system's handler sits downstream of the session tap.
+Nothing is remapped and nothing has to be switched off in System Settings. Turn
+on "Use F1, F2, etc. as standard function keys" and the same physical key sends
+F5 (96) instead, which this binding does not cover.
 
 ⌘-digits only bind while the pointer is on the managed display — everywhere
 else the keystroke goes to the app, so `⌘1` still switches browser tabs on
 your other screen. ⌥Space is deliberately not gated: it's how you reach the
 stack when the pointer isn't on it.
+
+The command panel (🎤) is a borderless window opened at the pointer: the managed
+windows with their digits, a display picker, restore frames, start at login and
+quit. Being borderless it has no title bar, and therefore no close/minimise/zoom
+buttons at all.
 
 The ◎ menu-bar item lists the windows with their digits, picks the managed
 display, offers **Restore Window Frames** (put everything back where it was),

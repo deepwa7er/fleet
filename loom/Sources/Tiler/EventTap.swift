@@ -7,16 +7,20 @@ import AppKit
 ///   while the pointer is on the stack's display and reach the app normally
 ///   everywhere else.
 /// - ⌥Space toggles the switcher panel, from anywhere.
+/// - The microphone key (top-row F5) toggles the command panel, from anywhere,
+///   and is swallowed so Dictation never sees it.
 final class EventTap {
     private let stack: WindowStack
     private let switcher: SwitcherPanel
+    private let command: CommandPanel
     private var tap: CFMachPort?
 
     var isTapActive: Bool { tap != nil }
 
-    init(stack: WindowStack, switcher: SwitcherPanel) {
+    init(stack: WindowStack, switcher: SwitcherPanel, command: CommandPanel) {
         self.stack = stack
         self.switcher = switcher
+        self.command = command
     }
 
     func start() {
@@ -59,14 +63,46 @@ final class EventTap {
         18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9,
     ]
 
-    /// Virtual keycodes for the switcher's own keys.
+    /// Virtual keycodes for the panels' own keys. 176 is the microphone key on
+    /// Apple's top row — a non-standard code Apple uses for Dictation, and not
+    /// one any layout produces by typing.
     private static let spaceKeycode: Int64 = 49
+    private static let dictationKeycode: Int64 = 176
     private static let escapeKeycode: Int64 = 53
 
     private func handleKey(_ event: CGEvent) -> Unmanaged<CGEvent>? {
         let pass = Unmanaged.passUnretained(event)
         let flags = event.flags
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+
+        // The microphone key on Apple's top row summons the command panel.
+        //
+        // Unlike volume and brightness — which arrive as NX_SYSDEFINED aux
+        // events and would need a second tap mask entirely — the dictation key
+        // is delivered as an ordinary keyDown carrying keycode 176, with the fn
+        // flag already set by the hardware. So this tap already sees it.
+        //
+        // Returning nil is what suppresses Dictation. The system's handler sits
+        // downstream of this session tap, so consuming the event here means
+        // Dictation is never told the key was pressed — no remapping, and
+        // nothing to switch off in System Settings.
+        //
+        // Keycode 176 is the key in its default top-row mode. Turning on
+        // "Use F1, F2, etc. as standard function keys" would make the same
+        // physical key send F5 (96) instead, and this binding would need to
+        // cover that keycode too.
+        if keycode == Self.dictationKeycode,
+           !flags.contains(.maskCommand), !flags.contains(.maskAlternate),
+           !flags.contains(.maskControl), !flags.contains(.maskShift) {
+            guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return nil }
+            command.toggle()
+            return nil
+        }
+        // Escape closes the command panel while it is up, matching the switcher.
+        if keycode == Self.escapeKeycode, command.isVisible {
+            command.dismiss()
+            return nil
+        }
 
         // ⌥Space summons the switcher from anywhere. Unlike the digit keys it
         // is not aimed at a particular display, so it is deliberately not gated
