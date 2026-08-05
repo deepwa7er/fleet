@@ -75,7 +75,13 @@ final class CommandPanel {
 
         let anchor = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.main
-        content.layOut(maxHeight: (screen?.visibleFrame.height ?? 800) * 0.75)
+        let available = screen?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
+        content.setFrameSize(NSSize(width: Panel.width, height: Panel.minHeight))
+        content.reload()
+        // The size the user dragged to wins; without one, fit the content.
+        let wanted = PanelSize.saved ?? content.naturalSize(maxHeight: available.height * 0.75)
+        content.setFrameSize(NSSize(width: min(wanted.width, available.width - 16),
+                                    height: min(wanted.height, available.height - 16)))
 
         let panel = NSPanel(contentRect: content.frame,
                             styleMask: [.borderless, .nonactivatingPanel],
@@ -113,14 +119,11 @@ final class CommandPanel {
     /// keeping it where the user put it rather than re-anchoring to a pointer
     /// that has since moved.
     private func reload() {
-        guard let panel, let content = panel.contentView as? CommandContentView,
-              let screen = panel.screen ?? NSScreen.main
-        else { return }
-        let topLeft = CGPoint(x: panel.frame.minX, y: panel.frame.maxY)
-        content.layOut(maxHeight: screen.visibleFrame.height * 0.75)
-        panel.setFrame(NSRect(x: topLeft.x, y: topLeft.y - content.frame.height,
-                              width: content.frame.width, height: content.frame.height),
-                       display: true)
+        guard let panel, let content = panel.contentView as? CommandContentView else { return }
+        // The window keeps whatever size it has been dragged to, so a data
+        // change rebuilds the content in place rather than resizing around it.
+        content.reload()
+        panel.display()
     }
 
     /// Anchored below and right of the pointer like a context menu, then pushed
@@ -161,7 +164,8 @@ private final class CommandContentView: NSView {
 
     private let scrollView = NSScrollView()
     private let list: WindowListView
-    private var chips: [Chip] = []
+    private var displayChips: [Chip] = []
+    private var actionChips: [Chip] = []
     private var entries: [WindowStack.WindowEntry] = []
     private var displayName = ""
 
@@ -201,85 +205,193 @@ private final class CommandContentView: NSView {
 
     override var isFlipped: Bool { true }
 
-    /// Dragging anywhere that isn't a row or a chip moves the panel.
+    // MARK: Moving and resizing
+
+    private enum Corner { case topLeft, topRight, bottomLeft, bottomRight }
+    private var resizing: Corner?
+    /// The corner diagonally opposite the one being dragged. It stays put while
+    /// the dragged corner follows the pointer, which is what makes a resize feel
+    /// like a resize rather than a move.
+    private var anchor = CGPoint.zero
+
+    private func corner(at point: CGPoint) -> Corner? {
+        let grab = Panel.cornerGrab
+        let left = point.x <= grab, right = point.x >= bounds.width - grab
+        let top = point.y <= grab, bottom = point.y >= bounds.height - grab
+        if top, left { return .topLeft }
+        if top, right { return .topRight }
+        if bottom, left { return .bottomLeft }
+        if bottom, right { return .bottomRight }
+        return nil
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// A corner drag resizes; anywhere else that isn't a row or a chip moves.
     ///
-    /// A borderless window has no title bar to grab, so the body has to be the
-    /// handle. `mouseDown` only reaches this view when no subview claimed the
-    /// event, which is exactly the split we want: rows keep their own
-    /// drag-to-reorder, chips keep their clicks, and everything else — the
-    /// header, the section labels, the padding — moves the window.
+    /// A borderless window has no title bar to grab and no resize control, so
+    /// the body has to be both handles. `mouseDown` only reaches this view when
+    /// no subview claimed the event, which is exactly the split we want: rows
+    /// keep their own drag-to-reorder and chips keep their clicks.
     override func mouseDown(with event: NSEvent) {
-        window?.performDrag(with: event)
+        let point = convert(event.locationInWindow, from: nil)
+        guard let grabbed = corner(at: point), let window else {
+            window?.performDrag(with: event)
+            return
+        }
+        resizing = grabbed
+        // Window frames are bottom-left origin; this view is flipped, so its
+        // "top" corners are the frame's high-y ones.
+        let frame = window.frame
+        switch grabbed {
+        case .topLeft: anchor = CGPoint(x: frame.maxX, y: frame.minY)
+        case .topRight: anchor = CGPoint(x: frame.minX, y: frame.minY)
+        case .bottomLeft: anchor = CGPoint(x: frame.maxX, y: frame.maxY)
+        case .bottomRight: anchor = CGPoint(x: frame.minX, y: frame.maxY)
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard resizing != nil, let window else { return }
+        let mouse = NSEvent.mouseLocation
+        let width = max(abs(mouse.x - anchor.x), Panel.minWidth)
+        let height = max(abs(mouse.y - anchor.y), Panel.minHeight)
+        // Clamping the size must not drag the anchored corner along with it.
+        window.setFrame(NSRect(x: mouse.x < anchor.x ? anchor.x - width : anchor.x,
+                               y: mouse.y < anchor.y ? anchor.y - height : anchor.y,
+                               width: width, height: height),
+                        display: true)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard resizing != nil else { return }
+        resizing = nil
+        PanelSize.saved = bounds.size
+    }
+
+    override func resetCursorRects() {
+        let grab = Panel.cornerGrab
+        for rect in [NSRect(x: 0, y: 0, width: grab, height: grab),
+                     NSRect(x: bounds.width - grab, y: 0, width: grab, height: grab),
+                     NSRect(x: 0, y: bounds.height - grab, width: grab, height: grab),
+                     NSRect(x: bounds.width - grab, y: bounds.height - grab,
+                            width: grab, height: grab)] {
+            addCursorRect(rect, cursor: .crosshair)
+        }
     }
 
     // MARK: Layout
 
-    func layOut(maxHeight: CGFloat) {
+    private let labelHeight: CGFloat = 16
+    private let hintHeight: CGFloat = 14
+
+    private var headerHeight: CGFloat { Panel.pad + labelHeight + Panel.gap }
+
+    /// Read the stack and rebuild the rows and chips.
+    ///
+    /// Kept apart from `layOut` because reading the stack costs an accessibility
+    /// round trip per window for its title. That is fine when the panel opens.
+    /// It is not fine sixty times a second while a corner is being dragged.
+    func reload() {
         entries = stack.windowList()
         displayName = Displays.screen(matching: stack.selectedUUID)?.localizedName ?? "—"
 
-        chips.forEach { $0.removeFromSuperview() }
-        chips.removeAll()
-
-        let width = Panel.width
-        let inner = width - Panel.pad * 2
-        var y = Panel.pad
-
-        // Header readout.
-        y += 16 + Panel.gap
-
-        // Window list, capped so a long stack scrolls instead of running off
-        // the screen. The rest of the panel is a fixed height, so the cap is
-        // whatever is left over.
-        let fixedBelow: CGFloat = 16 + Panel.gap + Panel.chipHeight + Panel.pad   // displays
-            + 16 + Panel.gap + Panel.chipHeight                                   // actions
-            + Panel.pad + 14 + Panel.pad                                          // hint
-        let listHeight = CGFloat(max(entries.count, 1)) * Panel.row
-        let room = max(Panel.row * 2, maxHeight - y - fixedBelow)
-        let visible = min(listHeight, room)
-
-        listFrame = NSRect(x: 0, y: y, width: width, height: visible)
-        scrollView.frame = listFrame
-        list.frame = NSRect(x: 0, y: 0, width: width, height: listHeight)
-        list.setEntries(entries)
-        y += visible + Panel.pad
+        (displayChips + actionChips).forEach { $0.removeFromSuperview() }
 
         // Display picker: every connected screen as a chip, so there is no
         // submenu anywhere in the panel.
-        displaysLabelY = y
-        y += 16 + Panel.gap
         let selected = Displays.screen(matching: stack.selectedUUID).flatMap(Displays.uuid(of:))
-        var chipRow: [Chip] = []
-        for screen in NSScreen.screens {
-            guard let uuid = Displays.uuid(of: screen) else { continue }
-            let chip = Chip(title: screen.localizedName, isSelected: uuid == selected) {
+        displayChips = NSScreen.screens.compactMap { screen in
+            guard let uuid = Displays.uuid(of: screen) else { return nil }
+            return Chip(title: screen.localizedName, isSelected: uuid == selected) {
                 [weak self] in self?.onDisplay(uuid)
             }
-            chipRow.append(chip)
         }
-        y = place(chipRow, from: y, width: inner)
-        y += Panel.pad
 
-        // Actions.
-        actionsLabelY = y
-        y += 16 + Panel.gap
         let loginTitle: String
         switch LoginItem.status {
         case .requiresApproval: loginTitle = "Login: approve in Settings"
         case .enabled: loginTitle = "Start at login: on"
         default: loginTitle = "Start at login: off"
         }
-        y = place([
+        actionChips = [
             Chip(title: "Retile all", isSelected: false, onClick: onRetile),
             Chip(title: loginTitle, isSelected: LoginItem.isEnabled, onClick: onLoginToggle),
             Chip(title: "Quit", isSelected: false, onClick: onQuit),
-        ], from: y, width: inner)
+        ]
 
+        (displayChips + actionChips).forEach(addSubview)
+        list.setEntries(entries)
+        layOut()
+    }
+
+    /// The size the panel would like: tall enough for the whole stack, capped so
+    /// a long one scrolls rather than running off the screen.
+    func naturalSize(maxHeight: CGFloat) -> NSSize {
+        let width = max(bounds.width, Panel.width)
+        let below = bottomHeight(width: width)
+        let wanted = CGFloat(max(entries.count, 1)) * Panel.row
+        let room = max(Panel.row * 2, maxHeight - headerHeight - below)
+        return NSSize(width: width, height: headerHeight + min(wanted, room) + below)
+    }
+
+    /// Everything below the window list. Its height depends on how the chips
+    /// wrap, which depends on the width — so it cannot be the constant it was
+    /// when the panel had only one width.
+    private func bottomHeight(width: CGFloat) -> CGFloat {
+        let inner = width - Panel.pad * 2
+        return Panel.pad
+            + labelHeight + Panel.gap + chipBlock(displayChips, width: inner) + Panel.pad
+            + labelHeight + Panel.gap + chipBlock(actionChips, width: inner) + Panel.pad
+            + hintHeight + Panel.pad
+    }
+
+    private func chipBlock(_ row: [Chip], width: CGFloat) -> CGFloat {
+        guard !row.isEmpty else { return 0 }
+        var rows = 1
+        var x: CGFloat = 0
+        for chip in row {
+            let chipWidth = chip.intrinsicContentSize.width
+            if x > 0, x + chipWidth > width {
+                rows += 1
+                x = 0
+            }
+            x += chipWidth + Panel.gap
+        }
+        return CGFloat(rows) * Panel.chipHeight + CGFloat(rows - 1) * Panel.gap
+    }
+
+    /// Position everything from the current bounds. The window owns the size
+    /// now, and the window list absorbs whatever height is left over.
+    func layOut() {
+        let width = bounds.width
+        let inner = width - Panel.pad * 2
+
+        let visible = max(Panel.row, bounds.height - headerHeight - bottomHeight(width: width))
+        listFrame = NSRect(x: 0, y: headerHeight, width: width, height: visible)
+        scrollView.frame = listFrame
+        list.frame = NSRect(x: 0, y: 0, width: width,
+                            height: CGFloat(max(entries.count, 1)) * Panel.row)
+        list.relayout()
+
+        var y = headerHeight + visible + Panel.pad
+        displaysLabelY = y
+        y += labelHeight + Panel.gap
+        y = place(displayChips, from: y, width: inner)
+        y += Panel.pad
+        actionsLabelY = y
+        y += labelHeight + Panel.gap
+        y = place(actionChips, from: y, width: inner)
         y += Panel.pad
         hintY = y
-        y += 14 + Panel.pad
 
-        frame = NSRect(x: 0, y: 0, width: width, height: y)
+        window?.invalidateCursorRects(for: self)
+        needsDisplay = true
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        layOut()
     }
 
     /// Move the front marker without rebuilding anything — a relayout here
@@ -300,8 +412,6 @@ private final class CommandContentView: NSView {
                 y += Panel.chipHeight + Panel.gap
             }
             chip.frame = NSRect(x: x, y: y, width: size.width, height: Panel.chipHeight)
-            addSubview(chip)
-            chips.append(chip)
             x += size.width + Panel.gap
         }
         return y + Panel.chipHeight
@@ -338,12 +448,32 @@ private final class CommandContentView: NSView {
                       in: NSRect(x: Panel.pad, y: hintY,
                                  width: bounds.width - Panel.pad * 2, height: 14))
 
+        drawCornerGrips()
+
         // The bezel, drawn last so nothing overlaps it. Inset by half a point
         // so the one-pixel stroke lands on the pixel instead of straddling it.
         Panel.edge.setStroke()
         let bezel = NSBezierPath(roundedRect: body, xRadius: Panel.radius, yRadius: Panel.radius)
         bezel.lineWidth = 1
         bezel.stroke()
+    }
+
+    /// Short marks inside each corner. A borderless window shows no resize
+    /// control, so without them the corners are a secret.
+    private func drawCornerGrips() {
+        let inset: CGFloat = 7, arm: CGFloat = 6
+        let path = NSBezierPath()
+        for (x, y, dx, dy) in [(inset, inset, 1.0, 1.0),
+                               (bounds.maxX - inset, inset, -1.0, 1.0),
+                               (inset, bounds.maxY - inset, 1.0, -1.0),
+                               (bounds.maxX - inset, bounds.maxY - inset, -1.0, -1.0)] {
+            path.move(to: NSPoint(x: x, y: y + arm * dy))
+            path.line(to: NSPoint(x: x, y: y))
+            path.line(to: NSPoint(x: x + arm * dx, y: y))
+        }
+        Panel.faint.setStroke()
+        path.lineWidth = 1
+        path.stroke()
     }
 
     private func label(_ text: String, at y: CGFloat) {
@@ -402,6 +532,9 @@ private final class WindowListView: NSView {
     func updateFront(_ id: CGWindowID?) {
         for row in rows { row.isFront = row.windowID == id }
     }
+
+    /// Reposition the existing rows for a new width, without rebuilding them.
+    func relayout() { layoutRows() }
 
     /// Stack the rows top to bottom, optionally leaving one slot empty — the
     /// gap the dragged row will drop into.

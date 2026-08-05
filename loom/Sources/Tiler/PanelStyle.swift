@@ -56,7 +56,14 @@ enum Panel {
     static let chipRadius: CGFloat = 6
 
     // Fixed metrics on a 4pt scale, so nothing in the panel floats off-grid.
+    /// Opening width, before the user has resized it.
     static let width: CGFloat = 460
+    static let minWidth: CGFloat = 360
+    static let minHeight: CGFloat = 260
+    /// How far into a corner counts as a grab for resizing. Kept clear of the
+    /// rows and chips: the top corners land in the header, the bottom ones in
+    /// the hint line, so a resize can never be mistaken for a click on either.
+    static let cornerGrab: CGFloat = 16
     static let pad: CGFloat = 14
     static let row: CGFloat = 40
     static let chipHeight: CGFloat = 26
@@ -67,5 +74,29 @@ enum Panel {
     static func fill(_ rect: NSRect, radius: CGFloat, with color: NSColor) {
         color.setFill()
         NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+    }
+}
+
+/// The size the user dragged the command panel to, remembered across openings.
+///
+/// Without this the panel would reopen at its content-fitted size every time and
+/// resizing it would be pointless — the panel is summoned constantly, so the
+/// size has to outlive a single showing.
+enum PanelSize {
+    private static let key = "CommandPanelSize"
+
+    static var saved: NSSize? {
+        get {
+            guard let stored = UserDefaults.standard.dictionary(forKey: key) as? [String: CGFloat],
+                  let width = stored["w"], let height = stored["h"] else { return nil }
+            return NSSize(width: width, height: height)
+        }
+        set {
+            guard let newValue else {
+                UserDefaults.standard.removeObject(forKey: key)
+                return
+            }
+            UserDefaults.standard.set(["w": newValue.width, "h": newValue.height], forKey: key)
+        }
     }
 }
