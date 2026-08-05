@@ -1,6 +1,6 @@
 import CoreGraphics
 
-/// Login-session state the ring has to respect.
+/// Login-session state the stack has to respect.
 enum Session {
     /// Whether the screen is locked.
     ///
@@ -11,7 +11,7 @@ enum Session {
     /// `CGSessionCopyCurrentDictionary` is public API; the key carrying lock
     /// state is not headered, but it is the long-standing way to read it. A
     /// missing key reads as unlocked, which is the safe default — that is just
-    /// the behaviour of an ungated ring.
+    /// the behaviour of an ungated reconcile pass.
     static var screenIsLocked: Bool {
         guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
         return session["CGSSessionScreenIsLocked"] as? Bool ?? false

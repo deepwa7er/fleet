@@ -1,40 +1,69 @@
-# Carousel
+# Tiler
 
-Your windows, arranged on the inside of a donut. You're in the middle.
+One window at a time, filling the screen. Every window on the managed display
+gets the same frame — the full screen minus a small gap, like a tiling WM with
+a single window — and the rest wait behind it. **⌘1–9** brings a window to the
+front; **⌥⌘1–9** gives the front window a number.
 
-Every window keeps the same frame — the full screen minus a small gap, like
-a tiling WM with a single window. The rest of your windows wait off-screen on
-a ring around you. Hold **⌥ (Option)** and scroll (either axis): the current
-window slides off and the next one slides in, looping through every window.
-Release ⌥ and the front window is just a normal, full-size window.
-
-Windows are resized exactly once, when they join the ring; spins are
-position-only moves, which is what keeps the animation fluid.
+Windows are resized exactly once, when they join. Switching is a raise and a
+focus change, so nothing moves and no app re-layouts.
 
 ## Build & run
 
-    make app      # builds Carousel.app (ad-hoc signed so the Accessibility grant sticks)
-    make run      # opens it — all windows immediately move onto the ring
+    make app      # builds Tiler.app (signed so the Accessibility grant sticks)
+    make run      # opens it — all windows on the display immediately tile
     make install  # copies it to ~/Applications
 
-On first launch macOS asks for Accessibility access (needed to observe
-scroll events and move windows). Grant it and Carousel starts by itself a
-second later.
+On first launch macOS asks for Accessibility access (needed to observe key
+events and move windows). Grant it and Tiler starts by itself a second later.
 
-The ◎ menu-bar item offers **Restore Window Frames** (put everything back
-where it was) and **Quit** (also restores before exiting).
+## Keys
+
+| | |
+|---|---|
+| `⌘1`–`⌘9` | bring the numbered window to the front |
+| `⌥⌘1`–`⌥⌘9` | give the front window that number |
+| `⌥Space` | toggle the switcher panel (click a row to switch) |
+
+⌘-digits only bind while the pointer is on the managed display — everywhere
+else the keystroke goes to the app, so `⌘1` still switches browser tabs on
+your other screen. ⌥Space is deliberately not gated: it's how you reach the
+stack when the pointer isn't on it.
+
+The ◎ menu-bar item lists the windows with their digits, picks the managed
+display, offers **Restore Window Frames** (put everything back where it was),
+**Start at Login**, and **Quit** (which also restores).
+
+## Starting at login
+
+`make install`, launch the copy in `~/Applications`, and tick **Start at
+Login** in the ◎ menu. It registers the bundle with `SMAppService`, so it
+shows up in System Settings → General → Login Items and can be switched off
+there; the menu reads its state back from the system rather than caching it.
+If it has been switched off in Settings the menu item says so, and clicking it
+opens that pane — an app can't re-enable itself once the user says no.
+
+Enable it on the installed copy, not on the `Tiler.app` in this repo: the
+registration records the bundle's path, and `make app` deletes and rebuilds
+that one. Deleting a registered bundle for good leaves a dead login item
+(status `.notFound`) that has to be cleared in System Settings.
+
+Accessibility access survives, since the grant is keyed to the signing
+identity. If it hasn't been granted yet the app still starts and waits,
+polling once a second, so a login launch needs no relaunch after you grant it.
 
 ## Notes
 
-- All on-screen windows are gathered onto the primary display's ring;
-  full-screen and minimized windows are left alone.
-- New windows join at the back of the ring; closed windows drop out (checked
-  every 2 s).
-- While ⌥ is held, scroll events are consumed system-wide — apps that bind
-  ⌥+scroll (e.g. zoom in Preview) won't see it.
-- Trackpad momentum (coasting after a flick) is ignored so a hard flick
-  doesn't spin the ring away.
-- Tuning lives in `Sources/Carousel/CarouselLayout.swift` (the `gap` margin
-  around the stage), `Carousel.pointsPerSlot` (scroll travel per window),
-  `Carousel.snapEase` (snap glide speed), and
-  `ScrollInterceptor.wheelNotchesPerSlot` (mouse-wheel sensitivity).
+- Only one display is managed at a time — pick it under ◎ → Display. Windows
+  on other displays keep their own frames and are never touched.
+- Full-screen and minimized windows are left alone.
+- New windows join at the back and take the lowest free digit; closed windows
+  drop out. Membership is reconciled twice a second, and paused while the
+  screen is locked (the WindowServer stops reporting the session's windows
+  then, and a pass taken during a lock would evict everything).
+- ⌘-digit assignments persist by app bundle ID, so "RustRover is ⌘1" survives
+  a restart. A digit reserved for an app that isn't running is held for it.
+- Tiling happens at enrollment and when the display geometry changes. A window
+  you drag or resize yourself is left where you put it rather than snapped
+  back — use ◎ → Restore Window Frames to bow out entirely.
+- The gap around the stage lives in `Sources/Tiler/StageLayout.swift`.

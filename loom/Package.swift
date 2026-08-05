@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "Carousel",
+    name: "Tiler",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
-            name: "Carousel",
-            path: "Sources/Carousel"
+            name: "Tiler",
+            path: "Sources/Tiler"
         )
     ]
 )

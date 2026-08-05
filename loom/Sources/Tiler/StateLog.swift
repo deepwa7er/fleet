@@ -4,7 +4,7 @@ import Foundation
 /// terminal child inherits the terminal's TCC grants, so only the
 /// Finder-launched app's own report is trustworthy.
 enum StateLog {
-    private static let path = "/tmp/carousel-state.txt"
+    private static let path = "/tmp/tiler-state.txt"
 
     static func write(_ s: String) {
         try? (s + "\n").write(toFile: path, atomically: true, encoding: .utf8)

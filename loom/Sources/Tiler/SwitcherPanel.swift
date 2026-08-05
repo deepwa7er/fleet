@@ -1,24 +1,24 @@
 import AppKit
 
-/// The mouse-driven face of the ring: a flat panel listing every window on it,
-/// one dense row each, click to switch.
+/// The mouse-driven face of the stack: a flat panel listing every managed
+/// window, one dense row each, click to switch.
 ///
 /// The panel never becomes key. Taking key focus would deactivate the very
-/// window the user is switching away from, and the ring's contract is that the
-/// front window keeps focus until a switch is actually committed — so this is a
-/// non-activating panel that reads the ring and reports a choice back, nothing
+/// window the user is switching away from, and the contract is that the front
+/// window keeps focus until a switch is actually committed — so this is a
+/// non-activating panel that reads the stack and reports a choice back, nothing
 /// more. Membership is read fresh on each summon, so there is no second copy of
-/// the ring's state to keep in sync.
+/// the stack's state to keep in sync.
 final class SwitcherPanel {
-    private let carousel: Carousel
+    private let stack: WindowStack
     private var panel: NSPanel?
     /// Watches for clicks landing outside the panel, which dismiss it.
     private var outsideClickMonitor: Any?
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
-    init(carousel: Carousel) {
-        self.carousel = carousel
+    init(stack: WindowStack) {
+        self.stack = stack
     }
 
     func toggle() {
@@ -27,15 +27,15 @@ final class SwitcherPanel {
 
     func show() {
         dismiss()
-        guard let screen = Displays.screen(matching: carousel.selectedUUID) ?? NSScreen.main
+        guard let screen = Displays.screen(matching: stack.selectedUUID) ?? NSScreen.main
         else { return }
 
-        let entries = carousel.windowList()
+        let entries = stack.windowList()
         let content = SwitcherContentView(entries: entries) { [weak self] id in
-            // Dismiss first: the ring's snap is a visible animation and the
-            // panel has no business sitting on top of it.
+            // Dismiss first, so the panel isn't left floating over the window
+            // it just brought to the front.
             self?.dismiss()
-            self?.carousel.switchToWindow(id: id)
+            self?.stack.switchToWindow(id: id)
         }
         content.layOut(maxHeight: screen.visibleFrame.height * 0.7)
 
@@ -129,12 +129,12 @@ private enum Metric {
 // MARK: - Content
 
 private final class SwitcherContentView: NSView {
-    private let entries: [Carousel.WindowEntry]
+    private let entries: [WindowStack.WindowEntry]
     private let onPick: (CGWindowID) -> Void
     private let scrollView = NSScrollView()
     private let list = FlippedView()
 
-    init(entries: [Carousel.WindowEntry], onPick: @escaping (CGWindowID) -> Void) {
+    init(entries: [WindowStack.WindowEntry], onPick: @escaping (CGWindowID) -> Void) {
         self.entries = entries
         self.onPick = onPick
         super.init(frame: .zero)
@@ -152,7 +152,7 @@ private final class SwitcherContentView: NSView {
 
     override var isFlipped: Bool { true }
 
-    /// Size to the content, capped so a long ring scrolls instead of running off
+    /// Size to the content, capped so a long list scrolls instead of running off
     /// the screen.
     func layOut(maxHeight: CGFloat) {
         let listHeight = CGFloat(max(entries.count, 1)) * Metric.row
@@ -179,7 +179,7 @@ private final class SwitcherContentView: NSView {
 
         let count = entries.count
         let header = NSRect(x: Metric.pad, y: 9, width: bounds.width - Metric.pad * 2, height: 14)
-        Type.draw("CAROUSEL — \(count) WINDOW\(count == 1 ? "" : "S")",
+        Type.draw("TILER — \(count) WINDOW\(count == 1 ? "" : "S")",
                   Type.mono(11, bold: true), Ink.secondary, in: header)
 
         Ink.hairline.setFill()
@@ -193,7 +193,7 @@ private final class SwitcherContentView: NSView {
         if entries.isEmpty {
             let empty = NSRect(x: Metric.pad, y: Metric.header + 13,
                                width: bounds.width - Metric.pad * 2, height: 16)
-            Type.draw("NO WINDOWS ON THE RING", Type.mono(12), Ink.secondary, in: empty)
+            Type.draw("NO WINDOWS MANAGED", Type.mono(12), Ink.secondary, in: empty)
         }
 
         // Crisp 1px frame, inset by half a point so it lands on the pixel.
@@ -211,14 +211,14 @@ private final class FlippedView: NSView {
 // MARK: - Row
 
 private final class SwitcherRow: NSView {
-    private let entry: Carousel.WindowEntry
+    private let entry: WindowStack.WindowEntry
     private let onPick: (CGWindowID) -> Void
     private let appName: String
     private let icon: NSImage?
     private var hovering = false
     private var tracking: NSTrackingArea?
 
-    init(entry: Carousel.WindowEntry, onPick: @escaping (CGWindowID) -> Void) {
+    init(entry: WindowStack.WindowEntry, onPick: @escaping (CGWindowID) -> Void) {
         self.entry = entry
         self.onPick = onPick
         let app = NSRunningApplication(processIdentifier: entry.pid)
@@ -233,7 +233,7 @@ private final class SwitcherRow: NSView {
     override var isFlipped: Bool { true }
 
     // `.activeAlways`: the panel is deliberately never key, so hover has to
-    // track while Carousel is an inactive app.
+    // track while Tiler is an inactive app.
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let tracking { removeTrackingArea(tracking) }
