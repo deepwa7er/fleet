@@ -79,6 +79,23 @@ final class WindowStack {
         Windows.focus(window)
     }
 
+    /// Move a window to another display and let it go.
+    ///
+    /// It lands on that display's stage — the same frame it would get if Tiler
+    /// managed it there — so the result is predictable rather than wherever the
+    /// old coordinates happened to fall. Tiler manages one display at a time, so
+    /// the window then leaves the stack: the next reconcile stops finding it on
+    /// the managed display and drops it, which is the intended "send it away".
+    @discardableResult
+    func sendWindow(id: CGWindowID, toDisplay uuid: String) -> Bool {
+        guard let window = windows.first(where: { $0.id == id }),
+              let screen = NSScreen.screens.first(where: { Displays.uuid(of: $0) == uuid })
+        else { return false }
+        Windows.forceFrame(window, StageLayout.tile(screen: Displays.visibleFrame(of: screen)))
+        StateLog.append("sent \(Windows.title(of: window)) -> \(screen.localizedName)")
+        return true
+    }
+
     /// Close a window from the panel. Membership catches up on the next
     /// reconcile pass, so nothing here has to prune the list by hand.
     @discardableResult
