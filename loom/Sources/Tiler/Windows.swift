@@ -94,6 +94,24 @@ enum Windows {
         window.lastFrame = rect
     }
 
+    /// Press the window's close button — exactly what ⌘W does.
+    ///
+    /// Not a process kill. The app decides what closing means, so unsaved-work
+    /// prompts still appear and refusing is allowed; an app left with no windows
+    /// usually keeps running, which is ordinary Mac behaviour rather than a
+    /// failure. Returns false when the window has no close button at all, which
+    /// some panels and HUDs genuinely do not.
+    @discardableResult
+    static func close(_ window: ManagedWindow) -> Bool {
+        var value: AnyObject?
+        guard AXUIElementCopyAttributeValue(window.axWindow, kAXCloseButtonAttribute as CFString,
+                                            &value) == .success,
+              let raw = value, CFGetTypeID(raw) == AXUIElementGetTypeID()
+        else { return false }
+        let button = unsafeBitCast(raw, to: AXUIElement.self)
+        return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
+    }
+
     /// Write the frame whether or not it matches what we last asked for.
     ///
     /// `setFrame(_:_:)` skips the write when the rect matches `lastFrame`, which

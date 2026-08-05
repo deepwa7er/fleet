@@ -30,6 +30,13 @@ Clicking a row focuses that window and the panel stays put, so windows can be
 picked one after another. The panel sits above every ordinary window, so the
 window you pick is raised to just beneath it rather than over it.
 
+Hovering a row reveals a **✕** at its trailing edge, which closes that window —
+the same thing ⌘W does, by pressing the window's own close button. It is not a
+process kill: the app decides what closing means, so unsaved-work prompts still
+appear, an app refusing to close is allowed, and an app left with no windows
+carries on running as usual. Windows without a close button — dialogs, some
+panels — report the failure rather than pretending.
+
 The panel keeps the top of the stack until it is explicitly toggled away —
 clicking into another app does not dismiss it, so windows can be focused and
 worked with underneath it. The ways out are the microphone key, `Esc`, and the

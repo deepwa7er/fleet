@@ -51,6 +51,11 @@ final class CommandPanel {
                 // the panel rather than over it.
                 self?.stack.switchToWindow(id: id)
             },
+            onClose: { [weak self] id in
+                self?.stack.closeWindow(id: id)
+                // The row goes when the stack's next reconcile drops the window;
+                // the poll below notices and rebuilds.
+            },
             onReorder: { [weak self] ids in
                 // Position is the numbering, so a drop rewrites the digits and
                 // the rebuilt list comes back in exactly the dropped order.
@@ -104,7 +109,13 @@ final class CommandPanel {
         frontTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
             guard let self, let content = self.panel?.contentView as? CommandContentView
             else { return }
-            content.updateFront(self.stack.frontWindowID())
+            // Membership first. The panel stays open now, so windows closing or
+            // opening underneath it have to appear without being summoned again.
+            if content.membership == self.stack.windowIDs() {
+                content.updateFront(self.stack.frontWindowID())
+            } else {
+                content.reload()
+            }
         }
     }
 
@@ -178,6 +189,7 @@ private final class CommandContentView: NSView {
 
     init(stack: WindowStack,
          onPick: @escaping (CGWindowID) -> Void,
+         onClose: @escaping (CGWindowID) -> Void,
          onReorder: @escaping ([CGWindowID]) -> Void,
          onDisplay: @escaping (String) -> Void,
          onRetile: @escaping () -> Void,
@@ -185,7 +197,7 @@ private final class CommandContentView: NSView {
          onQuit: @escaping () -> Void) {
         self.stack = stack
         self.onPick = onPick
-        self.list = WindowListView(onPick: onPick, onReorder: onReorder)
+        self.list = WindowListView(onPick: onPick, onClose: onClose, onReorder: onReorder)
         self.onDisplay = onDisplay
         self.onRetile = onRetile
         self.onLoginToggle = onLoginToggle
@@ -325,6 +337,9 @@ private final class CommandContentView: NSView {
         layOut()
     }
 
+    /// The window ids currently on show, for the cheap membership check.
+    var membership: [CGWindowID] { entries.map(\.id) }
+
     /// The size the panel would like: tall enough for the whole stack, capped so
     /// a long one scrolls rather than running off the screen.
     func naturalSize(maxHeight: CGFloat) -> NSSize {
@@ -443,7 +458,7 @@ private final class CommandContentView: NSView {
         label("DISPLAY", at: displaysLabelY)
         label("ACTIONS", at: actionsLabelY)
 
-        Typeface.draw("CLICK TO FOCUS · DRAG TO REORDER · ESC CLOSE",
+        Typeface.draw("CLICK FOCUS · DRAG REORDER · ✕ CLOSE · ESC HIDE",
                       Typeface.mono(10), Panel.faint,
                       in: NSRect(x: Panel.pad, y: hintY,
                                  width: bounds.width - Panel.pad * 2, height: 14))
@@ -497,6 +512,7 @@ private final class CommandContentView: NSView {
 /// statement about the whole column, not about one row.
 private final class WindowListView: NSView {
     private let onPick: (CGWindowID) -> Void
+    private let onClose: (CGWindowID) -> Void
     private let onReorder: ([CGWindowID]) -> Void
     private var rows: [WindowRow] = []
 
@@ -506,8 +522,11 @@ private final class WindowListView: NSView {
     private var grab: CGFloat = 0
     private var target = 0
 
-    init(onPick: @escaping (CGWindowID) -> Void, onReorder: @escaping ([CGWindowID]) -> Void) {
+    init(onPick: @escaping (CGWindowID) -> Void,
+         onClose: @escaping (CGWindowID) -> Void,
+         onReorder: @escaping ([CGWindowID]) -> Void) {
         self.onPick = onPick
+        self.onClose = onClose
         self.onReorder = onReorder
         super.init(frame: .zero)
     }
@@ -554,6 +573,10 @@ extension WindowListView: WindowRowDelegate {
         onPick(row.windowID)
     }
 
+    func rowWasClosed(_ row: WindowRow) {
+        onClose(row.windowID)
+    }
+
     func rowDidBeginDrag(_ row: WindowRow, grabOffset: CGFloat) {
         dragged = row
         grab = grabOffset
@@ -592,6 +615,7 @@ extension WindowListView: WindowRowDelegate {
 @MainActor
 private protocol WindowRowDelegate: AnyObject {
     func rowWasClicked(_ row: WindowRow)
+    func rowWasClosed(_ row: WindowRow)
     func rowDidBeginDrag(_ row: WindowRow, grabOffset: CGFloat)
     /// `point` is in the list's coordinates — the row itself is moving, so its
     /// own coordinate space is not a fixed reference during a drag.
@@ -612,6 +636,15 @@ private final class WindowRow: NSView {
     private var tracking: NSTrackingArea?
     private var pressPoint: CGPoint?
     private var passedThreshold = false
+    private var pressingClose = false
+
+    /// The ✕ target, at the trailing edge. Its width is reserved in the title
+    /// column at all times, so revealing it on hover never reflows the text.
+    private var closeRect: CGRect {
+        CGRect(x: bounds.maxX - Panel.pad - Panel.icon,
+               y: (bounds.height - Panel.icon) / 2,
+               width: Panel.icon, height: Panel.icon)
+    }
 
     /// How far the pointer must travel before a click becomes a drag.
     private let dragThreshold: CGFloat = 4
@@ -654,12 +687,16 @@ private final class WindowRow: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if closeRect.contains(convert(event.locationInWindow, from: nil)) {
+            pressingClose = true
+            return
+        }
         pressPoint = superview?.convert(event.locationInWindow, from: nil)
         passedThreshold = false
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let start = pressPoint,
+        guard !pressingClose, let start = pressPoint,
               let point = superview?.convert(event.locationInWindow, from: nil)
         else { return }
         if !passedThreshold {
@@ -671,6 +708,15 @@ private final class WindowRow: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if pressingClose {
+            pressingClose = false
+            // Only a press that both started and ended on the ✕ closes, so a
+            // press dragged off it is a cancel, as anywhere else on macOS.
+            if closeRect.contains(convert(event.locationInWindow, from: nil)) {
+                delegate?.rowWasClosed(self)
+            }
+            return
+        }
         defer {
             pressPoint = nil
             passedThreshold = false
@@ -710,12 +756,26 @@ private final class WindowRow: NSView {
         icon?.draw(in: NSRect(x: iconX, y: 7, width: Panel.icon, height: Panel.icon))
 
         let textX = iconX + Panel.icon + 8
-        let textWidth = bounds.width - textX - Panel.pad
+        let textWidth = bounds.width - textX - Panel.pad - Panel.icon - 8
         Typeface.draw(appName, Typeface.mono(13, bold: true),
                       isFront ? Panel.accent : Panel.text,
                       in: NSRect(x: textX, y: 5, width: textWidth, height: 16))
         Typeface.draw(entry.title, Typeface.mono(11), Panel.muted,
                       in: NSRect(x: textX, y: 22, width: textWidth, height: 14))
+
+        // The ✕ appears on hover: eight of these stacked would otherwise be a
+        // column of close buttons inviting a misclick.
+        if hovering {
+            let box = closeRect.insetBy(dx: 4, dy: 4)
+            let mark = NSBezierPath()
+            mark.move(to: NSPoint(x: box.minX, y: box.minY))
+            mark.line(to: NSPoint(x: box.maxX, y: box.maxY))
+            mark.move(to: NSPoint(x: box.maxX, y: box.minY))
+            mark.line(to: NSPoint(x: box.minX, y: box.maxY))
+            Panel.muted.setStroke()
+            mark.lineWidth = 1.5
+            mark.stroke()
+        }
     }
 }
 
