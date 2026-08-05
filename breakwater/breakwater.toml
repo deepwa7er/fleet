@@ -115,6 +115,48 @@ upstream = "127.0.0.1:8094"
 label = "lagoon"
 upstream = "127.0.0.1:8092"
 
+# readout — dashboard for campfire-stress load-test results. External member
+# like lagoon (repo at ~/code/readout), so its route is hand-written too.
+#
+# The first fleet service that runs as a Docker container rather than a native
+# binary: it's a Rails app needing Ruby 3.4, and this host has 3.2. The container
+# publishes to loopback, so from breakwater's side it is an ordinary upstream.
+#
+# Its data does NOT originate here. Load-test results are written on the dev box
+# by the k6 harness; `bin/publish` in the readout repo imports them there and
+# ships the resulting SQLite file up. So this page is a published snapshot, not a
+# live view of a running test.
+[[routes]]
+label = "readout"
+upstream = "127.0.0.1:8101"
+
+# blog — the ADMIN half of the public blog at https://blog.deepwa7er.com.
+# External member (repo at ~/code/blog), so hand-written like readout's.
+#
+# READ THIS BEFORE CHANGING IT. This is the first route here that points at an
+# app the public internet can also reach, and the arrangement is deliberate:
+#
+#   internet ──▶ nginx :443 (own certbot cert)  ──┐
+#                                                 ├─▶ 127.0.0.1:8102
+#   tailnet  ──▶ breakwater (this route)       ──┘
+#
+# One Rails process, two front doors, separated by the Host header. The app
+# draws its /admin routes inside a constraint on `blog.intern.deepwa7er.net`,
+# so they do not exist for a request carrying any other host. breakwater
+# forwards the inbound Host verbatim, which is exactly what makes the admin
+# reachable here; the public nginx vhost pins Host to a literal, which is what
+# keeps it unreachable there.
+#
+# breakwater's own posture is UNCHANGED by this. It still binds only the
+# Tailscale IP and still serves only *.intern.deepwa7er.net — the public name is
+# nginx's business, not this file's. Giving breakwater a public listener is the
+# thing that would have been unsafe, because it fronts `harness`, which is
+# unauthenticated RCE; nothing here does that. Do not "simplify" this by moving
+# blog.deepwa7er.com onto breakwater.
+[[routes]]
+label = "blog"
+upstream = "127.0.0.1:8102"
+
 # The fleet documentation site (pilot) — process-less static files, so breakwater
 # serves the directory directly instead of proxying an upstream. `tugboat fleet
 # docs` assembles and ships the site to this path; a path that doesn't resolve to
