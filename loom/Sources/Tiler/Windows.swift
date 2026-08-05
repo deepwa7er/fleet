@@ -94,6 +94,19 @@ enum Windows {
         window.lastFrame = rect
     }
 
+    /// Write the frame whether or not it matches what we last asked for.
+    ///
+    /// `setFrame(_:_:)` skips the write when the rect matches `lastFrame`, which
+    /// keeps the reconcile pass cheap. But `lastFrame` records what Tiler
+    /// *requested*, not where the window actually is — a window the user has
+    /// since dragged or resized still matches it. Retiling would then skip
+    /// precisely the windows that have drifted, which are the only ones that
+    /// needed moving.
+    static func forceFrame(_ window: ManagedWindow, _ rect: CGRect) {
+        setFrame(window.axWindow, rect)
+        window.lastFrame = rect
+    }
+
     /// Apps clamp a new position against the *current* size and vice versa, so
     /// position → size → position converges regardless of starting geometry.
     static func setFrame(_ ax: AXUIElement, _ rect: CGRect) {
