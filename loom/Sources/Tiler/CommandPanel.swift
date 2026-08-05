@@ -13,10 +13,15 @@ import AppKit
 /// that the front window keeps focus until a switch is actually committed. So
 /// it is a non-activating panel that reads the stack and reports a choice back.
 /// Escape is handled by the event tap, for the same reason.
+///
+/// It stays up until it is explicitly toggled away — clicking into another app
+/// does not dismiss it. Sitting at `.popUpMenu` level, above every ordinary
+/// window, that means it keeps the top of the stack while windows are picked,
+/// focused and worked with underneath it. The only ways out are the microphone
+/// key, Escape, and the ◎ menu item.
 final class CommandPanel {
     private let stack: WindowStack
     private var panel: NSPanel?
-    private var outsideClickMonitor: Any?
     /// Keeps the front marker current while the panel stays open. `focus` is an
     /// AX raise plus an app activation, both asynchronous, so the WindowServer's
     /// idea of the front window lags the click that caused it — there is nothing
@@ -95,23 +100,11 @@ final class CommandPanel {
             else { return }
             content.updateFront(self.stack.frontWindowID())
         }
-
-        // Global monitors only see other apps' events, so a click reported here
-        // is by definition outside the panel.
-        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-        ) { [weak self] _ in
-            self?.dismiss()
-        }
     }
 
     func dismiss() {
         frontTimer?.invalidate()
         frontTimer = nil
-        if let outsideClickMonitor {
-            NSEvent.removeMonitor(outsideClickMonitor)
-            self.outsideClickMonitor = nil
-        }
         panel?.orderOut(nil)
         panel = nil
     }
