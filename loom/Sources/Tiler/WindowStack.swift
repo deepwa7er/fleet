@@ -240,7 +240,31 @@ final class WindowStack {
         StateLog.append("renumbered \(min(ids.count, 9)) windows from drag order")
     }
 
-    /// Put every enrolled window back where we found it.
+    /// Put every window back on the stage — the frame it was given when it
+    /// joined.
+    ///
+    /// Windows drift: tiling happens once at enrollment, and a window you drag
+    /// or resize yourself is deliberately left where you put it. This is how
+    /// the whole stack is squared up again afterwards. The frame is the same
+    /// one Rectangle's maximize produces with a 10pt gap, which is where the
+    /// habit of pressing ⌃⌥Enter came from.
+    ///
+    /// The front window goes first, so the one you are actually looking at
+    /// snaps immediately instead of after a walk through the rest of the stack.
+    func retileAll() {
+        guard let screen = screenFrame() else { return }
+        let tile = StageLayout.tile(screen: screen)
+        let front = front()
+        if let front { Windows.setFrame(front, tile) }
+        for window in windows where window !== front {
+            Windows.setFrame(window, tile)
+        }
+        StateLog.append("retiled \(windows.count) windows onto \(tile)")
+    }
+
+    /// Put every enrolled window back where we found it. Reached only by
+    /// quitting now — Tiler hands the windows back as it found them on the way
+    /// out, but there is no longer a button for it.
     func restoreAll() {
         for window in windows { Windows.setFrame(window, window.originalFrame) }
     }

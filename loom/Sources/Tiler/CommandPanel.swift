@@ -57,9 +57,10 @@ final class CommandPanel {
                 StateLog.append("display -> \(uuid)")
                 self?.reload()
             },
-            onRestore: { [weak self] in
-                self?.dismiss()
-                self?.stack.restoreAll()
+            onRetile: { [weak self] in
+                // Stays open: the panel floats above every ordinary window, so
+                // the whole stack snapping onto the stage is visible from here.
+                self?.stack.retileAll()
             },
             onLoginToggle: { [weak self] in
                 self?.toggleStartAtLogin()
@@ -161,7 +162,7 @@ private final class CommandContentView: NSView {
     private let stack: WindowStack
     private let onPick: (CGWindowID) -> Void
     private let onDisplay: (String) -> Void
-    private let onRestore: () -> Void
+    private let onRetile: () -> Void
     private let onLoginToggle: () -> Void
     private let onQuit: () -> Void
 
@@ -182,14 +183,14 @@ private final class CommandContentView: NSView {
          onPick: @escaping (CGWindowID) -> Void,
          onReorder: @escaping ([CGWindowID]) -> Void,
          onDisplay: @escaping (String) -> Void,
-         onRestore: @escaping () -> Void,
+         onRetile: @escaping () -> Void,
          onLoginToggle: @escaping () -> Void,
          onQuit: @escaping () -> Void) {
         self.stack = stack
         self.onPick = onPick
         self.list = WindowListView(onPick: onPick, onReorder: onReorder)
         self.onDisplay = onDisplay
-        self.onRestore = onRestore
+        self.onRetile = onRetile
         self.onLoginToggle = onLoginToggle
         self.onQuit = onQuit
         super.init(frame: .zero)
@@ -276,7 +277,7 @@ private final class CommandContentView: NSView {
         default: loginTitle = "Start at login: off"
         }
         y = place([
-            Chip(title: "Restore frames", isSelected: false, onClick: onRestore),
+            Chip(title: "Retile all", isSelected: false, onClick: onRetile),
             Chip(title: loginTitle, isSelected: LoginItem.isEnabled, onClick: onLoginToggle),
             Chip(title: "Quit", isSelected: false, onClick: onQuit),
         ], from: y, width: inner)

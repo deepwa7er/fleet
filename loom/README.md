@@ -56,8 +56,8 @@ quit. Being borderless it has no title bar, and therefore no close/minimise/zoom
 buttons at all.
 
 The ◎ menu-bar item lists the windows with their digits, picks the managed
-display, offers **Restore Window Frames** (put everything back where it was),
-**Start at Login**, and **Quit** (which also restores).
+display, offers **Start at Login**, and **Quit** (which puts every window back
+where it was found).
 
 ## Starting at login
 
@@ -90,5 +90,9 @@ polling once a second, so a login launch needs no relaunch after you grant it.
   a restart. A digit reserved for an app that isn't running is held for it.
 - Tiling happens at enrollment and when the display geometry changes. A window
   you drag or resize yourself is left where you put it rather than snapped
-  back — use ◎ → Restore Window Frames to bow out entirely.
+  back — **Retile all** in the command panel squares the whole stack up again,
+  front window first. That frame is the same one Rectangle's maximize produces
+  with a 10pt gap, which is where the habit of pressing ⌃⌥Enter came from. Apps
+  that refuse to resize past their own limits keep their size and are simply
+  moved, exactly as at enrollment.
 - The gap around the stage lives in `Sources/Tiler/StageLayout.swift`.
