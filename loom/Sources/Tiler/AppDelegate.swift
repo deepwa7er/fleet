@@ -92,11 +92,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.target = self
         menu.addItem(panel)
 
-        let restore = NSMenuItem(title: "Restore Window Frames",
-                                 action: #selector(restoreFrames), keyEquivalent: "r")
-        restore.target = self
-        menu.addItem(restore)
-
         let display = NSMenuItem(title: "Display", action: nil, keyEquivalent: "")
         displayMenu.delegate = self // rebuilt on every open, so new monitors show up
         display.submenu = displayMenu
@@ -127,10 +122,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showCommandPanel() {
         command?.show()
-    }
-
-    @objc private func restoreFrames() {
-        stack?.restoreAll()
     }
 
     // MARK: Menu updates
