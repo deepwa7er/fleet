@@ -26,6 +26,10 @@ events and move windows). Grant it and Tiler starts by itself a second later.
 | `⌥Space` | toggle the switcher panel (click a row to switch) |
 | 🎤 (top-row F5) | toggle the command panel — the menu, as a window |
 
+Clicking a row focuses that window and the panel stays put, so windows can be
+picked one after another. The panel sits above every ordinary window, so the
+window you pick is raised to just beneath it rather than over it.
+
 In the command panel the window column is always in ⌘-digit order, and **the
 order is the numbering**: drag a row and every digit is rewritten from the new
 top-to-bottom order, so the first row is ⌘1, the second ⌘2, and so on. Past the

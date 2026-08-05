@@ -17,6 +17,11 @@ final class CommandPanel {
     private let stack: WindowStack
     private var panel: NSPanel?
     private var outsideClickMonitor: Any?
+    /// Keeps the front marker current while the panel stays open. `focus` is an
+    /// AX raise plus an app activation, both asynchronous, so the WindowServer's
+    /// idea of the front window lags the click that caused it — there is nothing
+    /// to observe synchronously, and a fixed delay would just be a guess.
+    private var frontTimer: Timer?
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
@@ -34,9 +39,11 @@ final class CommandPanel {
         let content = CommandContentView(
             stack: stack,
             onPick: { [weak self] id in
-                // Dismiss first, so the panel isn't left floating over the
-                // window it just brought to the front.
-                self?.dismiss()
+                // Deliberately no dismiss: the panel stays put so windows can
+                // be picked one after another. It sits at `.popUpMenu` level,
+                // above every ordinary window, so raising the chosen window
+                // brings it to the top of the normal level — directly beneath
+                // the panel rather than over it.
                 self?.stack.switchToWindow(id: id)
             },
             onReorder: { [weak self] ids in
@@ -82,6 +89,12 @@ final class CommandPanel {
         panel.orderFrontRegardless()      // ordering front must not activate us
         self.panel = panel
 
+        frontTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            guard let self, let content = self.panel?.contentView as? CommandContentView
+            else { return }
+            content.updateFront(self.stack.frontWindowID())
+        }
+
         // Global monitors only see other apps' events, so a click reported here
         // is by definition outside the panel.
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
@@ -92,6 +105,8 @@ final class CommandPanel {
     }
 
     func dismiss() {
+        frontTimer?.invalidate()
+        frontTimer = nil
         if let outsideClickMonitor {
             NSEvent.removeMonitor(outsideClickMonitor)
             self.outsideClickMonitor = nil
@@ -273,6 +288,12 @@ private final class CommandContentView: NSView {
         frame = NSRect(x: 0, y: 0, width: width, height: y)
     }
 
+    /// Move the front marker without rebuilding anything — a relayout here
+    /// would fight an in-progress drag and reset every hover state.
+    func updateFront(_ id: CGWindowID?) {
+        list.updateFront(id)
+    }
+
     /// Lay chips left to right, wrapping when the row is full. Returns the y
     /// just past the last row.
     private func place(_ row: [Chip], from top: CGFloat, width: CGFloat) -> CGFloat {
@@ -318,7 +339,7 @@ private final class CommandContentView: NSView {
         label("DISPLAY", at: displaysLabelY)
         label("ACTIONS", at: actionsLabelY)
 
-        Typeface.draw("DRAG TO REORDER · ⌘1–9 SWITCH · ESC CLOSE",
+        Typeface.draw("CLICK TO FOCUS · DRAG TO REORDER · ESC CLOSE",
                       Typeface.mono(10), Panel.faint,
                       in: NSRect(x: Panel.pad, y: hintY,
                                  width: bounds.width - Panel.pad * 2, height: 14))
@@ -382,6 +403,10 @@ private final class WindowListView: NSView {
             return row
         }
         layoutRows()
+    }
+
+    func updateFront(_ id: CGWindowID?) {
+        for row in rows { row.isFront = row.windowID == id }
     }
 
     /// Stack the rows top to bottom, optionally leaving one slot empty — the
@@ -451,6 +476,7 @@ private final class WindowRow: NSView {
     let windowID: CGWindowID
     weak var delegate: (any WindowRowDelegate)?
     var isDragging = false { didSet { needsDisplay = true } }
+    var isFront: Bool { didSet { if isFront != oldValue { needsDisplay = true } } }
 
     private let entry: WindowStack.WindowEntry
     private let appName: String
@@ -466,6 +492,7 @@ private final class WindowRow: NSView {
     init(entry: WindowStack.WindowEntry) {
         self.entry = entry
         self.windowID = entry.id
+        self.isFront = entry.isFront
         let app = NSRunningApplication(processIdentifier: entry.pid)
         self.appName = app?.localizedName ?? "Window \(entry.id)"
         self.icon = app?.icon
@@ -541,7 +568,7 @@ private final class WindowRow: NSView {
             Panel.fill(bounds.insetBy(dx: Panel.gap, dy: 1), radius: Panel.chipRadius,
                        with: Panel.rowHover)
         }
-        if entry.isFront {
+        if isFront {
             // The window holding the stage, marked permanently — an affordance
             // the user can see without hovering to discover it.
             Panel.fill(NSRect(x: Panel.gap, y: 9, width: 3, height: bounds.height - 18),
@@ -558,7 +585,7 @@ private final class WindowRow: NSView {
         let textX = iconX + Panel.icon + 8
         let textWidth = bounds.width - textX - Panel.pad
         Typeface.draw(appName, Typeface.mono(13, bold: true),
-                      entry.isFront ? Panel.accent : Panel.text,
+                      isFront ? Panel.accent : Panel.text,
                       in: NSRect(x: textX, y: 5, width: textWidth, height: 16))
         Typeface.draw(entry.title, Typeface.mono(11), Panel.muted,
                       in: NSRect(x: textX, y: 22, width: textWidth, height: 14))
