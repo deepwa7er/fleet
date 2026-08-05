@@ -1,4 +1,4 @@
-APP     := Carousel
+APP     := Tiler
 BUNDLE  := $(APP).app
 CONFIG  := release
 BIN     := .build/$(CONFIG)/$(APP)
@@ -21,11 +21,19 @@ app: build
 run: app
 	open $(BUNDLE)
 
-# Install into ~/Applications for everyday use.
+# Install into ~/Applications for everyday use. Staged and swapped in with two
+# renames rather than rm -rf + a slow recursive copy: the login-item record is
+# keyed on this path, and a bundle missing for the length of a copy can get the
+# registration invalidated.
 install: app
 	mkdir -p $(HOME)/Applications
-	rm -rf $(HOME)/Applications/$(BUNDLE)
-	cp -R $(BUNDLE) $(HOME)/Applications/$(BUNDLE)
+	rm -rf $(HOME)/Applications/$(BUNDLE).new $(HOME)/Applications/$(BUNDLE).old
+	cp -R $(BUNDLE) $(HOME)/Applications/$(BUNDLE).new
+	@if [ -e $(HOME)/Applications/$(BUNDLE) ]; then \
+		mv $(HOME)/Applications/$(BUNDLE) $(HOME)/Applications/$(BUNDLE).old; \
+	fi
+	mv $(HOME)/Applications/$(BUNDLE).new $(HOME)/Applications/$(BUNDLE)
+	rm -rf $(HOME)/Applications/$(BUNDLE).old
 	@echo "Installed to ~/Applications/$(BUNDLE)"
 
 clean:

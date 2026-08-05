@@ -1,10 +1,10 @@
 import AppKit
 
-/// Which display the ring lives on: enumeration, persisted selection, and
+/// Which display the stack lives on: enumeration, persisted selection, and
 /// screen geometry in Quartz (top-left origin) coordinates to match AX and
 /// CGWindowList. Selection is stored by display UUID, which survives
 /// reconnects and display-ID churn; when the selected display isn't
-/// connected, the ring falls back to the primary display.
+/// connected, the stack falls back to the primary display.
 enum Displays {
     private static let defaultsKey = "selectedDisplayUUID"
 
@@ -18,10 +18,10 @@ enum Displays {
         return CFUUIDCreateString(nil, cfUUID) as String
     }
 
-    /// The persisted selection; nil means "the primary display". Read once
-    /// at startup by Carousel — the live selection is Carousel state, so the
-    /// stage can never silently jump displays because a preference changed
-    /// out from under a running session.
+    /// The persisted selection; nil means "the primary display". Read once at
+    /// startup by the stack — the live selection is stack state, so the stage
+    /// can never silently jump displays because a preference changed out from
+    /// under a running session.
     static func savedSelection() -> String? {
         UserDefaults.standard.string(forKey: defaultsKey)
     }
@@ -48,25 +48,6 @@ enum Displays {
     /// Display frame minus menu bar and Dock, in Quartz coordinates.
     static func visibleFrame(of screen: NSScreen) -> CGRect {
         quartzRect(screen.visibleFrame)
-    }
-
-    /// Whether the space beside a screen — one stride wide, at the screen's
-    /// own height — is free of other displays. The filmstrip may only slide
-    /// windows through open space; sliding toward another display would
-    /// parade them across that screen.
-    static func openSides(of screen: NSScreen, stride: CGFloat) -> (left: Bool, right: Bool) {
-        let stage = frame(of: screen)
-        let leftSpan = CGRect(x: stage.minX - stride, y: stage.minY,
-                              width: stride, height: stage.height)
-        let rightSpan = CGRect(x: stage.maxX, y: stage.minY,
-                               width: stride, height: stage.height)
-        var open = (left: true, right: true)
-        for other in NSScreen.screens where other != screen {
-            let f = frame(of: other)
-            if f.intersects(leftSpan) { open.left = false }
-            if f.intersects(rightSpan) { open.right = false }
-        }
-        return open
     }
 
     /// Cocoa global rects have a bottom-left origin; Quartz has a top-left

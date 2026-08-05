@@ -1,31 +1,33 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private var carousel: Carousel?
+    private var stack: WindowStack?
     private var eventTap: EventTap?
     private var switcher: SwitcherPanel?
     private var statusItem: NSStatusItem?
     private var stateMenuItem: NSMenuItem?
+    private var loginItemMenuItem: NSMenuItem?
     private let displayMenu = NSMenu(title: "Display")
     private let windowsMenu = NSMenu(title: "Windows")
     private var permissionTimer: Timer?
-    /// Keeps the process out of App Nap: Finder-launched agents get their
-    /// timers throttled to nothing, which freezes the spin animation.
+    /// Keeps the process out of App Nap: a Finder-launched background app gets
+    /// its timers throttled to nothing, which would stall the reconcile pass
+    /// and leave the stack's membership stale for minutes at a time.
     private var activity: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         activity = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
-            reason: "Animating the window ring")
+            options: .userInitiatedAllowingIdleSystemSleep,
+            reason: "Tracking window membership")
         setUpStatusItem() // visible even while ungranted, so the app never looks dead
         let trusted = Permissions.ensureAccessibility(prompt: true)
         FileHandle.standardError.write(Data(
-            "Carousel: launch, accessibility trusted=\(trusted)\n".utf8))
+            "Tiler: launch, accessibility trusted=\(trusted)\n".utf8))
         if trusted {
             boot()
         } else {
             StateLog.write("waiting for Accessibility grant")
-            stateMenuItem?.title = "Carousel — grant Accessibility access in System Settings…"
+            stateMenuItem?.title = "Tiler — grant Accessibility access in System Settings…"
             // Poll until the grant lands, then start without a relaunch.
             permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
                 guard Permissions.isTrusted else { return }
@@ -38,16 +40,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func boot() {
         let listen = CGPreflightListenEventAccess()
-        stateMenuItem?.title = "Carousel — hold ⌥ and scroll to spin the ring"
+        stateMenuItem?.title = "Tiler — ⌘1–9 switches windows"
 
-        let carousel = Carousel()
-        carousel.start()
-        self.carousel = carousel
+        let stack = WindowStack()
+        stack.start()
+        self.stack = stack
 
-        let switcher = SwitcherPanel(carousel: carousel)
+        let switcher = SwitcherPanel(stack: stack)
         self.switcher = switcher
 
-        let eventTap = EventTap(carousel: carousel, switcher: switcher)
+        let eventTap = EventTap(stack: stack, switcher: switcher)
         eventTap.start()
         self.eventTap = eventTap
 
@@ -55,13 +57,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            self?.carousel?.displayConfigurationChanged()
+            self?.stack?.displayConfigurationChanged()
         }
         StateLog.write("running, accessibility granted, listenEvent=\(listen), tap=\(eventTap.isTapActive)")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        carousel?.restoreAll()
+        stack?.restoreAll()
     }
 
     // MARK: Menu bar
@@ -71,7 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.title = "◎"
 
         let menu = NSMenu()
-        let state = NSMenuItem(title: "Carousel", action: nil, keyEquivalent: "")
+        menu.delegate = self // the login-item state can change in System Settings
+        let state = NSMenuItem(title: "Tiler", action: nil, keyEquivalent: "")
         menu.addItem(state)
         stateMenuItem = state
 
@@ -95,6 +98,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windows.submenu = windowsMenu
         menu.addItem(windows)
         menu.addItem(.separator())
+
+        let login = NSMenuItem(title: "Start at Login",
+                               action: #selector(toggleStartAtLogin), keyEquivalent: "")
+        login.target = self
+        menu.addItem(login)
+        loginItemMenuItem = login
+
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)),
                                 keyEquivalent: "q"))
         item.menu = menu
@@ -106,18 +117,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func restoreFrames() {
-        carousel?.restoreAll()
+        stack?.restoreAll()
+    }
+
+    // MARK: Menu updates
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === windowsMenu { return rebuildWindowsMenu() }
+        if menu === displayMenu { return rebuildDisplayMenu() }
+        if menu === statusItem?.menu { return refreshLoginItem() }
+    }
+
+    // MARK: Start at login
+
+    private func refreshLoginItem() {
+        guard let item = loginItemMenuItem else { return }
+        // `.requiresApproval` means the registration exists but the user
+        // switched it off; say so rather than showing a checkbox that won't move.
+        let needsApproval = LoginItem.status == .requiresApproval
+        item.title = needsApproval ? "Start at Login — approve in System Settings…"
+                                   : "Start at Login"
+        item.state = LoginItem.isEnabled ? .on : .off
+    }
+
+    @objc private func toggleStartAtLogin() {
+        guard LoginItem.status != .requiresApproval else {
+            LoginItem.openSystemSettings() // only the user can clear that state
+            return
+        }
+        let enabling = !LoginItem.isEnabled
+        do {
+            try LoginItem.setEnabled(enabling)
+            StateLog.append("start at login -> \(enabling)")
+        } catch {
+            StateLog.append("start at login \(enabling ? "register" : "unregister") failed: \(error)")
+            reportLoginItemFailure(error, enabling: enabling)
+        }
+    }
+
+    private func reportLoginItemFailure(_ error: Error, enabling: Bool) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = enabling
+            ? "Tiler couldn’t add itself to your login items."
+            : "Tiler couldn’t remove itself from your login items."
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Open Login Items…")
+        NSApp.activate(ignoringOtherApps: true) // an accessory app has no window to own the sheet
+        if alert.runModal() == .alertSecondButtonReturn { LoginItem.openSystemSettings() }
     }
 
     // MARK: Display picker
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        if menu === windowsMenu { return rebuildWindowsMenu() }
-        guard menu === displayMenu else { return }
+    private func rebuildDisplayMenu() {
+        let menu = displayMenu
         menu.removeAllItems()
         // Resolve through the fallback so the checkmark shows the display
         // actually in use, not a disconnected saved selection.
-        let selection = carousel?.selectedUUID ?? Displays.savedSelection()
+        let selection = stack?.selectedUUID ?? Displays.savedSelection()
         let selected = Displays.screen(matching: selection).flatMap(Displays.uuid(of:))
         for screen in NSScreen.screens {
             guard let uuid = Displays.uuid(of: screen) else { continue }
@@ -132,7 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func selectDisplay(_ sender: NSMenuItem) {
         guard let uuid = sender.representedObject as? String else { return }
-        carousel?.select(displayUUID: uuid)
+        stack?.select(displayUUID: uuid)
         StateLog.append("display -> \(sender.title)")
     }
 
@@ -140,8 +198,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func rebuildWindowsMenu() {
         windowsMenu.removeAllItems()
-        guard let carousel else { return }
-        for entry in carousel.windowList() {
+        guard let stack else { return }
+        for entry in stack.windowList() {
             let label = entry.number.map { "⌘\($0)  \(entry.title)" } ?? "—  \(entry.title)"
             let item = NSMenuItem(title: label, action: nil, keyEquivalent: "")
             item.submenu = windowSubmenu(for: entry)
@@ -154,7 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windowsMenu.addItem(hint)
     }
 
-    private func windowSubmenu(for entry: Carousel.WindowEntry) -> NSMenu {
+    private func windowSubmenu(for entry: WindowStack.WindowEntry) -> NSMenu {
         let submenu = NSMenu(title: entry.title)
         let bringFront = NSMenuItem(title: "Bring to Front",
                                     action: #selector(switchToWindow(_:)), keyEquivalent: "")
@@ -182,11 +240,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func switchToWindow(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? CGWindowID else { return }
-        carousel?.switchToWindow(id: id)
+        stack?.switchToWindow(id: id)
     }
 
     @objc private func assignNumber(_ sender: NSMenuItem) {
         guard let (id, number) = sender.representedObject as? (CGWindowID, Int?) else { return }
-        carousel?.assignWindow(id: id, number: number)
+        stack?.assignWindow(id: id, number: number)
     }
 }
