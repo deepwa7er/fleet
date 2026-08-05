@@ -123,8 +123,16 @@ pub struct Store {
 
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let conn = open_migrated(path, MIGRATIONS)?;
+        // The mutex above serializes writers *inside* one process, but mirror
+        // has a second one: `mirror sync` run by hand against the same file
+        // while the service's own loop is mid-pass. rusqlite defaults to a
+        // busy timeout of zero, so the two colliding would fail outright with
+        // "database is locked" rather than waiting out a transaction that
+        // takes milliseconds.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         Ok(Self {
-            conn: Mutex::new(open_migrated(path, MIGRATIONS)?),
+            conn: Mutex::new(conn),
         })
     }
 
