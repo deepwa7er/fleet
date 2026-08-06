@@ -119,6 +119,22 @@ struct DiffingTests {
         #expect(host.log.isEmpty)
     }
 
+    @Test("a handler prop is re-bound every render, because closures cannot be compared")
+    func handlersAlwaysCountAsChanged() {
+        let (host, _, renderer) = makeRenderer()
+        func tree() -> Element { Node("box", ["onTap": .handler {}, "id": .string("a")]) }
+
+        renderer.render(tree())
+        host.clearLog()
+        renderer.render(tree())
+
+        // `id` is correctly recognised as unchanged; `onTap` cannot be, so any
+        // node carrying a handler reports an update on every single render.
+        // React sidesteps this with root-level event delegation rather than by
+        // solving the comparison problem, which is not solvable.
+        #expect(host.log == ["update box#1 +onTap"])
+    }
+
     @Test("changing the element type tears the subtree down and resets its state")
     func typeChangeResetsState() {
         let (host, container, renderer) = makeRenderer()

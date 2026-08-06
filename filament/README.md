@@ -145,8 +145,12 @@ replacement:
   layout effects. `memo` in particular would be a props-equality bailout in
   exactly one place, marked in `Reconciler.update`.
 - **Handlers always count as changed**, because two Swift closures are never
-  comparable. React reaches the same conclusion for the same reason, which is
-  why an inline arrow function defeats prop-equality bailouts there too.
+  comparable. The practical consequence is that any node carrying a handler
+  reports a prop update on every render — see `handlersAlwaysCountAsChanged`.
+  React does not solve this either (it is not solvable); it sidesteps it with
+  root-level event delegation, so the handler is looked up at dispatch time
+  instead of being written to the node. A real host backend here would want the
+  same trick.
 - **No error boundaries.** A hook-order violation traps.
 - **Single-threaded**, `@MainActor` throughout.
 
