@@ -153,6 +153,7 @@ public final class Reconciler<Host: HostConfig> {
     /// not, which is exactly why a list rendered without keys loses state when
     /// reordered: position is the only identity such a child has.
     private func reconcileChildren(of parent: F, to elements: [Element]) {
+        assertKeysAreUnique(elements)
         let old = parent.children
 
         // Each candidate carries the index it held, so the move check below
@@ -207,6 +208,32 @@ public final class Reconciler<Host: HostConfig> {
         }
 
         parent.children = newChildren
+    }
+
+    /// A key is an identity claim, and two siblings cannot both be the same
+    /// child. Left undetected the ambiguity is resolved arbitrarily — one of
+    /// the two gets the surviving fiber and the other is rebuilt from scratch,
+    /// silently discarding its state.
+    ///
+    /// React warns here and proceeds; this traps. The check is deliberately not
+    /// gated behind a debug flag, because a renderer that reconciles
+    /// differently in debug and release is a worse problem than the cost of an
+    /// O(n) scan over a list already being walked O(n) times.
+    private func assertKeysAreUnique(_ elements: [Element]) {
+        var seen: Set<AnyHashable> = []
+        for element in elements {
+            guard let key = element.key else { continue }
+            guard seen.insert(key).inserted else {
+                preconditionFailure(
+                    """
+                    Two sibling elements share the key \(key). A key is an \
+                    identity, so duplicates leave no way to decide which child \
+                    is which, and state would attach to an arbitrary one. Give \
+                    each sibling in a list a distinct key.
+                    """
+                )
+            }
+        }
     }
 
     private func mount(_ element: Element, parent: F) -> F {

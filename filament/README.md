@@ -9,7 +9,7 @@ in-memory host, so you can watch the diffing algorithm work without a DOM, a
 browser, or a build step anywhere in the picture.
 
 ```
-swift test          # 20 tests
+swift test               # 31 tests, including a property suite
 swift run filament-demo
 ```
 
@@ -95,7 +95,9 @@ component's state.
 **Keys are identity.** Without a key, a child's only identity is its position
 among its siblings, so reordering a list hands each slot's state to whatever
 lands there. `KeyTests` asserts both halves of this: keyed children carry their
-state through a reorder, and unkeyed ones demonstrably do not.
+state through a reorder, and unkeyed ones demonstrably do not. Taking "identity"
+literally is also why duplicate sibling keys are a hard error here — two
+children cannot both be the same child.
 
 **Render and commit are separate phases.** The render phase decides what is new,
 updated, moved or gone and flags fibers accordingly; it never inserts anything,
@@ -129,6 +131,52 @@ rebuilding the world, which is the entire promise a virtual DOM makes:
 
 Writing a real backend means implementing six methods.
 
+## Proving it
+
+Example-based tests only prove the cases someone thought of. The property suite
+generates random trees, mutates them into random sequences of related trees, and
+asserts invariants over whatever comes out:
+
+| Property | Claim |
+| --- | --- |
+| **convergence** | However it got there, the incrementally diffed tree equals a fresh render of the same description |
+| **idempotence** | Re-rendering an unchanged description performs no host work at all |
+| **structural integrity** | No node is ever reachable twice — every insert has its matching detach |
+| **effect balance** | Every effect that ran is cleaned up exactly once, across reorders and type swaps |
+| **no premature cleanup** | ...and never cleaned up while still mounted |
+| **keyed list minimality** | Any permutation preserves state and creates nothing; one insertion is one placement; one deletion is one removal |
+
+Steps are *related* rather than independently random. A fresh tree each step
+would remount everything and never exercise a move, an in-place update, or state
+surviving a reorder, which is most of what there is to get wrong.
+
+Failures shrink. The duplicate-key trap below was found by `idempotence` and
+reported as a 3-node, single-step scenario reduced from a 22-node, 4-step one —
+the difference between a bug you can read and a bug you have to excavate.
+
+Everything is seeded and reproducible, and the budget is adjustable:
+
+```
+FILAMENT_PROPERTY_CASES=25000 FILAMENT_PROPERTY_SEED=7 swift test
+```
+
+`GeneratorCoverageTests` is what keeps the above honest. A property suite that
+passes because its generator only ever produced two-node unkeyed trees proves
+nothing, and a green run would not tell you. So the generator's output is
+measured and the suite fails when any interesting case dries up:
+
+```
+Generator coverage over 300 cases:
+  node moved                         74 (24.7%)
+  node removed                       233 (77.7%)
+  mixed keyed/unkeyed siblings       263 (87.7%)
+  component inside component         36 (12.0%)
+  ...
+```
+
+That check has already paid for itself once: moves initially appeared in 3.7% of
+cases, meaning the hardest part of the reconciler was barely being tested.
+
 ## What this deliberately is not
 
 Honest list of the simplifications, so nobody mistakes this for a React
@@ -151,7 +199,11 @@ replacement:
   root-level event delegation, so the handler is looked up at dispatch time
   instead of being written to the node. A real host backend here would want the
   same trick.
-- **No error boundaries.** A hook-order violation traps.
+- **No error boundaries.** Caller mistakes trap rather than degrading: a
+  hook-order violation, and two siblings sharing a key. React warns on duplicate
+  keys and proceeds, which is a backwards-compatibility compromise this codebase
+  does not need — two children claiming one identity has no correct resolution,
+  so one of them silently loses its state.
 - **Single-threaded**, `@MainActor` throughout.
 
 ## Prior art
