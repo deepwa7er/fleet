@@ -245,6 +245,9 @@ private final class CommandContentView: NSView {
             displayChipsRenderer = ChipRowRenderer(container: displayChipsHost)
             actionChipsRenderer = ChipRowRenderer(container: actionChipsHost)
         }
+
+        let path = FeatureFlags.filamentChips ? "Filament reconciler" : "legacy rebuild"
+        MigrationLog.panel.notice("Command panel chip rows: \(path, privacy: .public)")
     }
 
     @available(*, unavailable)
