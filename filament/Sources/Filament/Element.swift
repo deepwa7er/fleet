@@ -7,6 +7,7 @@ public enum Element {
     case text(String)
     case host(HostElement)
     case component(ComponentElement)
+    case fragment(FragmentElement)
 
     /// The reconciliation key, if the author supplied one.
     ///
@@ -17,6 +18,7 @@ public enum Element {
         case .text: nil
         case .host(let h): h.key
         case .component(let c): c.key
+        case .fragment(let f): f.key
         }
     }
 
@@ -30,6 +32,7 @@ public enum Element {
         case .text: .text
         case .host(let h): .host(h.tag)
         case .component(let c): .component(c.typeID)
+        case .fragment: .fragment
         }
     }
 }
@@ -38,6 +41,24 @@ enum TypeIdentity: Equatable {
     case text
     case host(String)
     case component(ObjectIdentifier)
+    case fragment
+}
+
+/// Several elements standing where one is expected.
+///
+/// A component returns exactly one element, and a host element is a real node
+/// in the output — so without this there is no way to contribute a *list* of
+/// children to somebody else's container without inventing a wrapper node that
+/// exists only to satisfy the type system. A fragment is that missing shape: it
+/// occupies a position in the element tree and creates nothing in the host.
+public struct FragmentElement {
+    public let children: [Element]
+    public let key: AnyHashable?
+
+    public init(children: [Element], key: AnyHashable? = nil) {
+        self.children = children
+        self.key = key
+    }
 }
 
 // MARK: - Host elements
@@ -109,4 +130,16 @@ public func Node(
 @MainActor
 public func Keyed(_ key: AnyHashable, _ component: some Component) -> Element {
     component.asElement(key: key)
+}
+
+/// Groups several elements into one without creating anything in the host.
+///
+/// Use it when a component's output is a list rather than a single node, so its
+/// children land directly in whatever container the component was placed in.
+@MainActor
+public func Fragment(
+    key: AnyHashable? = nil,
+    @ElementBuilder _ children: () -> [Element]
+) -> Element {
+    .fragment(FragmentElement(children: children(), key: key))
 }

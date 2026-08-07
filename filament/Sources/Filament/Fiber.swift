@@ -11,6 +11,9 @@ final class Fiber<Instance: AnyObject> {
         case text
         case host
         case component
+        /// Contributes children to an ancestor's host instance without owning
+        /// one of its own — like `.component`, but with no render function.
+        case fragment
     }
 
     let kind: Kind

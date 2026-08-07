@@ -63,6 +63,10 @@ struct GeneratorCoverageTests {
                 if shape.hasMixedKeyedSiblings { observed.insert("mixed keyed/unkeyed siblings") }
                 if shape.hasKeyedSiblingList { observed.insert("two or more keyed siblings") }
                 if shape.hasKeyedComponentChild { observed.insert("keyed component child") }
+                if shape.containsFragment { observed.insert("fragment in tree") }
+                if shape.containsMultiChildFragment {
+                    observed.insert("fragment with several children")
+                }
             }
 
             if scenario.steps.count > 2 { observed.insert("three or more steps") }
@@ -82,6 +86,8 @@ struct GeneratorCoverageTests {
             "mixed keyed/unkeyed siblings",
             "two or more keyed siblings",
             "keyed component child",
+            "fragment in tree",
+            "fragment with several children",
             "three or more steps",
         ]
 
