@@ -1,18 +1,6 @@
 import AppKit
 import Filament
 import FilamentAppKit
-import os
-
-/// Says which implementation is live, because nothing on screen does.
-///
-/// A parity migration is successful precisely when the two paths are
-/// indistinguishable, which leaves no way to confirm the new one is actually
-/// running. Watch it with:
-///
-///     log stream --predicate 'subsystem == "net.deepwa7er.tiler"' --level info
-enum MigrationLog {
-    static let panel = Logger(subsystem: "net.deepwa7er.tiler", category: "migration")
-}
 
 /// Opt-in switches for work that is being migrated rather than replaced.
 enum FeatureFlags {
@@ -81,15 +69,37 @@ struct ChipRow: Component {
 /// the panel.
 @MainActor
 final class ChipRowRenderer {
-    private let host = AppKitHost()
-    private let renderer: Reconciler<AppKitHost>
+    private let recorder: RecordingHost<AppKitHost>
+    private let renderer: Reconciler<RecordingHost<AppKitHost>>
+    private let name: String
+    private var passes = 0
 
-    init(container: NSView) {
-        host.register(chipTag) { props in Chip(props: props) }
-        renderer = Reconciler(host: host, container: container)
+    init(container: NSView, name: String) {
+        self.name = name
+
+        let appKit = AppKitHost()
+        appKit.register(chipTag) { props in Chip(props: props) }
+
+        // Wrapped so every mutation is visible. Nothing on screen distinguishes
+        // a chip that was updated from one that was rebuilt, so without this
+        // the claim that the reconciler is doing less work is unfalsifiable.
+        recorder = RecordingHost(appKit)
+        recorder.name(container, name)
+        recorder.onEvent = { event in
+            MigrationLog.note("      \(event.line)")
+        }
+
+        renderer = Reconciler(host: recorder, container: container)
     }
 
     func render(_ specs: [ChipSpec]) {
+        passes += 1
+        recorder.resetTally()
+
+        MigrationLog.note("\(name) render #\(passes) — \(specs.count) chips")
         renderer.render(ChipRow(specs: specs).asElement())
+
+        let tally = recorder.tally
+        MigrationLog.note("  → " + (tally.isEmpty ? "no host work at all" : tally.summary))
     }
 }

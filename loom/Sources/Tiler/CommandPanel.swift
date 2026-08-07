@@ -242,12 +242,12 @@ private final class CommandContentView: NSView {
         addSubview(actionChipsHost)
 
         if FeatureFlags.filamentChips {
-            displayChipsRenderer = ChipRowRenderer(container: displayChipsHost)
-            actionChipsRenderer = ChipRowRenderer(container: actionChipsHost)
+            displayChipsRenderer = ChipRowRenderer(container: displayChipsHost, name: "displays")
+            actionChipsRenderer = ChipRowRenderer(container: actionChipsHost, name: "actions")
         }
 
         let path = FeatureFlags.filamentChips ? "Filament reconciler" : "legacy rebuild"
-        MigrationLog.panel.notice("Command panel chip rows: \(path, privacy: .public)")
+        MigrationLog.note("--- command panel opened — chip rows: \(path) ---")
     }
 
     @available(*, unavailable)
@@ -346,8 +346,14 @@ private final class CommandContentView: NSView {
         entries = stack.windowList()
         displayName = Displays.screen(matching: stack.selectedUUID)?.localizedName ?? "—"
 
-        populate(displayChipsHost, with: displayChipSpecs(), using: displayChipsRenderer)
-        populate(actionChipsHost, with: actionChipSpecs(), using: actionChipsRenderer)
+        populate(
+            displayChipsHost, named: "displays",
+            with: displayChipSpecs(), using: displayChipsRenderer
+        )
+        populate(
+            actionChipsHost, named: "actions",
+            with: actionChipSpecs(), using: actionChipsRenderer
+        )
 
         list.setEntries(entries)
         layOut()
@@ -411,17 +417,30 @@ private final class CommandContentView: NSView {
     /// only thing under comparison is how they get there. The legacy path
     /// discards every chip and builds new ones; the reconciler updates the
     /// chips that changed and leaves the rest alone.
-    private func populate(_ container: NSView, with specs: [ChipSpec], using renderer: ChipRowRenderer?) {
+    private func populate(
+        _ container: NSView,
+        named name: String,
+        with specs: [ChipSpec],
+        using renderer: ChipRowRenderer?
+    ) {
         if let renderer {
             renderer.render(specs)
             return
         }
+
+        let discarded = container.subviews.count
         container.subviews.forEach { $0.removeFromSuperview() }
         for spec in specs {
             container.addSubview(
                 Chip(title: spec.title, isSelected: spec.isSelected, onClick: spec.onClick)
             )
         }
+        // Logged in the same shape as the reconciler's tally so the two paths
+        // can be read against each other rather than taken on trust.
+        MigrationLog.note(
+            "\(name) legacy rebuild — \(specs.count) chips"
+                + "\n  → \(specs.count) created · 0 updated · \(discarded) discarded"
+        )
     }
 
     /// The window ids currently on show, for the cheap membership check.
