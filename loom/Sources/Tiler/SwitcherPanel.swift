@@ -199,6 +199,7 @@ private final class SwitcherRow: NSView {
     private let icon: NSImage?
     private var hovering = false
     private var tracking: NSTrackingArea?
+    private var lastTrackingRect: NSRect = .zero
 
     init(entry: WindowStack.WindowEntry, onPick: @escaping (CGWindowID) -> Void) {
         self.entry = entry
@@ -218,12 +219,14 @@ private final class SwitcherRow: NSView {
     // track while Tiler is an inactive app.
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
+        if tracking != nil, lastTrackingRect == bounds { return }
         if let tracking { removeTrackingArea(tracking) }
         let area = NSTrackingArea(rect: bounds,
                                   options: [.mouseEnteredAndExited, .activeAlways],
                                   owner: self)
         addTrackingArea(area)
         tracking = area
+        lastTrackingRect = bounds
     }
 
     override func mouseEntered(with event: NSEvent) {
