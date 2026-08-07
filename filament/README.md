@@ -2,14 +2,16 @@
 
 A minimal React, written from scratch in Swift.
 
-It has components, a virtual tree, keyed reconciliation, hooks, effect cleanup
-and update batching — about 900 lines of commented Swift, no dependencies. It
-renders into an
-in-memory host, so you can watch the diffing algorithm work without a DOM, a
-browser, or a build step anywhere in the picture.
+It has components, fragments, a virtual tree, keyed reconciliation, hooks,
+effect cleanup and update batching — about 1,000 lines of commented Swift, no
+dependencies.
+
+The reconciler renders through a host protocol, so it ships with two backends:
+an in-memory one that lets you watch the diffing algorithm work with no DOM, no
+browser and no build step, and an AppKit one that drives real `NSView`s.
 
 ```
-swift test               # 31 tests, including a property suite
+swift test               # 52 tests, including a property suite
 swift run filament-demo
 ```
 
@@ -80,6 +82,7 @@ Element tree  ──────►  Reconciler  ──────►  HostConf
 | `HostConfig.swift` | The backend protocol |
 | `Reconciler.swift` | The algorithm |
 | `TestHost.swift` | An in-memory backend that logs every mutation |
+| `FilamentAppKit/AppKitHost.swift` | A backend driving real `NSView`s |
 
 Start with `Reconciler.reconcileChildren`. Everything else exists to serve it.
 
@@ -129,7 +132,12 @@ rebuilding the world, which is the entire promise a virtual DOM makes:
     insert row#5 into list#1 before row#2
 ```
 
-Writing a real backend means implementing six methods.
+Writing a real backend means implementing six methods. `FilamentAppKit` is that
+proof: it renders into real `NSView`s, knows how to build none of them itself
+(an app registers a factory per tag, so its existing hand-written views keep
+their drawing and gestures), and does no layout — because `react-dom` does no
+layout either. Frames stay the app's business, computed once the reconciler has
+settled the tree.
 
 ## Proving it
 
