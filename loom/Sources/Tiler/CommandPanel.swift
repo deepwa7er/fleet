@@ -196,6 +196,7 @@ private final class CommandContentView: NSView {
     private var displaysLabelY: CGFloat = 0
     private var actionsLabelY: CGFloat = 0
     private var hintY: CGFloat = 0
+    private var lastCursorInvalidationSize: NSSize = .zero
 
     init(stack: WindowStack,
          onPick: @escaping (CGWindowID) -> Void,
@@ -432,7 +433,10 @@ private final class CommandContentView: NSView {
         y += Panel.pad
         hintY = y
 
-        window?.invalidateCursorRects(for: self)
+        if bounds.size != lastCursorInvalidationSize {
+            window?.invalidateCursorRects(for: self)
+            lastCursorInvalidationSize = bounds.size
+        }
         needsDisplay = true
     }
 
@@ -675,6 +679,7 @@ private final class WindowRow: NSView {
     private let icon: NSImage?
     private var hovering = false
     private var tracking: NSTrackingArea?
+    private var lastTrackingRect: NSRect = .zero
     private var pressPoint: CGPoint?
     private var passedThreshold = false
     private var pressingClose = false
@@ -709,12 +714,14 @@ private final class WindowRow: NSView {
     // track while Tiler is an inactive app.
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
+        if tracking != nil, lastTrackingRect == bounds { return }
         if let tracking { removeTrackingArea(tracking) }
         let area = NSTrackingArea(rect: bounds,
                                   options: [.mouseEnteredAndExited, .activeAlways],
                                   owner: self)
         addTrackingArea(area)
         tracking = area
+        lastTrackingRect = bounds
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -834,6 +841,7 @@ private final class Chip: NSView {
     private let onClick: () -> Void
     private var hovering = false
     private var tracking: NSTrackingArea?
+    private var lastTrackingRect: NSRect = .zero
 
     init(title: String, isSelected: Bool, onClick: @escaping () -> Void) {
         self.title = title
@@ -855,12 +863,14 @@ private final class Chip: NSView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
+        if tracking != nil, lastTrackingRect == bounds { return }
         if let tracking { removeTrackingArea(tracking) }
         let area = NSTrackingArea(rect: bounds,
                                   options: [.mouseEnteredAndExited, .activeAlways],
                                   owner: self)
         addTrackingArea(area)
         tracking = area
+        lastTrackingRect = bounds
     }
 
     override func mouseEntered(with event: NSEvent) {
