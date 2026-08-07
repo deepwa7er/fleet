@@ -1,0 +1,14 @@
+{
+  "pins" : [
+    {
+      "identity" : "filament",
+      "kind" : "remoteSourceControl",
+      "location" : "git@github.com:deepwa7er/filament.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "ac4f1f1a65f3df953cdea325e3975368a1924546"
+      }
+    }
+  ],
+  "version" : 2
+}
