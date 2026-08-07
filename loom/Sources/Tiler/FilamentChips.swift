@@ -1,6 +1,18 @@
 import AppKit
 import Filament
 import FilamentAppKit
+import os
+
+/// Says which implementation is live, because nothing on screen does.
+///
+/// A parity migration is successful precisely when the two paths are
+/// indistinguishable, which leaves no way to confirm the new one is actually
+/// running. Watch it with:
+///
+///     log stream --predicate 'subsystem == "net.deepwa7er.tiler"' --level info
+enum MigrationLog {
+    static let panel = Logger(subsystem: "net.deepwa7er.tiler", category: "migration")
+}
 
 /// Opt-in switches for work that is being migrated rather than replaced.
 enum FeatureFlags {
