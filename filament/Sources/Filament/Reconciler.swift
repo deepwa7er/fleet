@@ -270,6 +270,18 @@ public final class Reconciler<Host: HostConfig> {
             let output = render(component: componentElement, on: fiber)
             reconcileChildren(of: fiber, to: [output])
             return fiber
+
+        case .fragment(let fragmentElement):
+            let fiber = F(
+                kind: .fragment,
+                typeIdentity: .fragment,
+                key: fragmentElement.key,
+                parent: parent
+            )
+            fiber.element = element
+            connect(fiber)
+            reconcileChildren(of: fiber, to: fragmentElement.children)
+            return fiber
         }
     }
 
@@ -307,6 +319,9 @@ public final class Reconciler<Host: HostConfig> {
             // memoized. Adding `memo` would be a bailout check right here.
             let output = render(component: new, on: fiber)
             reconcileChildren(of: fiber, to: [output])
+
+        case (.fragment(let new), .fragment?):
+            reconcileChildren(of: fiber, to: new.children)
 
         default:
             preconditionFailure(
@@ -433,7 +448,7 @@ public final class Reconciler<Host: HostConfig> {
             switch current.kind {
             case .root: return container
             case .host: return current.instance
-            case .text, .component: node = current.parent
+            case .text, .component, .fragment: node = current.parent
             }
         }
         return nil

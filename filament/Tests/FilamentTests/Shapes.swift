@@ -7,12 +7,14 @@ indirect enum Shape {
     case text(String)
     case host(tag: String, key: String?, props: [String: String], children: [Shape])
     case component(id: Int, key: String?, child: Shape)
+    case fragment(key: String?, children: [Shape])
 
     var key: String? {
         switch self {
         case .text: nil
         case .host(_, let key, _, _): key
         case .component(_, let key, _): key
+        case .fragment(let key, _): key
         }
     }
 
@@ -26,6 +28,8 @@ indirect enum Shape {
             .host(tag: tag, key: key, props: props, children: children)
         case .component(let id, _, let child):
             .component(id: id, key: key, child: child)
+        case .fragment(_, let children):
+            .fragment(key: key, children: children)
         }
     }
 
@@ -34,6 +38,7 @@ indirect enum Shape {
         case .text: 1
         case .host(_, _, _, let children): 1 + children.reduce(0) { $0 + $1.nodeCount }
         case .component(_, _, let child): 1 + child.nodeCount
+        case .fragment(_, let children): 1 + children.reduce(0) { $0 + $1.nodeCount }
         }
     }
 
@@ -56,6 +61,14 @@ indirect enum Shape {
         case .component(let id, let key, let child):
             return Cell(id: id, child: child, ledger: ledger)
                 .asElement(key: key.map { AnyHashable($0) })
+
+        case .fragment(let key, let children):
+            return .fragment(
+                FragmentElement(
+                    children: children.map { $0.element(ledger: ledger) },
+                    key: key.map { AnyHashable($0) }
+                )
+            )
         }
     }
 
@@ -78,6 +91,12 @@ indirect enum Shape {
         case .component(let id, let key, let child):
             let keyLabel = key.map { " key=\($0)" } ?? ""
             return "\(pad)Cell#\(id)\(keyLabel)\n" + child.describe(indent: indent + 1)
+
+        case .fragment(let key, let children):
+            let keyLabel = key.map { " key=\($0)" } ?? ""
+            var line = "\(pad)<>\(keyLabel)"
+            for child in children { line += "\n" + child.describe(indent: indent + 1) }
+            return line
         }
     }
 }
@@ -143,6 +162,22 @@ extension Shape {
             )
         }
 
+        if roll == 4 {
+            // Fragment children are siblings within the fragment, so key
+            // uniqueness is scoped to this list — two sibling fragments may
+            // each hold a "k0" without clashing.
+            var children: [Shape] = []
+            for _ in 0..<Int.random(in: 0..<3, using: &rng) {
+                var child = randomTree(depth: depth + 1, using: &rng)
+                if Int.random(in: 0..<10, using: &rng) < 7,
+                   let key = unusedKey(among: children, using: &rng) {
+                    child = child.withKey(key)
+                }
+                children.append(child)
+            }
+            return .fragment(key: nil, children: children)
+        }
+
         let childCount = Int.random(in: 0..<5, using: &rng)
         var children: [Shape] = []
         for _ in 0..<childCount {
@@ -183,6 +218,26 @@ extension Shape {
 
         case .component(let id, let key, let child):
             return .component(id: id, key: key, child: child.mutated(using: &rng))
+
+        case .fragment(let key, var children):
+            switch Int.random(in: 0..<4, using: &rng) {
+            case 0:
+                children.shuffle(using: &rng)
+            case 1 where !children.isEmpty:
+                children.remove(at: Int.random(in: 0..<children.count, using: &rng))
+            case 2:
+                var inserted = Shape.randomTree(depth: 2, using: &rng)
+                if let key = unusedKey(among: children, using: &rng) {
+                    inserted = inserted.withKey(key)
+                }
+                children.insert(inserted, at: Int.random(in: 0...children.count, using: &rng))
+            case 3 where !children.isEmpty:
+                let index = Int.random(in: 0..<children.count, using: &rng)
+                children[index] = children[index].mutated(using: &rng)
+            default:
+                break
+            }
+            return .fragment(key: key, children: children)
 
         case .host(let tag, let key, var props, var children):
             switch Int.random(in: 0..<10, using: &rng) {
@@ -264,6 +319,8 @@ extension Shape {
             return [self] + children.flatMap(\.allNodes)
         case .component(_, _, let child):
             return [self] + child.allNodes
+        case .fragment(_, let children):
+            return [self] + children.flatMap(\.allNodes)
         }
     }
 
@@ -272,12 +329,26 @@ extension Shape {
         case .text: []
         case .host(_, _, _, let children): children
         case .component(_, _, let child): [child]
+        case .fragment(_, let children): children
         }
     }
 
     var isComponent: Bool {
         if case .component = self { return true }
         return false
+    }
+
+    var isFragment: Bool {
+        if case .fragment = self { return true }
+        return false
+    }
+
+    var containsFragment: Bool { allNodes.contains(where: \.isFragment) }
+
+    /// A fragment holding more than one child, which is the case that actually
+    /// exercises flattening rather than behaving like a plain wrapper.
+    var containsMultiChildFragment: Bool {
+        allNodes.contains { $0.isFragment && $0.childShapes.count > 1 }
     }
 
     var containsComponent: Bool { allNodes.contains(where: \.isComponent) }
@@ -331,6 +402,22 @@ extension Shape {
                 }
                 return $0
             })
+
+        case .fragment(let key, let children):
+            candidates.append(contentsOf: children)
+            for index in children.indices {
+                var reduced = children
+                reduced.remove(at: index)
+                candidates.append(.fragment(key: key, children: reduced))
+            }
+            if key != nil { candidates.append(withKey(nil)) }
+            for index in children.indices {
+                for reducedChild in children[index].shrinkCandidates() {
+                    var reduced = children
+                    reduced[index] = reducedChild
+                    candidates.append(.fragment(key: key, children: reduced))
+                }
+            }
 
         case .host(let tag, let key, let props, let children):
             candidates.append(contentsOf: children)
