@@ -361,9 +361,11 @@ private final class CommandContentView: NSView {
         guard let target = sendTarget else {
             return NSScreen.screens.compactMap { screen in
                 guard let uuid = Displays.uuid(of: screen) else { return nil }
-                return ChipSpec(title: screen.localizedName, isSelected: uuid == selected) {
-                    [weak self] in self?.onDisplay(uuid)
-                }
+                return ChipSpec(
+                    id: uuid,
+                    title: screen.localizedName,
+                    isSelected: uuid == selected
+                ) { [weak self] in self?.onDisplay(uuid) }
             }
         }
 
@@ -371,12 +373,13 @@ private final class CommandContentView: NSView {
         // already on is a no-op dressed up as a choice.
         var specs = NSScreen.screens.compactMap { screen -> ChipSpec? in
             guard let uuid = Displays.uuid(of: screen), uuid != selected else { return nil }
-            return ChipSpec(title: screen.localizedName, isSelected: false) { [weak self] in
+            return ChipSpec(id: uuid, title: screen.localizedName, isSelected: false) {
+                [weak self] in
                 self?.sendTarget = nil
                 self?.onSend(target.id, uuid)
             }
         }
-        specs.append(ChipSpec(title: "Cancel", isSelected: false) { [weak self] in
+        specs.append(ChipSpec(id: "cancel", title: "Cancel", isSelected: false) { [weak self] in
             self?.sendTarget = nil
             self?.reload()
         })
@@ -391,9 +394,14 @@ private final class CommandContentView: NSView {
         default: loginTitle = "Start at login: off"
         }
         return [
-            ChipSpec(title: "Retile all", isSelected: false, onClick: onRetile),
-            ChipSpec(title: loginTitle, isSelected: LoginItem.isEnabled, onClick: onLoginToggle),
-            ChipSpec(title: "Quit", isSelected: false, onClick: onQuit),
+            ChipSpec(id: "retile", title: "Retile all", isSelected: false, onClick: onRetile),
+            ChipSpec(
+                id: "login",
+                title: loginTitle,
+                isSelected: LoginItem.isEnabled,
+                onClick: onLoginToggle
+            ),
+            ChipSpec(id: "quit", title: "Quit", isSelected: false, onClick: onQuit),
         ]
     }
 
