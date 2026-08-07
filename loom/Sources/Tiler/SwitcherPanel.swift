@@ -186,7 +186,9 @@ private final class SwitcherContentView: NSView {
     }
 }
 
-private final class FlippedView: NSView {
+/// A container whose coordinates run top-down, matching the panels it sits in.
+/// Shared with the command panel's chip rows.
+final class FlippedView: NSView {
     override var isFlipped: Bool { true }
 }
 
