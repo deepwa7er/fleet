@@ -36,6 +36,14 @@ enum FeatureFlags {
 /// comparable: any difference on screen is a difference in rendering, not in
 /// what was asked for.
 struct ChipSpec {
+    /// Stable identity, deliberately not the title.
+    ///
+    /// Two identical monitors report the same `localizedName`, so a title is
+    /// not unique and two chips claiming one identity is a hard error. A title
+    /// is also not *stable* — the login chip's label is its state — and a chip
+    /// keyed on its label would be discarded and rebuilt every time it changed,
+    /// which is the behaviour this is replacing.
+    let id: String
     let title: String
     let isSelected: Bool
     let onClick: () -> Void
@@ -56,10 +64,7 @@ struct ChipRow: Component {
     func render() -> Element {
         Fragment {
             for spec in specs {
-                // The title is the identity: a chip is the display or action it
-                // names, so it keeps its view when the row is reordered and
-                // loses it when the row genuinely changes.
-                Node(chipTag, key: spec.title, [
+                Node(chipTag, key: spec.id, [
                     "title": .string(spec.title),
                     "selected": .bool(spec.isSelected),
                     "onClick": .handler { spec.onClick() },
