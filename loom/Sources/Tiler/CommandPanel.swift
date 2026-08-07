@@ -1,4 +1,6 @@
 import AppKit
+import Filament
+import FilamentAppKit
 
 /// Tiler's menu, as a window rather than a menu.
 ///
@@ -185,8 +187,17 @@ private final class CommandContentView: NSView {
 
     private let scrollView = NSScrollView()
     private let list: WindowListView
-    private var displayChips: [Chip] = []
-    private var actionChips: [Chip] = []
+
+    /// The chips live inside these rather than directly in the panel, so both
+    /// the legacy and the Filament path put them in the same place and layout
+    /// has only one implementation to care about. It also keeps the
+    /// reconciler's containers free of views it did not create, which is the
+    /// one invariant an AppKit host depends on.
+    private let displayChipsHost = FlippedView()
+    private let actionChipsHost = FlippedView()
+    private var displayChipsRenderer: ChipRowRenderer?
+    private var actionChipsRenderer: ChipRowRenderer?
+
     private var entries: [WindowStack.WindowEntry] = []
     private var displayName = ""
 
@@ -227,6 +238,13 @@ private final class CommandContentView: NSView {
         scrollView.scrollerStyle = .overlay
         scrollView.documentView = list
         addSubview(scrollView)
+        addSubview(displayChipsHost)
+        addSubview(actionChipsHost)
+
+        if FeatureFlags.filamentChips {
+            displayChipsRenderer = ChipRowRenderer(container: displayChipsHost)
+            actionChipsRenderer = ChipRowRenderer(container: actionChipsHost)
+        }
     }
 
     @available(*, unavailable)
@@ -325,49 +343,74 @@ private final class CommandContentView: NSView {
         entries = stack.windowList()
         displayName = Displays.screen(matching: stack.selectedUUID)?.localizedName ?? "—"
 
-        (displayChips + actionChips).forEach { $0.removeFromSuperview() }
+        populate(displayChipsHost, with: displayChipSpecs(), using: displayChipsRenderer)
+        populate(actionChipsHost, with: actionChipSpecs(), using: actionChipsRenderer)
 
-        // Display picker: every connected screen as a chip, so there is no
-        // submenu anywhere in the panel.
+        list.setEntries(entries)
+        layOut()
+    }
+
+    /// The display picker: every connected screen as a chip, so there is no
+    /// submenu anywhere in the panel.
+    private func displayChipSpecs() -> [ChipSpec] {
         let selected = Displays.screen(matching: stack.selectedUUID).flatMap(Displays.uuid(of:))
-        if let target = sendTarget {
-            // Only the displays it could go to: sending a window to the one it
-            // is already on is a no-op dressed up as a choice.
-            displayChips = NSScreen.screens.compactMap { screen in
-                guard let uuid = Displays.uuid(of: screen), uuid != selected else { return nil }
-                return Chip(title: screen.localizedName, isSelected: false) { [weak self] in
-                    self?.sendTarget = nil
-                    self?.onSend(target.id, uuid)
-                }
-            }
-            displayChips.append(Chip(title: "Cancel", isSelected: false) { [weak self] in
-                self?.sendTarget = nil
-                self?.reload()
-            })
-        } else {
-            displayChips = NSScreen.screens.compactMap { screen in
+
+        guard let target = sendTarget else {
+            return NSScreen.screens.compactMap { screen in
                 guard let uuid = Displays.uuid(of: screen) else { return nil }
-                return Chip(title: screen.localizedName, isSelected: uuid == selected) {
+                return ChipSpec(title: screen.localizedName, isSelected: uuid == selected) {
                     [weak self] in self?.onDisplay(uuid)
                 }
             }
         }
 
+        // Only the displays it could go to: sending a window to the one it is
+        // already on is a no-op dressed up as a choice.
+        var specs = NSScreen.screens.compactMap { screen -> ChipSpec? in
+            guard let uuid = Displays.uuid(of: screen), uuid != selected else { return nil }
+            return ChipSpec(title: screen.localizedName, isSelected: false) { [weak self] in
+                self?.sendTarget = nil
+                self?.onSend(target.id, uuid)
+            }
+        }
+        specs.append(ChipSpec(title: "Cancel", isSelected: false) { [weak self] in
+            self?.sendTarget = nil
+            self?.reload()
+        })
+        return specs
+    }
+
+    private func actionChipSpecs() -> [ChipSpec] {
         let loginTitle: String
         switch LoginItem.status {
         case .requiresApproval: loginTitle = "Login: approve in Settings"
         case .enabled: loginTitle = "Start at login: on"
         default: loginTitle = "Start at login: off"
         }
-        actionChips = [
-            Chip(title: "Retile all", isSelected: false, onClick: onRetile),
-            Chip(title: loginTitle, isSelected: LoginItem.isEnabled, onClick: onLoginToggle),
-            Chip(title: "Quit", isSelected: false, onClick: onQuit),
+        return [
+            ChipSpec(title: "Retile all", isSelected: false, onClick: onRetile),
+            ChipSpec(title: loginTitle, isSelected: LoginItem.isEnabled, onClick: onLoginToggle),
+            ChipSpec(title: "Quit", isSelected: false, onClick: onQuit),
         ]
+    }
 
-        (displayChips + actionChips).forEach(addSubview)
-        list.setEntries(entries)
-        layOut()
+    /// Makes a container's chips match `specs`.
+    ///
+    /// Both paths are handed the same specs and fill the same container, so the
+    /// only thing under comparison is how they get there. The legacy path
+    /// discards every chip and builds new ones; the reconciler updates the
+    /// chips that changed and leaves the rest alone.
+    private func populate(_ container: NSView, with specs: [ChipSpec], using renderer: ChipRowRenderer?) {
+        if let renderer {
+            renderer.render(specs)
+            return
+        }
+        container.subviews.forEach { $0.removeFromSuperview() }
+        for spec in specs {
+            container.addSubview(
+                Chip(title: spec.title, isSelected: spec.isSelected, onClick: spec.onClick)
+            )
+        }
     }
 
     /// The window ids currently on show, for the cheap membership check.
@@ -389,16 +432,17 @@ private final class CommandContentView: NSView {
     private func bottomHeight(width: CGFloat) -> CGFloat {
         let inner = width - Panel.pad * 2
         return Panel.pad
-            + labelHeight + Panel.gap + chipBlock(displayChips, width: inner) + Panel.pad
-            + labelHeight + Panel.gap + chipBlock(actionChips, width: inner) + Panel.pad
+            + labelHeight + Panel.gap + chipBlock(displayChipsHost, width: inner) + Panel.pad
+            + labelHeight + Panel.gap + chipBlock(actionChipsHost, width: inner) + Panel.pad
             + hintHeight + Panel.pad
     }
 
-    private func chipBlock(_ row: [Chip], width: CGFloat) -> CGFloat {
-        guard !row.isEmpty else { return 0 }
+    private func chipBlock(_ container: NSView, width: CGFloat) -> CGFloat {
+        let chips = container.subviews
+        guard !chips.isEmpty else { return 0 }
         var rows = 1
         var x: CGFloat = 0
-        for chip in row {
+        for chip in chips {
             let chipWidth = chip.intrinsicContentSize.width
             if x > 0, x + chipWidth > width {
                 rows += 1
@@ -425,11 +469,11 @@ private final class CommandContentView: NSView {
         var y = headerHeight + visible + Panel.pad
         displaysLabelY = y
         y += labelHeight + Panel.gap
-        y = place(displayChips, from: y, width: inner)
+        y = place(displayChipsHost, from: y, width: inner)
         y += Panel.pad
         actionsLabelY = y
         y += labelHeight + Panel.gap
-        y = place(actionChips, from: y, width: inner)
+        y = place(actionChipsHost, from: y, width: inner)
         y += Panel.pad
         hintY = y
 
@@ -451,21 +495,35 @@ private final class CommandContentView: NSView {
         list.updateFront(id)
     }
 
-    /// Lay chips left to right, wrapping when the row is full. Returns the y
-    /// just past the last row.
-    private func place(_ row: [Chip], from top: CGFloat, width: CGFloat) -> CGFloat {
-        var x = Panel.pad
-        var y = top
-        for chip in row {
+    /// Lay a container's chips left to right, wrapping when the row is full.
+    /// Returns the panel-relative y just past the last row.
+    ///
+    /// Chip frames are container-relative now, so the container is sized to
+    /// whatever its chips actually span rather than to the row width. A chip
+    /// wider than the row would otherwise sit outside its parent's bounds,
+    /// where AppKit stops sending it mouse events — it would still draw, and
+    /// silently stop being clickable.
+    private func place(_ container: NSView, from top: CGFloat, width: CGFloat) -> CGFloat {
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var right: CGFloat = 0
+
+        for chip in container.subviews {
             let size = chip.intrinsicContentSize
-            if x > Panel.pad, x + size.width > Panel.pad + width {
-                x = Panel.pad
+            if x > 0, x + size.width > width {
+                x = 0
                 y += Panel.chipHeight + Panel.gap
             }
             chip.frame = NSRect(x: x, y: y, width: size.width, height: Panel.chipHeight)
+            right = max(right, x + size.width)
             x += size.width + Panel.gap
         }
-        return y + Panel.chipHeight
+
+        let height = container.subviews.isEmpty ? 0 : y + Panel.chipHeight
+        container.frame = NSRect(
+            x: Panel.pad, y: top, width: max(width, right), height: height
+        )
+        return top + height
     }
 
     // MARK: Drawing
@@ -835,10 +893,13 @@ private final class WindowRow: NSView {
 
 /// A small pressable readout, shaped like the coordinate chip under the
 /// magnifier: rounded, flat, one line of monospace.
-private final class Chip: NSView {
-    private let title: String
-    private let isSelected: Bool
-    private let onClick: () -> Void
+final class Chip: NSView, PropApplying {
+    // Mutable so a chip can be updated in place. Nothing about a chip's
+    // appearance depends on which object it is, so recreating one to change its
+    // title was always work for its own sake.
+    private var title: String
+    private var isSelected: Bool
+    private var onClick: () -> Void
     private var hovering = false
     private var tracking: NSTrackingArea?
     private var lastTrackingRect: NSRect = .zero
@@ -850,8 +911,44 @@ private final class Chip: NSView {
         super.init(frame: .zero)
     }
 
+    /// Builds a chip from an element's props, for the reconciler.
+    convenience init(props: Props) {
+        self.init(title: "", isSelected: false, onClick: {})
+        applyProps(updated: props.storage, removed: [])
+    }
+
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not used") }
+
+    /// Applies only what changed. A handler can never compare equal, so
+    /// `onClick` is re-bound on every render — a closure assignment, against
+    /// the cost of building a whole new view, which is what the other path does.
+    func applyProps(updated: [String: Props.Value], removed: [String]) {
+        var needsRedraw = false
+
+        for (key, value) in updated {
+            switch (key, value) {
+            case ("title", .string(let text)) where text != title:
+                title = text
+                invalidateIntrinsicContentSize()
+                needsRedraw = true
+            case ("selected", .bool(let flag)) where flag != isSelected:
+                isSelected = flag
+                needsRedraw = true
+            case ("onClick", .handler(let action)):
+                onClick = action
+            default:
+                break
+            }
+        }
+
+        for key in removed where key == "selected" {
+            isSelected = false
+            needsRedraw = true
+        }
+
+        if needsRedraw { needsDisplay = true }
+    }
 
     override var isFlipped: Bool { true }
 
