@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deepwater Style Guide — DW-001</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=UnifrakturCook:wght@700&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   DW-001 — the Deepwater style guide, rendered in itself.
+   Tokens, typography, depth, and motion follow §1–§8 verbatim.
+   The gothic ideas in §9 are documented only; none are applied.
+   ============================================================ */
+
+:root {
+    color-scheme: light dark;
+    --bg:              #f7f2e9;  /* warm cream paper */
+    --fill:            #fffdf8;  /* lighter surface: fields, logs, callouts */
+    --text:            #1f1a12;  /* warm near-black ink */
+    --text-muted:      #7a7264;
+    --accent:          #0066b1;  /* Bavarian blue */
+    --accent-contrast: #ffffff;
+    --danger:          #dc2626;
+    --good:            #2f6f3e;
+    --ink:             #1f1a12;  /* button outlines and hard shadows */
+    --serif:           ui-serif, Georgia, serif;
+    --sans:            system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono:            ui-monospace, SFMono-Regular, Menlo, monospace;
+    --ease:            cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg:              #121316;
+    --fill:            #1c1e22;
+    --text:            #eceef1;
+    --text-muted:      #8b9199;
+    --accent:          #4d9de0;
+    --accent-contrast: #141311;
+    --danger:          #f87171;
+    --good:            #5cb974;
+    --ink:             #000000;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --bg:              #121316;
+        --fill:            #1c1e22;
+        --text:            #eceef1;
+        --text-muted:      #8b9199;
+        --accent:          #4d9de0;
+        --accent-contrast: #141311;
+        --danger:          #f87171;
+        --good:            #5cb974;
+        --ink:             #000000;
+    }
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 1rem;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+}
+
+.container { max-width: 64rem; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+.measure   { max-width: 40rem; }
+
+/* ---------- typography ---------- */
+
+h1, h2, h3 {
+    font-family: var(--serif);
+    font-weight: 400;
+}
+
+/* G1 nave — extension of rule 1: the void is the architecture. */
+header.container { padding-top: 6rem; }
+
+h1 {
+    font-size: 2rem;
+    letter-spacing: -0.02em;
+    line-height: 1.4;            /* G1: tall vertical rhythm */
+    margin: 0.5rem 0 0;
+}
+
+h2 {
+    font-size: 1.35rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.4;
+    margin: 6rem 0 1rem;         /* G1: the tall void between sections */
+}
+
+/* G2 nave & aisle — extension of rules 1 & 5: each section is a bay. */
+section { display: grid; grid-template-columns: 10.5rem minmax(0, 1fr); gap: 0 3rem; align-items: start; }
+.nave { min-width: 0; }
+.aisle { padding-top: 6rem; text-align: right; }
+.aisle-tag { display: block; margin-top: 0.35rem; }
+
+/* G6 quatrefoil — extension of rule 1: ornament as the gap, not a border. */
+    display: flex;
+    justify-content: center;
+    margin: 2.3rem 0;
+    color: var(--text-muted);
+}
+    width: 1.35rem;
+    height: 1.35rem;
+    fill: currentColor;
+}
+
+@media (max-width: 840px) {
+    section { display: block; }
+    .aisle { padding-top: 0; text-align: left; margin-bottom: 0.5rem; }
+}
+
+p { margin: 0 0 1.25rem; }      /* G1: prose gaps widened */
+
+.nave > h3 { margin: 2.5rem 0 0.75rem; }
+
+/* G5 illuminated initial — extension of rule 1: the one ornament per page. */
+/* G11 blackletter masthead — new display voice: the title only, nothing else. */
+.incipit {
+    max-width: 26rem;
+    font-family: "UnifrakturCook", "UnifrakturMaguntia", "Old English Text MT", var(--serif);
+}
+.incipit::first-letter {
+    float: left;
+    font-size: 4.75rem;
+    line-height: 0.8;
+    padding: 0.3rem 0.55rem;
+    margin: 0.1rem 0.6rem 0 0;
+    background: var(--fill);
+    border-radius: 10px;
+    color: var(--text);
+}
+.incipit::after { content: ""; display: block; clear: both; }
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
+::selection { background: var(--accent); color: var(--accent-contrast); }
+
+/* ---------- instrumentation (rule 5) ---------- */
+
+.inst, .doc-block dt, th, .section-no {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+}
+
+.section-no {
+    display: block;
+    margin-bottom: 0.25rem;
+}
+
+/* ---------- buttons: a physical key (rule 2) ---------- */
+
+.button {
+    display: inline-block;
+    padding: 0.6rem 1.1rem;
+    font-family: var(--sans);
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--accent-contrast);
+    background: var(--accent);
+    border: 2px solid var(--ink);
+    border-radius: 10px;
+    box-shadow: 3px 3px 0 var(--ink);
+    cursor: pointer;
+    text-decoration: none;
+    transition: transform 0.15s var(--ease),
+                box-shadow 0.15s var(--ease),
+                filter 0.15s var(--ease),
+                background 0.15s var(--ease),
+                color 0.15s var(--ease);
+}
+.button:hover  { filter: brightness(0.95); }
+.button:active {
+    transform: translate(3px, 3px);
+    box-shadow: 0 0 0 var(--ink);
+    filter: none;
+}
+
+.button--secondary { background: var(--fill); color: var(--accent); }
+.button--quiet     { background: var(--fill); color: var(--text-muted); }
+.button--danger    { background: var(--fill); color: var(--danger); }
+
+/* ---------- fields: a recess (rule 2) ---------- */
+
+.field { display: block; margin-bottom: 1.25rem; }
+
+label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+}
+
+input[type="text"], textarea {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font-family: var(--sans);
+    font-size: 1rem;
+    color: var(--text);
+    background: var(--fill);
+    border: none;
+    border-radius: 10px;
+}
+input:focus, textarea:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+/* ---------- tables (extension of rules 1 & 5) ---------- */
+
+.table-scroll { overflow-x: auto; }
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+}
+
+th, td {
+    padding: 0.5rem 0 0.5rem 1rem;
+    text-align: right;
+    white-space: nowrap;
+}
+th:first-child, td:first-child { padding-left: 0; text-align: left; }
+td:first-child { font-weight: 600; }
+
+.unit {
+    display: block;
+    font-weight: 400;
+    text-transform: none;
+    opacity: 0.75;
+}
+
+/* ---------- lists (rule 1) ---------- */
+
+.list { list-style: none; padding: 0; margin: 0; }
+.list > li + li { margin-top: 1.25rem; }
+.list a.title {
+    display: block;
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 600;
+}
+.list a.title:hover { color: var(--accent); text-decoration: underline; }
+
+.ordered { margin: 0 0 1rem; padding-left: 1.25rem; }
+.ordered li { margin-bottom: 1rem; }
+.ordered li::marker { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* ---------- verdict (extension of rule 1) ---------- */
+
+.verdict {
+    font-family: var(--serif);
+    font-size: 1.1rem;
+    font-weight: 600;
+    line-height: 1.4;
+    max-width: 40rem;
+    margin: 2rem 0;
+}
+
+/* ---------- reading key (extension of rules 1 & 5) ---------- */
+
+.reading-key {
+    display: grid;
+    grid-template-columns: 7.5rem 1fr;
+    gap: 0.5rem 1rem;
+    max-width: 40rem;
+    margin: 1.5rem 0;
+}
+.reading-key dt { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; font-variant-numeric: tabular-nums; color: var(--text-muted); }
+.reading-key dd { margin: 0; color: var(--text-muted); }
+.reading-key .rk-active dt,
+.reading-key .rk-active dd { color: var(--text); }
+.reading-key .rk-active dd { font-weight: 600; }
+
+/* ---------- log / program output (extension of rule 1) ---------- */
+
+.log {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.5;
+    background: var(--fill);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    height: 12rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    margin: 1.5rem 0;
+}
+
+pre.recipe {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    line-height: 1.6;
+    background: var(--fill);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    overflow-x: auto;
+    margin: 1.25rem 0;
+}
+
+.code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    background: var(--fill);
+    border-radius: 4px;
+    padding: 0.1em 0.35em;
+}
+
+/* ---------- surfaces & callouts (rule 1: --fill only) ---------- */
+
+.callout {
+    background: var(--fill);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    max-width: 40rem;
+}
+
+.doc-block {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    gap: 1.25rem 2rem;
+    background: var(--fill);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    margin: 2rem 0;
+}
+.doc-block dd { margin: 0.25rem 0 0; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
+
+/* ---------- swatches ---------- */
+
+.swatches {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+    gap: 1rem 1.5rem;
+    background: var(--fill);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    margin: 1.5rem 0;
+}
+.swatch { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
+.swatch-chip { flex: none; width: 1.5rem; height: 1.5rem; border-radius: 10px; background: var(--chip); }
+.swatch-meta { min-width: 0; }
+.swatch-name { display: block; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
+.swatch-value { display: block; font-size: 0.75rem; font-variant-numeric: tabular-nums; color: var(--text); }
+
+/* ---------- flash (bold text in flow, no box) ---------- */
+
+.flash { font-weight: 600; }
+.flash--danger { color: var(--danger); }
+
+/* ---------- toc ---------- */
+
+.toc { list-style: none; display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; padding: 0; margin: 2rem 0 0; }
+.toc a { color: var(--text); text-decoration: none; font-weight: 600; }
+.toc a:hover { color: var(--accent); text-decoration: underline; }
+
+/* ---------- gothic candidate notes ---------- */
+
+.gothic { list-style: none; padding: 0; margin: 1.5rem 0 0; }
+.gothic > li {
+    padding: 1.25rem 1.5rem;
+    background: var(--fill);
+    border-radius: 10px;
+    margin-bottom: 1rem;
+}
+.gothic .g-title { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+.gothic .g-title h3 { margin: 0; font-family: var(--serif); font-size: 1.1rem; font-weight: 600; letter-spacing: -0.01em; }
+.gothic p { margin: 0.5rem 0 0; color: var(--text); max-width: 40rem; }
+
+.tag {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 0.15rem 0.55rem;
+    font-variant-numeric: tabular-nums;
+}
+.tag--warn { color: var(--danger); }
+.tag--applied { color: var(--good); }
+.tag--kept { color: var(--text); }
+.tag--rejected { color: var(--danger); }
+
+/* ---------- footer ---------- */
+
+footer {
+    margin-top: 4rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+hr { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<header class="container">
+    <p class="section-no">Doc. No. DW-001 · Rev A · Classification: Internal</p>
+    <h1 class="incipit">Deepwater<br>Style Guide</h1>
+    <p class="measure">
+        Cream paper, warm ink, one Bavarian blue. Hierarchy comes from whitespace and
+        typography; the only things with depth are the things you can press or type into.
+        Data is set as instrumentation — uppercase, letterspaced, tabular — so a page reads
+        as a document with a few dials on it, not as a dashboard.
+    </p>
+    <div style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap;">
+        <button class="button" id="theme-toggle" type="button">Theme: auto</button>
+        <span style="color:var(--text-muted); font-size:0.9rem;">Rendered from <span class="code">deepwater-style-guide.md</span>. Press the key; it slides down.</span>
+    </div>
+
+    <dl class="doc-block">
+        <div><dt>Subject</dt><dd>Warm-paper visual system for the personal Rails apps</dd></div>
+        <div><dt>Origin</dt><dd>fleet/notes — application.css. Extended by readout.</dd></div>
+        <div><dt>In use</dt><dd>fleet/notes · agent-harness · readout</dd></div>
+        <div><dt>Composite</dt><dd>base · Bavarian blue · Gothic G1 G2 G5 G10 G11 kept — DW-001 §11</dd></div>
+        <div><dt>Status</dt><dd>Rev A — Gothic composite defined, rolled into the guide</dd></div>
+    </dl>
+
+    <nav aria-label="Contents">
+        <ul class="toc">
+            <li><a href="#rules">The six rules</a></li>
+            <li><a href="#color">Color</a></li>
+            <li><a href="#type">Typography</a></li>
+            <li><a href="#layout">Layout</a></li>
+            <li><a href="#depth">Depth</a></li>
+            <li><a href="#motion">Motion</a></li>
+            <li><a href="#components">Components</a></li>
+            <li><a href="#extending">Extending</a></li>
+            <li><a href="#gothic">Gothic candidates</a></li>
+        </ul>
+    </nav>
+</header>
+
+<main class="container">
+
+    // 
+    <section id="rules">
+        <div class="aisle">
+            <span class="section-no">01</span>
+            <span class="inst aisle-tag">the six rules</span>
+        </div>
+        <div class="nave">
+            <h2>The Six Rules</h2>
+        <p class="measure">
+            Everything after these is either a consequence of a rule or an extension of one,
+            and every extension names the rule it derives from. That naming discipline is what
+            keeps separate apps looking like one hand made them.
+        </p>
+        <ol class="ordered measure">
+            <li><strong>Whitespace separates content.</strong> No borders or dividers between items, sections, or text. Proximity and typography carry the hierarchy.</li>
+            <li><strong>Depth marks interactivity.</strong> Solid offset shadows and outlines appear only on things you can press (buttons) or type into (fields).</li>
+            <li><strong>Warm light mode</strong> (cream paper, warm ink); <strong>charcoal dark mode</strong>. Never pure neutral gray, never brown.</li>
+            <li><strong>One accent color</strong> — a deep Bavarian blue — used only for interactive elements.</li>
+            <li><strong>Metadata is instrumentation:</strong> uppercase, letterspaced, tabular numerals. Dashboard readouts, not prose.</li>
+            <li><strong>Motion is engineered:</strong> short durations, strong ease-out, like a well-damped switch.</li>
+        </ol>
+        </div>
+    </section>
+
+    <!-- ================= §2 COLOR ================= -->
+    <section id="color">
+        <div class="aisle">
+            <span class="section-no">02</span>
+            <span class="inst aisle-tag">color · rules 3 &amp; 4</span>
+        </div>
+        <div class="nave">
+            <h2>Color</h2>
+        <p class="measure">
+            Light mode is warm all the way through. Dark mode is <em>not</em> the warm palette
+            inverted: it is cool charcoal with a blue undertone, so the backlight blue reads as
+            backlight. The chips below render from the live tokens — flip the theme to see both faces.
+        </p>
+
+        <div class="swatches">
+            <div class="swatch"><span class="swatch-chip" style="--chip:var(--bg)"></span><span class="swatch-meta"><span class="swatch-name">--bg</span><span class="swatch-value">paper</span></span></div>
+            <div class="swatch"><span class="swatch-chip" style="--chip:var(--fill)"></span><span class="swatch-meta"><span class="swatch-name">--fill</span><span class="swatch-value">surface</span></span></div>
+            <div class="swatch"><span class="swatch-chip" style="--chip:var(--text)"></span><span class="swatch-meta"><span class="swatch-name">--text</span><span class="swatch-value">ink</span></span></div>
+            <div class="swatch"><span class="swatch-chip" style="--chip:var(--text-muted)"></span><span class="swatch-meta"><span class="swatch-name">--text-muted</span><span class="swatch-value">meta</span></span></div>
+            <div class="swatch"><span class="swatch-chip" style="--chip:var(--accent)"></span><span class="swatch-meta"><span class="swatch-name">--accent</span><span class="swatch-value">interaction only</span></span></div>
+            <div class="swatch"><span class="swatch-chip" style="--chip:var(--danger)"></span><span class="swatch-meta"><span class="swatch-name">--danger</span><span class="swatch-value">a fact, not a mood</span></span></div>
+            <div class="swatch"><span class="swatch-chip" style="--chip:var(--good)"></span><span class="swatch-meta"><span class="swatch-name">--good</span><span class="swatch-value">a wash, not a signal</span></span></div>
+            <div class="swatch"><span class="swatch-chip" style="--chip:var(--ink)"></span><span class="swatch-meta"><span class="swatch-name">--ink</span><span class="swatch-value">keys and hard shadows</span></span></div>
+        </div>
+
+        <p class="measure">
+            <span class="code">--accent</span> is reserved for interaction: links, primary buttons,
+            focus rings, hover states. A chart line, a heading, or a highlighted figure never gets it —
+            if it's blue, you can click it. <span class="code">--ink</span> is not <span class="code">--text</span>:
+            it means "the hard edge of a physical key" and goes black in dark mode while text goes
+            paper-white. <span class="code">--fill</span> is the only permitted background change — it is how a
+            surface becomes distinct without a border.
+        </p>
+
+        <h3 style="font-family:var(--serif); font-size:1.1rem; font-weight:600;">Measured contrast (against --bg / against --fill)</h3>
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Token</th>
+                        <th>Light<span class="unit">against bg / fill</span></th>
+                        <th>Dark<span class="unit">against bg / fill</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>--text</td><td>15.50 / 17.01</td><td>15.98 / 14.36</td></tr>
+                    <tr><td>--text-muted</td><td>4.26 / 4.68</td><td>5.85 / 5.25</td></tr>
+                    <tr><td>--accent</td><td>5.33 / 5.84</td><td>6.38 / 5.73</td></tr>
+                    <tr><td>--danger</td><td>4.33 / 4.75</td><td>6.72 / 6.03</td></tr>
+                    <tr><td>--good</td><td>5.44 / 5.96</td><td>7.65 / 6.87</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="measure">
+            Two light-mode values fall under WCAG AA for normal text (4.5:1): <span class="code">--text-muted</span> at
+            4.26 and <span class="code">--danger</span> at 4.33. This is a known gap, not a license.
+        </p>
+        </div>
+    </section>
+
+    <!-- ================= §3 TYPOGRAPHY ================= -->
+    <section id="type">
+        <div class="aisle">
+            <span class="section-no">03</span>
+            <span class="inst aisle-tag">typography · rule 5</span>
+        </div>
+        <div class="nave">
+            <h2>Typography</h2>
+        <p class="measure">Three voices, and only three.</p>
+
+        <h3 style="font-family:var(--serif); font-size:1.1rem; font-weight:600;">Prose</h3>
+        <p class="measure">
+            <span class="code">system-ui, sans-serif</span> at <span class="code">1rem / 1.6</span>. Body text,
+            findings, descriptions. No uppercase, no letterspacing. This paragraph is prose.
+        </p>
+
+        <h3 style="font-family:var(--serif); font-size:1.1rem; font-weight:600;">Headings</h3>
+        <p class="measure">
+            <span class="code">ui-serif, Georgia, serif</span> — the serif is what makes the page a document
+            instead of an app chrome. Tighten tracking as size grows; large type at default tracking always
+            looks loose. This <em>is</em> the <span class="code">h1</span> scale, set live:
+        </p>
+        <p style="font-family:var(--serif); font-size:2rem; letter-spacing:-0.02em; margin:0.5rem 0;">A document, not a dashboard</p>
+
+        <h3 style="font-family:var(--serif); font-size:1.1rem; font-weight:600;">Instrumentation (rule 5)</h3>
+        <p class="measure">The readout voice. One recipe, applied identically everywhere:</p>
+        <pre class="recipe">font-size: 0.7rem;
+font-weight: 600;
+letter-spacing: 0.08em;
+text-transform: uppercase;
+font-variant-numeric: tabular-nums;
+color: var(--text-muted);</pre>
+        <p class="measure">
+            It marks column headers, timestamps, units, axis labels, key terms, and settings labels — never
+            prose. If a human wrote the sentence for another human to read, it stays lowercase and
+            unletterspaced even beside readouts. This whole page's section numbers and doc block are live examples.
+        </p>
+
+        <h3 style="font-family:var(--serif); font-size:1.1rem; font-weight:600;">Monospace</h3>
+        <p class="measure">
+            <span class="code">ui-monospace, SFMono-Regular, Menlo, monospace</span> — for program output, diffs,
+            and inline literals only. Monospace means "a machine produced this and its alignment carries meaning."
+            Tabular numerals are mandatory anywhere numbers stack.
+        </p>
+        </div>
+    </section>
+
+    <!-- ================= §4 LAYOUT ================= -->
+    <section id="layout">
+        <div class="aisle">
+            <span class="section-no">04</span>
+            <span class="inst aisle-tag">layout · rule 1</span>
+        </div>
+        <div class="nave">
+            <h2>Layout &amp; Measure</h2>
+        <pre class="recipe">.container { max-width: 64rem; margin: 0 auto; padding: 1.5rem 1.25rem; }
+.measure   { max-width: 40rem; }</pre>
+        <p class="measure">
+            <strong>40rem is the prose measure</strong> — the right measure for reading. Widen the container only
+            for data that genuinely does not fit, and say why in a comment. The page never scrolls sideways;
+            anything wide scrolls inside its own box. Structure comes from vertical rhythm, not rules — the gap
+            between two items <em>is</em> the divider:
+        </p>
+        <pre class="recipe">.run        { padding: 0.75rem 0; }
+.run + .run { margin-top: 1rem; }   /* the gap replaces the divider */</pre>
+        </div>
+    </section>
+
+    <!-- ================= §5 DEPTH ================= -->
+    <section id="depth">
+        <div class="aisle">
+            <span class="section-no">05</span>
+            <span class="inst aisle-tag">depth · rule 2</span>
+        </div>
+        <div class="nave">
+            <h2>Depth — the only place it appears</h2>
+        <p class="measure">
+            The button is a physical key: accent keycap, 2px ink edge, solid offset shadow. The press slides it
+            down into its own shadow — the offset and the translate must match or the key doesn't land. The field
+            is a recess: no border at all, the fill surface and radius do the work, and focus draws the only
+            outline on the page. Nothing else may borrow either treatment. Try the keys below.
+        </p>
+
+        <div style="display:flex; gap:1rem; flex-wrap:wrap; margin:1.5rem 0;">
+            <button class="button" type="button">Primary key</button>
+            <button class="button button--secondary" type="button">Secondary</button>
+            <button class="button button--quiet" type="button">Quiet</button>
+            <button class="button button--danger" type="button">Danger</button>
+        </div>
+
+        <div style="max-width:20rem;">
+            <label class="field">
+                Run title
+                <input type="text" value="Long run · 21.1 km">
+            </label>
+        </div>
+
+        <p class="measure">
+            Variants recolor, never restyle — the border, radius, and shadow are constant, and that constancy is
+            what says "pressable". <span class="code">radius: 10px</span> is the system's one geometry constant.
+        </p>
+        </div>
+    </section>
+
+    <!-- ================= §6 MOTION ================= -->
+    <section id="motion">
+        <div class="aisle">
+            <span class="section-no">06</span>
+            <span class="inst aisle-tag">motion · rule 6</span>
+        </div>
+        <div class="nave">
+            <h2>Motion</h2>
+        <p class="measure">
+            <span class="code">0.15s cubic-bezier(0.2, 0.8, 0.2, 1)</span> — damped, not springy. That is the whole
+            vocabulary. Motion exists to make the key press feel mechanical; it never reveals content, never gates
+            a click, never loops. Honor the user's setting:
+        </p>
+        <pre class="recipe">@media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+}</pre>
+        </div>
+    </section>
+
+    <!-- ================= §7 COMPONENTS ================= -->
+    <section id="components">
+        <div class="aisle">
+            <span class="section-no">07</span>
+            <span class="inst aisle-tag">components · rules 1 &amp; 5</span>
+        </div>
+        <div class="nave">
+            <h2>Components</h2>
+
+        <h3 style="font-family:var(--serif); font-size:1.1rem; font-weight:600;">Lists (rule 1)</h3>
+        <p class="measure">No markers, no borders — the gaps carry the grouping. The title is text at rest, accent on hover:</p>
+        <ul class="list measure">
+            <li><a class="title" href="#gothic">Reading the run — 21.1 km, delivered on time</a></li>
+            <li><a class="title" href="#gothic">Threshold check — effort within target band</a></li>
+            <li><a class="title" href="#gothic">Shoes — 612 km logged, 188 remaining</a></li>
+        </ul>
+
+        <h3 style="font-family:var(--serif); font-size:1.1rem; font-weight:600;">Tables (extension of rules 1 &amp; 5)</h3>
+        <p class="measure">No rules, no zebra striping. Every header is instrumentation; every figure is tabular. Units live in the header, numbers right-aligned, the label column left and 600.</p>
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Run</th>
+                        <th>Distance<span class="unit">km</span></th>
+                        <th>Pace<span class="unit">min/km</span></th>
+                        <th>Effort<span class="unit">/10</span></th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>2026-08-07 long</td><td>21.10</td><td>5:32</td><td>7</td><td>Delivered</td></tr>
+                    <tr><td>2026-08-04 tempo</td><td>12.00</td><td>4:48</td><td>8</td><td>Delivered</td></tr>
+                    <tr><td>2026-08-01 easy</td><td>8.50</td><td>6:10</td><td>3</td><td>Delivered</td></tr>
+                    <tr><td>2026-07-28 long</td><td>21.10</td><td>5:41</td><td>6</td><td>Delivered</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h3 style="font-family:var(--serif); font-size:1.1rem; font-weight:600;">The verdict (extension of rule 1)</h3>
+        <p class="measure">A conclusion the reader must not miss — separated by space and a shift to serif, not by a box or a background:</p>
+        <p class="verdict">On 21.1 km at 5:32 pace, effort ran 7/10 — comfortably within the target band.</p>
+
+        <h3 style="font-family:var(--serif); font-size:1.1rem; font-weight:600;">The reading key (extension of rules 1 &amp; 5)</h3>
+        <p class="measure">Rows are separated by space, never rules. The band the run landed in is promoted by weight and color — never by a colored box:</p>
+        <dl class="reading-key">
+            <dt>0–59%</dt><dd>Low — comfortably under target</dd>
+            <dt>60–89%</dt><dd>Fine — effort in range</dd>
+            <dt class="rk-active">90–100%</dt><dd class="rk-active">At target — 7/10 today</dd>
+            <dt>&gt;100%</dt><dd>Over — hard enough to note</dd>
+        </dl>
+
+        <h3 style="font-family:var(--serif); font-size:1.1rem; font-weight:600;">Log / program output (extension of rule 1)</h3>
+        <p class="measure">Monospace on a fill surface, capped height, scrolls inside itself:</p>
+        <div class="log">15:04:11 poll ok — 3 runs, 2 delivered, 0 errors
+15:04:26 refetch chart series (dpr=2.00, w=640)
+15:04:41 verdict: AT TARGET · effort 7/10
+15:04:56 sync readout/summary (2 files, 0 changed)
+15:05:11 poll ok — 3 runs, 2 delivered, 0 errors
+15:05:26 refetch chart series (dpr=2.00, w=640)</div>
+
+        <h3 style="font-family:var(--serif); font-size:1.1rem; font-weight:600;">Flashes (bold text in flow, no box)</h3>
+        <p>Nothing to sync — all runs delivered.</p>
+        <p class="flash flash--danger">Import failed: malformed row 14.</p>
+        </div>
+    </section>
+
+    <!-- ================= §8 EXTENDING ================= -->
+    <section id="extending">
+        <div class="aisle">
+            <span class="section-no">08</span>
+            <span class="inst aisle-tag">extending · the method</span>
+        </div>
+        <div class="nave">
+            <h2>Adding to the System</h2>
+        <p class="measure">Extensions are made one way, and the price of admission is naming the rule:</p>
+        <ol class="ordered measure">
+            <li><strong>Name the rule you are extending.</strong> "Extension of rule 1" is the price of admission.</li>
+            <li><strong>Say what the existing system lacked.</strong> The notes app had no "good" color until a signed gap needed one; it was added muted, so it stays a wash behind data.</li>
+            <li><strong>When a rule genuinely strains, resolve it — do not except it.</strong> A transcript across four hundred events gets rhythm from rule 5, not a line drawn anywhere; a diff gets its extra signal by coloring line <em>role</em>, reusing the status colors.</li>
+            <li><strong>Never reach for a border.</strong> If two things need separating, they need more space or a different type treatment.</li>
+        </ol>
+        </div>
+    </section>
+
+    <!-- ================= §9 GOTHIC CANDIDATES ================= -->
+    <section id="gothic">
+        <div class="aisle">
+            <span class="section-no">09</span>
+            <span class="inst aisle-tag">gothic · extensions pending</span>
+        </div>
+        <div class="nave">
+            <h2>Gothic Inspiration</h2>
+        <p class="measure">
+            Rev A tried eleven Gothic ideas here and kept five. What survived is not ornament:
+            Gothic's translatable DNA for this system is <strong>verticality, structure, and one
+            sacred thing per page</strong>. The kept ideas are now part of DW-001 (§11 of the
+            guide); the rejected ones are recorded here with their reasons so nobody re-tries
+            them. This page is the reference implementation for G1, G2, G5, and G11 —
+            <span class="code">deepwater-404.html</span> is the specimen for G10.
+        </p>
+
+        <ol class="gothic">
+            <li>
+                <div class="g-title">
+                    <h3>G1 · The nave is whitespace</h3>
+                    <span class="tag">extends rule 1</span>
+                    <span class="tag tag--kept">kept — part of DW-001 §11</span>
+                </div>
+                <p>Cathedrals are full of emptiness — the vertical void is the architecture. Deeper rule 1: taller line-height on headings, more air above h1/h2, the masthead treated like the vault. Cheapest and most structural idea; barely changes the look. <strong>Applied here:</strong> masthead padding grows to 6rem, heading line-height to 1.4, section gaps to 6rem, prose gaps to 1.25rem.</p>
+            </li>
+            <li>
+                <div class="g-title">
+                    <h3>G2 · Nave and aisle layout</h3>
+                    <span class="tag">extends rules 1 &amp; 5</span>
+                    <span class="tag tag--kept">kept — part of DW-001 §11</span>
+                </div>
+                <p>Make the two-column page officially nave + aisle: prose in the nave, instrumentation and metadata in the aisle. Gothic facades are organized in registers/bays; the metadata rail becomes the aisle. <strong>Applied here:</strong> every section is a bay — its number and the rule it derives from sit in the aisle rail; prose and components fill the nave.</p>
+            </li>
+            <li>
+                <div class="g-title">
+                    <h3>G3 · The vault of the document</h3>
+                    <span class="tag">meta / structural</span>
+                    <span class="tag tag--rejected">rejected — pure metaphor, no behavior</span>
+                </div>
+                <p>Frame the guide itself as a vault: the six rules are six ribs meeting at a keystone — the keystone being the naming discipline (§8). Purely textual; gives the composite guide a Gothic structure.</p>
+            </li>
+            <li>
+                <div class="g-title">
+                    <h3>G4 · The pointed arch is the altar</h3>
+                    <span class="tag">extends rule 1</span>
+                    <span class="tag tag--rejected">rejected — a second geometry strained the depth rule</span>
+                </div>
+                <p>A lancet — pointed-arch top — as the one geometric signature, reserved for the verdict block (§7): already "a conclusion the reader must not miss", it becomes the only pointed shape on the page. Everything else keeps the 10px radius.</p>
+            </li>
+            <li>
+                <div class="g-title">
+                    <h3>G5 · The illuminated initial</h3>
+                    <span class="tag">extends rule 1</span>
+                    <span class="tag tag--kept">kept — part of DW-001 §11</span>
+                </div>
+                <p>One drop-cap per page opening the title or first section — the incipit, the manuscript letter. Ink or muted wash, never accent (rule 4: if it's blue you can click it). The guide's "one ornament" becomes this. <strong>Applied here:</strong> the masthead title opens with an illuminated "D" on a fill panel — the page's one ornament.</p>
+            </li>
+            <li>
+                <div class="g-title">
+                    <h3>G6 · The quatrefoil replaces the divider</h3>
+                    <span class="tag">extends rule 1</span>
+                    <span class="tag tag--rejected">rejected — clutter; the pure void is stronger</span>
+                </div>
+                <p>Section breaks are currently pure space. A tiny quarterfoil/tracery glyph centered between major sections would be the only permitted glyph ornament — ornament <em>as</em> the gap, not a border.</p>
+            </li>
+            <li>
+                <div class="g-title">
+                    <h3>G7 · Chartres blue — the light in the dark</h3>
+                    <span class="tag">deepens rules 3 &amp; 4</span>
+                    <span class="tag tag--rejected">rejected — framing changed nothing; stone broke one-surface</span>
+                </div>
+                <p>Bavarian blue is, coincidentally, the blue of Chartres stained glass. Reframe the accent as "the light in the dark": dark mode is the nave, light mode the day-lit cathedral. Documentary only — no code change. Optionally add a warm-limestone <span class="code">--stone</span> surface.</p>
+            </li>
+            <li>
+                <div class="g-title">
+                    <h3>G8 · Stone grain</h3>
+                    <span class="tag tag--rejected">rejected — the flat-paper rule</span>
+                </div>
+                <p>A near-invisible texture (2–3% opacity tracery) on the page background, reading as stone or paper grain. Survives only if it stays under the threshold of "surface". Most tension with the flat-paper rule.</p>
+            </li>
+            <li>
+                <div class="g-title">
+                    <h3>G9 · Rubrication</h3>
+                    <span class="tag tag--rejected">rejected — rule 4: color means something</span>
+                </div>
+                <p>Medieval red for key lines in the masthead, like a manuscript rubric. Violates "accent is interaction" — the danger red exists to mean something. Only defensible restricted to the document header block.</p>
+            </li>
+            <li>
+                <div class="g-title">
+                    <h3>G10 · The gargoyle</h3>
+                    <span class="tag">extends rule 1</span>
+                    <span class="tag tag--kept">kept — part of DW-001 §11</span>
+                </div>
+                <p>One allowed moment of playfulness — the 404 page is a gargoyle. Gothic cathedrals had grotesques; comedy needs a straight man. <strong>Applied here:</strong> a live 404 page, <a href="deepwater-404.html">DW-404 — Nothing here but a gargoyle</a>, where the stone grotesque is the page's one ornament and the rest stays strictly in system.</p>
+            </li>
+            <li>
+                <div class="g-title">
+                    <h3>G11 · Blackletter masthead</h3>
+                    <span class="tag">new display voice</span>
+                    <span class="tag tag--kept">kept — part of DW-001 §11</span>
+                </div>
+                <p>A Fraktur display voice for the app/run title only — never body or headings (Georgia stays). Fraktur is nearly unreadable at length, so the discipline is self-enforcing. <strong>Applied here:</strong> the masthead title is set in UnifrakturCook, the illuminated initial keeping it company; every other heading stays Georgia. Falls back to serif if the font can't load.</p>
+            </li>
+        </ol>
+
+        <div class="callout measure">
+            <p style="margin:0;"><strong>Motion, deliberately unchanged.</strong> Rule 6 forbids content-revealing motion, so Gothic "solemnity" (slower reveals) contradicts it. The damped 0.15s press is already mechanical — the feel of a heavy cathedral door. No motion candidate is proposed.</p>
+        </div>
+        </div>
+    </section>
+
+</main>
+
+<footer class="container">
+    <p style="margin:0;">END DW-001 · REV A — warm paper, one blue, more space · less ink · Origin: fleet/notes/application.css, extended by readout and agent-harness.</p>
+</footer>
+
+<script>
+(function () {
+    var root = document.documentElement;
+    var btn = document.getElementById("theme-toggle");
+    var modes = ["auto", "dark", "light"];
+    var mode = localStorage.getItem("dw-theme") || "auto";
+
+    function apply() {
+        if (mode === "auto") { delete root.dataset.theme; }
+        else { root.dataset.theme = mode; }
+        btn.textContent = "Theme: " + mode;
+    }
+
+    btn.addEventListener("click", function () {
+        mode = modes[(modes.indexOf(mode) + 1) % modes.length];
+        try { localStorage.setItem("dw-theme", mode); } catch (e) {}
+        apply();
+    });
+
+    apply();
+})();
+</script>
+
+</body>
+</html>
