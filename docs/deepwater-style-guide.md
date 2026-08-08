@@ -380,6 +380,11 @@ set in the masthead voice (§3). Ink, never accent. This is the page's one
 ornament, and it is not a control: nothing else on the page may borrow a drop
 cap.
 
+A page never says its title twice. Where the masthead title and the page's own
+title are the same string — the app's home — the incipit takes the masthead's
+place rather than echoing it; the wordmark stays only where it is navigation
+back to a title already shown.
+
 ### The 404 page (G10, extension of rule 1)
 
 A page that has nothing to say may say it with a gargoyle. The 404 is the one
