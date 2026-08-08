@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 
 // Probe: are any windows sitting exactly on the tile (screen inset by the gap)?
-// If yes, the standalone Tiler instance has AX permission and has enrolled
+// If yes, the standalone Loom instance has AX permission and has enrolled
 // windows. If no, it's running ungranted and doing nothing.
 // Keep the gap in sync with StageLayout.gap.
 let gap: CGFloat = 10
@@ -13,7 +13,7 @@ var tiled = 0, total = 0
 for info in list {
     guard let layer = info["kCGWindowLayer"] as? Int, layer == 0,
           let owner = info["kCGWindowOwnerName"] as? String,
-          !["Window Server", "Dock", "Control Center", "WindowManager", "Tiler"].contains(owner),
+          !["Window Server", "Dock", "Control Center", "WindowManager", "Loom"].contains(owner),
           let b = info["kCGWindowBounds"] as? [String: Any],
           let r = CGRect(dictionaryRepresentation: b as CFDictionary) else { continue }
     total += 1

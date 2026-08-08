@@ -37,7 +37,7 @@ final class EventTap {
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
             FileHandle.standardError.write(Data(
-                "Tiler: failed to create event tap — is Accessibility granted?\n".utf8))
+                "Loom: failed to create event tap — is Accessibility granted?\n".utf8))
             return
         }
         self.tap = tap

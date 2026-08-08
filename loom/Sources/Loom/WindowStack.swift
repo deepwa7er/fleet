@@ -25,7 +25,7 @@ final class WindowStack {
         guard let display = displayFrame() else { return }
         windows = Windows.snapshot(on: display).compactMap(enroll)
         assignNumbers()
-        FileHandle.standardError.write(Data("Tiler: enrolled \(windows.count) windows\n".utf8))
+        FileHandle.standardError.write(Data("Loom: enrolled \(windows.count) windows\n".utf8))
         // The snapshot is front-to-back, so the first entry already holds the
         // stage; focusing it just makes our idea of the front explicit.
         if let front = windows.first { Windows.focus(front) }
@@ -81,9 +81,9 @@ final class WindowStack {
 
     /// Move a window to another display and let it go.
     ///
-    /// It lands on that display's stage — the same frame it would get if Tiler
+    /// It lands on that display's stage — the same frame it would get if Loom
     /// managed it there — so the result is predictable rather than wherever the
-    /// old coordinates happened to fall. Tiler manages one display at a time, so
+    /// old coordinates happened to fall. Loom manages one display at a time, so
     /// the window then leaves the stack: the next reconcile stops finding it on
     /// the managed display and drops it, which is the intended "send it away".
     @discardableResult
@@ -295,7 +295,7 @@ final class WindowStack {
     }
 
     /// Put every enrolled window back where we found it. Reached only by
-    /// quitting now — Tiler hands the windows back as it found them on the way
+    /// quitting now — Loom hands the windows back as it found them on the way
     /// out, but there is no longer a button for it.
     func restoreAll() {
         for window in windows { Windows.setFrame(window, window.originalFrame) }

@@ -2,7 +2,7 @@ import AppKit
 import Filament
 import FilamentAppKit
 
-/// Tiler's menu, as a window rather than a menu.
+/// Loom's menu, as a window rather than a menu.
 ///
 /// A borderless panel that opens at the pointer and carries everything the ◎
 /// menu carries: the managed windows, the display picker, restore frames, start
@@ -799,7 +799,7 @@ private final class WindowRow: NSView {
     override var isFlipped: Bool { true }
 
     // `.activeAlways`: the panel is deliberately never key, so hover has to
-    // track while Tiler is an inactive app.
+    // track while Loom is an inactive app.
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if tracking != nil, lastTrackingRect == bounds { return }

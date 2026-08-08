@@ -24,12 +24,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setUpStatusItem() // visible even while ungranted, so the app never looks dead
         let trusted = Permissions.ensureAccessibility(prompt: true)
         FileHandle.standardError.write(Data(
-            "Tiler: launch, accessibility trusted=\(trusted)\n".utf8))
+            "Loom: launch, accessibility trusted=\(trusted)\n".utf8))
         if trusted {
             boot()
         } else {
             StateLog.write("waiting for Accessibility grant")
-            stateMenuItem?.title = "Tiler — grant Accessibility access in System Settings…"
+            stateMenuItem?.title = "Loom — grant Accessibility access in System Settings…"
             // Poll until the grant lands, then start without a relaunch.
             permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
                 guard Permissions.isTrusted else { return }
@@ -42,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func boot() {
         let listen = CGPreflightListenEventAccess()
-        stateMenuItem?.title = "Tiler — ⌘1–9 switches windows, 🎤 opens the panel"
+        stateMenuItem?.title = "Loom — ⌘1–9 switches windows, 🎤 opens the panel"
 
         let stack = WindowStack()
         stack.start()
@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let menu = NSMenu()
         menu.delegate = self // the login-item state can change in System Settings
-        let state = NSMenuItem(title: "Tiler", action: nil, keyEquivalent: "")
+        let state = NSMenuItem(title: "Loom", action: nil, keyEquivalent: "")
         menu.addItem(state)
         stateMenuItem = state
 
@@ -164,8 +164,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = enabling
-            ? "Tiler couldn’t add itself to your login items."
-            : "Tiler couldn’t remove itself from your login items."
+            ? "Loom couldn’t add itself to your login items."
+            : "Loom couldn’t remove itself from your login items."
         alert.informativeText = error.localizedDescription
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Open Login Items…")
