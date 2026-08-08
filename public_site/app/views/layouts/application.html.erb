@@ -25,7 +25,15 @@
   <body>
     <div class="container measure">
       <header class="masthead">
-        <a class="wordmark" href="<%= root_path %>">deepwa7er</a>
+        <%# On the home page the masthead title and the page's heading are the
+            same string, so it is said once — as the incipit (G5 + G11), in the
+            masthead's place. Everywhere else the wordmark is a navigation link
+            back home. The title never appears twice on a page. %>
+        <% if current_page?(root_path) %>
+          <h1 class="incipit">deepwa7er</h1>
+        <% else %>
+          <a class="wordmark" href="<%= root_path %>">deepwa7er</a>
+        <% end %>
         <nav class="masthead-nav">
           <a href="https://blog.deepwa7er.com">Blog</a>
           <a href="https://github.com/deepwa7er">GitHub</a>
