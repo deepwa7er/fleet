@@ -115,7 +115,7 @@ enum Windows {
     /// Write the frame whether or not it matches what we last asked for.
     ///
     /// `setFrame(_:_:)` skips the write when the rect matches `lastFrame`, which
-    /// keeps the reconcile pass cheap. But `lastFrame` records what Tiler
+    /// keeps the reconcile pass cheap. But `lastFrame` records what Loom
     /// *requested*, not where the window actually is — a window the user has
     /// since dragged or resized still matches it. Retiling would then skip
     /// precisely the windows that have drifted, which are the only ones that

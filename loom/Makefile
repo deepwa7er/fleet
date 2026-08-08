@@ -1,4 +1,4 @@
-APP     := Tiler
+APP     := Loom
 BUNDLE  := $(APP).app
 CONFIG  := release
 BIN     := .build/$(CONFIG)/$(APP)

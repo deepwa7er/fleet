@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "Tiler",
+    name: "Loom",
     platforms: [.macOS(.v14)],
     dependencies: [
         // Tracked by branch rather than pinned to a tag: Filament is being
@@ -13,12 +13,12 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "Tiler",
+            name: "Loom",
             dependencies: [
                 .product(name: "Filament", package: "filament"),
                 .product(name: "FilamentAppKit", package: "filament"),
             ],
-            path: "Sources/Tiler"
+            path: "Sources/Loom"
         )
     ]
 )

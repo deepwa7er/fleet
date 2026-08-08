@@ -218,7 +218,7 @@ private final class SwitcherRow: NSView {
     override var isFlipped: Bool { true }
 
     // `.activeAlways`: the panel is deliberately never key, so hover has to
-    // track while Tiler is an inactive app.
+    // track while Loom is an inactive app.
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if tracking != nil, lastTrackingRect == bounds { return }

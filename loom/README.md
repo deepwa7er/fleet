@@ -1,4 +1,4 @@
-# Tiler
+# Loom
 
 One window at a time, filling the screen. Every window on the managed display
 gets the same frame — the full screen minus a small gap, like a tiling WM with
@@ -10,12 +10,12 @@ focus change, so nothing moves and no app re-layouts.
 
 ## Build & run
 
-    make app      # builds Tiler.app (signed so the Accessibility grant sticks)
+    make app      # builds Loom.app (signed so the Accessibility grant sticks)
     make run      # opens it — all windows on the display immediately tile
     make install  # copies it to ~/Applications
 
 On first launch macOS asks for Accessibility access (needed to observe key
-events and move windows). Grant it and Tiler starts by itself a second later.
+events and move windows). Grant it and Loom starts by itself a second later.
 
 ## Keys
 
@@ -33,8 +33,8 @@ window you pick is raised to just beneath it rather than over it.
 **Right-click a row** to send that window to another display. The display
 section turns into a picker naming the window — the display it is already on is
 left out, since sending it there is a no-op dressed up as a choice — and it
-lands on the destination's stage, the same frame it would get if Tiler managed
-it there. Tiler manages one display at a time, so the window then leaves the
+lands on the destination's stage, the same frame it would get if Loom managed
+it there. Loom manages one display at a time, so the window then leaves the
 stack and its row drops out.
 
 Hovering a row reveals a **✕** at its trailing edge, which closes that window —
@@ -87,7 +87,7 @@ there; the menu reads its state back from the system rather than caching it.
 If it has been switched off in Settings the menu item says so, and clicking it
 opens that pane — an app can't re-enable itself once the user says no.
 
-Enable it on the installed copy, not on the `Tiler.app` in this repo: the
+Enable it on the installed copy, not on the `Loom.app` in this repo: the
 registration records the bundle's path, and `make app` deletes and rebuilds
 that one. Deleting a registered bundle for good leaves a dead login item
 (status `.notFound`) that has to be cleared in System Settings.
@@ -115,4 +115,4 @@ polling once a second, so a login launch needs no relaunch after you grant it.
   maximize, which is where the habit of pressing ⌃⌥Enter came from. Apps
   that refuse to resize past their own limits keep their size and are simply
   moved, exactly as at enrollment.
-- The stage gap is 12pt on every side, in `Sources/Tiler/StageLayout.swift`.
+- The stage gap is 12pt on every side, in `Sources/Loom/StageLayout.swift`.

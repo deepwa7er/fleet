@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Tiler</string>
+    <string>Loom</string>
     <key>CFBundleDisplayName</key>
-    <string>Tiler</string>
+    <string>Loom</string>
     <key>CFBundleIdentifier</key>
-    <string>net.deepwa7er.tiler</string>
+    <string>net.deepwa7er.loom</string>
     <key>CFBundleExecutable</key>
-    <string>Tiler</string>
+    <string>Loom</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>

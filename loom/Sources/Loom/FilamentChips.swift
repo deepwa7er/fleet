@@ -7,7 +7,7 @@ enum FeatureFlags {
     /// Drive the command panel's chip rows through Filament instead of the
     /// hand-rolled tear-down-and-rebuild path.
     ///
-    ///     defaults write net.deepwa7er.tiler FilamentChips -bool YES
+    ///     defaults write net.deepwa7er.loom FilamentChips -bool YES
     ///
     /// Off by default. Both paths render the same chips into the same
     /// containers, so the only difference is who decides which chips exist and

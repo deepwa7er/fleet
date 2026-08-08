@@ -8,17 +8,17 @@ import os
 /// The only evidence that the reconciler is live, and that it is doing less
 /// work than the code it replaces, is this.
 ///
-///     tail -f ~/Library/Logs/Tiler/filament.log
+///     tail -f ~/Library/Logs/Loom/filament.log
 ///
 /// Also goes to the unified log, for anyone who prefers `log stream`:
 ///
-///     log stream --predicate 'subsystem == "net.deepwa7er.tiler"' --level info
+///     log stream --predicate 'subsystem == "net.deepwa7er.loom"' --level info
 enum MigrationLog {
-    private static let logger = Logger(subsystem: "net.deepwa7er.tiler", category: "migration")
+    private static let logger = Logger(subsystem: "net.deepwa7er.loom", category: "migration")
 
     static let fileURL: URL = {
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Library/Logs/Tiler", directoryHint: .isDirectory)
+            .appending(path: "Library/Logs/Loom", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appending(path: "filament.log")
     }()
@@ -38,7 +38,7 @@ enum MigrationLog {
     static func startSession() {
         let stamp = ISO8601DateFormatter().string(from: Date())
         let path = FeatureFlags.filamentChips ? "Filament reconciler" : "legacy rebuild"
-        append("\n=== Tiler launched \(stamp) — chip rows: \(path) ===\n")
+        append("\n=== Loom launched \(stamp) — chip rows: \(path) ===\n")
     }
 
     /// Opened and closed per line rather than held. Slower, but this logs at
