@@ -6,7 +6,7 @@
 │ SUBJECT   Warm-paper visual system for the personal Rails apps         │
 │ ORIGIN    fleet/notes — application.css. Extended by readout.          │
 │ COMPOSITE Warm-paper base + Bavarian blue + Gothic composite (Rev A)   │
-│ IN USE    fleet/notes · agent-harness · readout                        │
+│ IN USE    fleet/notes · agent-harness · readout · blog · public_site   │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -171,10 +171,11 @@ the stack.
 settings values, tick labels. `font-variant-numeric: tabular-nums`.
 
 **Masthead (G11)** — `UnifrakturCook, UnifrakturMaguntia, "Old English Text
-MT", ui-serif, serif`. A blackletter display voice for the app or run title
-alone. Nothing else gets it: body stays system-ui, headings stay Georgia, and
-Fraktur is nearly unreadable at length, so the discipline is self-enforcing.
-It degrades to the serif if the font cannot load.
+MT", ui-serif, serif`. A blackletter display voice for the title that opens a
+page: the app or run title, and on the blog a post's title — each post page
+opens with its own incipit. Nothing else gets it: body stays system-ui,
+headings stay Georgia, and Fraktur is nearly unreadable at length, so the
+discipline is self-enforcing. It degrades to the serif if the font cannot load.
 
 ---
 
@@ -371,11 +372,13 @@ are accent, `600`, underlined on hover only.
 
 ### The illuminated initial (G5, extension of rule 1)
 
-One drop cap per page, opening the title — the incipit. A large first letter on
-a `--fill` panel, floated so the title wraps beside it; set in the masthead
-voice (§3) when a page has one, otherwise the serif. Ink, never accent. This is
-the page's one ornament, and it is not a control: nothing else on the page may
-borrow a drop cap.
+One drop cap per page, opening the title — the incipit. The incipit is the
+title that opens the page, not a fixed slot: on the app's home it is the app
+title, and on the blog each post's title is the incipit of its own page. A
+large first letter on a `--fill` panel, floated so the title wraps beside it;
+set in the masthead voice (§3). Ink, never accent. This is the page's one
+ornament, and it is not a control: nothing else on the page may borrow a drop
+cap.
 
 ### The 404 page (G10, extension of rule 1)
 
@@ -455,9 +458,14 @@ define `--mono` everywhere; add the reduced-motion block to notes and readout;
 and treat 40rem as the prose measure with per-app container widths justified in
 a comment.
 
-The Gothic composite (§11) is defined at guide level and demonstrated on the
-specimen pages; it has not been carried into the three apps yet. Carry it into
-one app first, per §8, and record the divergence here as it ships.
+The Gothic composite (§11) has now shipped in two apps beyond the specimen
+pages: the public_site (G1, G5, G11 on the home page; G10 on the 404) and the
+blog (the same, with G5/G11 carried onto each post's title — the post title is
+the incipit of its page, so a post title is set in Fraktur). Fraktur on a title
+is the one accepted strain on G11: it holds because a title is display text,
+not prose, and the `26rem` measure bounds the run. Within the original three
+apps the composite is still not carried; carry it into one of them per §8 and
+record the divergence here.
 
 ---
 
@@ -496,9 +504,9 @@ verticality, structure, and *one* sacred thing per page.
 | --- | --- | --- |
 | G1 | The nave is whitespace — tall voids carry the hierarchy | rule 1 |
 | G2 | Nave and aisle — instrumentation runs in a bay rail | rules 1 & 5 |
-| G5 | The illuminated initial — one drop cap per page | rule 1 |
+| G5 | The illuminated initial — one drop cap per page, opening the page's title | rule 1 |
 | G10 | The gargoyle — the 404 page's one allowed joke | rule 1 |
-| G11 | The blackletter masthead — the title only | display voice |
+| G11 | The blackletter masthead — the opening title only | display voice |
 
 Each lives where it belongs: G1 and G2 in §4, G5 and G10 in §7, G11 in §3.
 
