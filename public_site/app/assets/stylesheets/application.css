@@ -1,17 +1,613 @@
 /*
- * This is a manifest file that'll be compiled into application.css.
+ * Design rules — the deepwater style, carried over from the notes app. Anything
+ * below that the notes app did not need is an extension, and is marked as such
+ * with the rule it derives from.
  *
- * With Propshaft, assets are served efficiently without preprocessing steps. You can still include
- * application-wide styles in this file, but keep in mind that CSS precedence will follow the standard
- * cascading order, meaning styles declared later in the document or manifest will override earlier ones,
- * depending on specificity.
- *
- * Consider organizing styles into separate files for maintainability.
+ * The full system — tokens, component recipes, and how to add an extension — is
+ * documented in ../docs/deepwater-style-guide.md (DW-001). Rev A adds the Gothic
+ * composite (guide §11): G1 nave verticality, G2 nave & aisle, G5 illuminated
+ * initial, G10 gargoyle 404, G11 blackletter masthead. The six rules are
+ * repeated here because the comments below refer to them by number; if they
+ * change, they change in both places.
+ * -------------------------------------------------------------------------
+ * 1. Whitespace separates content. No borders or dividers between items,
+ *    sections, or text. Proximity and typography carry the hierarchy.
+ * 2. Depth marks interactivity. Solid offset shadows and outlines appear
+ *    only on things you can press (buttons) or type into (fields).
+ * 3. Warm light mode (cream paper, warm ink); charcoal dark mode. Never
+ *    pure neutral gray, never brown.
+ * 4. One accent color — a deep Bavarian blue — used only for interactive
+ *    elements.
+ * 5. Metadata is instrumentation: uppercase, letterspaced, tabular
+ *    numerals. Dashboard readouts, not prose.
+ * 6. Motion is engineered: short durations, strong ease-out, like a
+ *    well-damped switch.
  */
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+:root {
+    /* Tells the browser to render built-in controls appropriately for the
+       active color scheme. */
+    color-scheme: light dark;
+
+    --bg: #f7f2e9;            /* warm cream paper */
+    --fill: #fffdf8;          /* slightly lighter surface for fields and code */
+    --text: #1f1a12;          /* warm near-black ink */
+    --accent: #0066b1;
+    --accent-contrast: #ffffff;
+    --ink: #1f1a12;           /* button outlines and hard shadows */
+    --good: #2f6f3e;
+
+    /* These two DEPART from the shared fleet palette, deliberately.
+       DW-001 §2 records that the canonical light-mode values fail WCAG AA for
+       normal text — --text-muted #7a7264 is 4.26:1 on the paper and --danger
+       #dc2626 is 4.33:1, both under the 4.5 threshold, both carrying real
+       content at 0.7rem. The other three apps are read over the tailnet by one
+       person who can pick his own lighting; this one is read by strangers on
+       whatever screen they have. So it ships the corrected values the guide
+       recommends: 5.00:1 and 5.14:1, same hue family, no visible change in
+       character.
+
+       This makes a fourth palette variant in a system whose guide already
+       complains about drift (DW-001 §9). The intended repair is to move the
+       other three apps onto these values, not to keep a special case here. */
+    --text-muted: #6f675a;
+    --danger: #c81e1e;
+
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
 @media (prefers-color-scheme: dark) {
     :root {
-        --accent: #6aa9ff;
-        --accent-hover: #9ac4ff;
-        --accent-text: #10141a;
+        --bg: #121316;         /* cool charcoal, blue undertone, not warm */
+        --fill: #1c1e22;       /* same family, one step lighter */
+        --text: #eceef1;       /* neutral paper-white, drop the warm tint */
+        --text-muted: #8b9199; /* cool gray — already 5.85:1, unchanged */
+        --accent: #4d9de0;     /* dashboard backlight blue */
+        --accent-contrast: #141311;
+        --danger: #f87171;     /* already 6.72:1, unchanged */
+        --ink: #000000;
+        --good: #5cb974;
     }
+}
+
+body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    font-size: 1rem;
+    line-height: 1.6;
+    color: var(--text);
+    background: var(--bg);
+}
+
+/* This app is prose end to end, so every page keeps the notes app's original
+   40rem measure via .measure — there is no table here that needs the room.
+
+   G1 (guide §11): the masthead opens with a tall empty rise — the nave's
+   first void. */
+.container {
+    max-width: 64rem;
+    margin: 0 auto;
+    padding: 6rem 1.25rem 5rem;
+}
+
+.measure {
+    max-width: 40rem;
+}
+
+/* --- Masthead --- */
+
+.masthead {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 3rem;
+}
+
+.wordmark {
+    font-family: ui-serif, Georgia, serif;
+    font-size: 1.1rem;
+    font-style: italic;
+    color: var(--text);
+    text-decoration: none;
+}
+
+.masthead-nav {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    font-size: 0.85rem;
+}
+
+.masthead-nav a { color: var(--text-muted); }
+.masthead-nav a:hover { color: var(--accent); }
+
+/* --- Headings --- */
+
+h1 {
+    font-family: ui-serif, Georgia, serif;
+    font-size: 2rem;
+    letter-spacing: -0.02em; /* tight tracking on large headings */
+    line-height: 1.4;        /* G1: tall vertical rhythm */
+    margin: 0;
+}
+
+/* G11 blackletter masthead (guide §11) — the app/run title voice, and nothing
+   else. Fraktur is nearly unreadable at length, so the discipline is
+   self-enforcing; it degrades to the serif if the font cannot load. */
+.incipit {
+    max-width: 26rem;
+    font-family: "UnifrakturCook", "UnifrakturMaguntia", "Old English Text MT", ui-serif, Georgia, serif;
+}
+
+/* G5 illuminated initial (extension of rule 1) — the page's one ornament.
+   Ink on a fill panel, never accent: this is not a control. */
+.incipit::first-letter {
+    float: left;
+    font-size: 4.75rem;
+    line-height: 0.8;
+    padding: 0.3rem 0.55rem;
+    margin: 0.1rem 0.6rem 0 0;
+    background: var(--fill);
+    border-radius: 10px;
+    color: var(--text);
+}
+
+.incipit::after { content: ""; display: block; clear: both; }
+
+h2 {
+    font-family: ui-serif, Georgia, serif;
+    font-size: 1.35rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.4;
+    margin: 6rem 0 0.75rem;  /* G1: the tall void between major sections */
+}
+
+.page-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+/* --- Metadata as instrumentation (rule 5) --- */
+
+.meta {
+    margin: 0.2rem 0 0;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+}
+
+.meta a { color: var(--text-muted); }
+.meta a:hover { color: var(--accent); }
+
+/* Post state (extension of rule 5). The label carries the meaning on its own —
+   colour is a second signal, never the only one, so this still reads correctly
+   in monochrome and to a colourblind reader. */
+.state {
+    font-weight: 700;
+    letter-spacing: 0.1em;
+}
+
+.state--draft { color: var(--text-muted); }
+.state--published { color: var(--good); }
+.state--scheduled { color: var(--text); }
+
+/* --- Post list: whitespace-only separation (rule 1) --- */
+
+.posts {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.post-item {
+    padding: 0.75rem 0;
+}
+
+/* The gap between entries replaces the divider. */
+.post-item + .post-item {
+    margin-top: 1.25rem;
+}
+
+.post-item-title {
+    display: block;
+    font-family: ui-serif, Georgia, serif;
+    font-size: 1.2rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    text-decoration: none;
+}
+
+.post-item-title:hover {
+    color: var(--accent);
+    text-decoration: underline;
+}
+
+.post-item-summary {
+    margin: 0.3rem 0 0;
+    color: var(--text-muted);
+}
+
+.empty-state {
+    margin-top: 4rem;
+    text-align: center;
+    font-size: 1.1rem;
+    color: var(--text-muted);
+}
+
+/* --- The post itself --- */
+
+.post-header {
+    margin-bottom: 2rem;
+}
+
+.post-footer {
+    margin-top: 3.5rem;
+}
+
+/* --- Prose (extension of rule 1) ---
+   The rendered body of a post. Everything here is separated by space and a
+   shift in type; nothing gets a box, a rule, or a border. */
+
+.prose {
+    font-size: 1.05rem;
+    line-height: 1.7;
+}
+
+.prose > *:first-child { margin-top: 0; }
+.prose > *:last-child { margin-bottom: 0; }
+
+.prose p {
+    margin: 0 0 1.25rem;  /* G1: prose gaps widened */
+}
+
+.prose h2 {
+    font-size: 1.35rem;
+    margin: 2.5rem 0 0.75rem;
+}
+
+.prose h3 {
+    font-family: ui-serif, Georgia, serif;
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 2rem 0 0.5rem;
+}
+
+.prose a {
+    color: var(--accent);
+}
+
+.prose ul,
+.prose ol {
+    margin: 0 0 1.15rem;
+    padding-left: 1.2rem;
+}
+
+.prose li + li {
+    margin-top: 0.4rem;
+}
+
+/* A quotation, set off by space and a change of voice rather than the
+   conventional left border — rule 1 does not make an exception for
+   blockquotes. The indent and the muted serif do the work a rule would have.
+
+   `border: none` is load-bearing: Lexxy's content stylesheet draws the
+   conventional left rule, so without this the published page grows a divider
+   the design does not allow. */
+.prose blockquote {
+    margin: 1.5rem 0 1.5rem 1.25rem;
+    padding-left: 0;
+    border: none;
+    font-family: ui-serif, Georgia, serif;
+    font-size: 1.05rem;
+    color: var(--text-muted);
+}
+
+/* Rule 1 again: an <hr> in markdown is a section break, and here it is spelled
+   as space rather than as a line. */
+.prose hr {
+    border: none;
+    margin: 3rem 0;
+}
+
+/* Prose tables follow the DW-001 table treatment: no rules, no zebra striping,
+   headers as instrumentation, figures tabular. Lexxy's content stylesheet draws
+   a full cell grid, so every border here is an override, not a default.
+   Wrapper included — it carries an outer rule of its own. */
+.prose .lexxy-content__table-wrapper {
+    border: none;
+    border-radius: 0;
+}
+
+.prose table,
+.prose tr,
+.prose th,
+.prose td {
+    border: none;
+}
+
+.prose table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 1.15rem;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.95rem;
+}
+
+/* `th`, NOT `thead th`.
+   Action Text's sanitizer strips <thead> — Lexxy widens the allowlist to
+   `table tbody tr th td` and stops there — so a header row arrives inside
+   <tbody> and a `thead th` selector silently never matches. That is exactly how
+   these headers shipped as plain bold text instead of instrumentation. */
+.prose th {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    text-align: left;
+    padding: 0 1rem 0.6rem 0;
+    white-space: nowrap;
+}
+
+.prose td {
+    padding: 0.4rem 1rem 0.4rem 0;
+    vertical-align: top;
+}
+
+/* Inline code takes the monospace face and nothing else — no fill, no border,
+   no pill. Rule 1: a background here would box a phrase mid-sentence. Lexxy
+   gives inline code the same fill as a block, so this is an override too.
+   The `:not(pre code)` keeps the block treatment below intact. */
+.prose code:not(pre code) {
+    font-family: var(--mono);
+    font-size: 0.9em;
+    background: none;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+}
+
+/* --- Code blocks (extension of rule 1) ---
+   Program text is a distinct plane, marked by the fill surface and the
+   monospace face rather than by a border. It scrolls itself; the page never
+   scrolls sideways. */
+
+.prose pre {
+    margin: 0 0 1.15rem;
+    padding: 1rem;
+    background: var(--fill);
+    border-radius: 10px;
+    overflow-x: auto;
+    font-size: 0.8rem;
+    line-height: 1.55;
+}
+
+.prose pre code {
+    font-size: inherit;
+}
+
+/* --- Lexxy (extension of rules 1, 2 and 4) ---
+   The editor and the published page are the same rendering, so both are themed
+   here by re-pointing Lexxy's own CSS variables at the DW-001 tokens rather
+   than by overriding its rules. Lexxy writes its content styles as
+   `:where(.lexxy-content)` — zero specificity — so the `.prose` rules above
+   still win wherever the two disagree, and this block only has to supply
+   colour.
+
+   The syntax palette is deliberately tiny, because rule 4 reserves the accent
+   for interactive elements: a code block is not clickable, so the blue a
+   conventional theme spends on keywords and functions is unavailable. What is
+   left is enough, and arguably more honest — ink for the code you wrote, muted
+   for the language's punctuation and the human margins, and the one muted green
+   for literal data. Three voices, the same three the rest of the page uses. */
+
+:root {
+    --lexxy-color-canvas: transparent;
+    --lexxy-color-text: var(--text);
+    --lexxy-color-text-subtle: var(--text-muted);
+    --lexxy-color-ink: var(--text);
+    --lexxy-color-ink-medium: var(--text-muted);
+    --lexxy-color-ink-light: var(--text-muted);
+    --lexxy-color-ink-lighter: var(--fill);
+    --lexxy-color-ink-lightest: var(--fill);
+    --lexxy-color-ink-inverted: var(--accent-contrast);
+
+    --lexxy-color-accent-dark: var(--accent);
+    --lexxy-color-accent-medium: var(--accent);
+    --lexxy-color-link: var(--accent);
+
+    --lexxy-color-red: var(--danger);
+    --lexxy-color-green: var(--good);
+    --lexxy-color-blue: var(--accent);
+
+    /* Code blocks sit on the fill surface, like every other distinct plane. */
+    --lexxy-color-code-bg: var(--fill);
+
+    /* Three voices, not eight. Several of these intentionally collapse onto the
+       same value — a theme that distinguishes attributes from properties from
+       selectors is telling the reader about the tokeniser, not about the code. */
+    --lexxy-color-code-token-comment: var(--text-muted);
+    --lexxy-color-code-token-punctuation: var(--text-muted);
+    --lexxy-color-code-token-operator: var(--text-muted);
+    --lexxy-color-code-token-att: var(--text);
+    --lexxy-color-code-token-function: var(--text);
+    --lexxy-color-code-token-variable: var(--text);
+    --lexxy-color-code-token-property: var(--good);
+    --lexxy-color-code-token-selector: var(--good);
+}
+
+/* Comments keep the italic the instrumentation voice uses for the margins. */
+.lexxy-content .token.comment,
+.lexxy-content .code-token__comment {
+    font-style: italic;
+}
+
+/* --- The editor itself: lineless, on the paper (rules 1 and 2) --- */
+
+/* Lexxy scopes its own rules with :where(), so these plain selectors win
+   regardless of stylesheet order. */
+lexxy-editor {
+    border: none;
+    background: transparent;
+    --lexxy-editor-padding: 0;   /* text aligns with the page's left edge */
+}
+
+/* Rule 2: the toolbar is chrome you press, so it takes the fill surface and the
+   system radius — but no border and no shadow, because it is not a key. */
+lexxy-toolbar {
+    border-block-end: none;
+    background: var(--fill);
+    border-radius: 10px;
+    margin-bottom: 0.75rem;
+}
+
+/* Hide the editor until Lexxy has fully initialized it. Lexxy builds the
+   toolbar synchronously on connect but mounts the content area a frame later,
+   so :defined is not enough — wait for the lexxy:initialize event, which
+   application.js turns into a `ready` attribute. visibility (not display)
+   reserves the space, so nothing below it jumps either. */
+lexxy-editor:not([ready]) {
+    visibility: hidden;
+}
+
+/* --- Buttons: the only elements with depth (rule 2) --- */
+
+.button,
+input[type="submit"] {
+    display: inline-block;
+    padding: 0.6rem 1.1rem;  /* yields ~44px height: a proper touch target */
+    font: inherit;
+    font-weight: 600;
+    color: var(--accent-contrast);
+    background: var(--accent);
+    border: 2px solid var(--ink);
+    border-radius: 10px;
+    box-shadow: 3px 3px 0 var(--ink);  /* solid offset shadow: a physical key */
+    cursor: pointer;
+    text-decoration: none;   /* links are underlined by default */
+    transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1),  /* damped (rule 6) */
+                box-shadow 0.15s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.button:hover,
+input[type="submit"]:hover {
+    filter: brightness(0.95);
+}
+
+/* The press: the key slides down into its own shadow. */
+.button:active,
+input[type="submit"]:active {
+    transform: translate(3px, 3px);
+    box-shadow: 0 0 0 var(--ink);
+    filter: none;
+}
+
+.button--secondary {
+    color: var(--accent);
+    background: var(--fill);
+}
+
+.button--danger {
+    color: var(--danger);
+    background: var(--fill);
+}
+
+/* button_to wraps its input in its own <form class="button_to">, which is
+   block-level by default and would break an inline action row. */
+.button_to {
+    display: inline;
+    margin: 0;
+}
+
+.actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 2rem;
+}
+
+/* --- Forms: filled fields, no borders (rule 2) --- */
+
+.field {
+    margin-bottom: 1.25rem;
+}
+
+label {
+    display: block;          /* labels are inline by default */
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+input[type="text"],
+textarea {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font: inherit;           /* form elements don't inherit the page font */
+    color: var(--text);
+    background: var(--fill);
+    border: none;
+    border-radius: 10px;
+}
+
+input[type="text"]:focus,
+textarea:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.field-hint {
+    margin: 0.35rem 0 0;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.form-errors {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1.25rem;
+    color: var(--danger);
+    font-weight: 600;
+}
+
+/* --- Flash messages: text in flow, never a box (rule 1) --- */
+
+.flash {
+    margin: 0 0 1.5rem;
+    font-weight: 600;
+}
+
+.flash--alert { color: var(--danger); }
+.flash--notice { color: var(--text-muted); }
+
+/* --- Back link --- */
+
+.back-link {
+    display: inline-block;
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.back-link:hover {
+    text-decoration: underline;
+}
+
+/* Rule 6 is about engineered motion, not mandatory motion. */
+@media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
 }

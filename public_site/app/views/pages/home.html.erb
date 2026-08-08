@@ -1,6 +1,26 @@
-<h1>About</h1>
-<p>I am a software developer and cybersecurity consultant.</p>
-<p>I have recently being doing a lot of software development with Claude Code.</p>
-<%= link_to "GitHub", "https://github.com/deepwa7er" %>
-<%= link_to "Meet Nightmare", cats_path %>
-<%= link_to "Forum", topics_path %>
+<% content_for :title, "About" %>
+
+<h1 class="incipit">deepwa7er</h1>
+<p class="meta">SOFTWARE · CYBERSECURITY · SYSTEMS</p>
+
+<div class="prose" style="margin-top: 3rem;">
+  <p>I am a software developer and cybersecurity consultant.</p>
+  <p>Recently I have been building personal systems — notes, dashboards, and observability — running on a single VPS behind a Tailscale tailnet. Most of that work is internal, but the writing is public.</p>
+</div>
+
+<h2>Elsewhere</h2>
+<ul class="posts" style="margin-top: 0.75rem;">
+  <li class="post-item">
+    <a class="post-item-title" href="https://blog.deepwa7er.com">Blog — blog.deepwa7er.com</a>
+    <p class="post-item-summary">Writing on development, systems, and security. Atom feed at <a href="https://blog.deepwa7er.com/feed">/feed</a>.</p>
+  </li>
+  <li class="post-item">
+    <a class="post-item-title" href="https://github.com/deepwa7er">GitHub — @deepwa7er</a>
+    <p class="post-item-summary">Code for the fleet and other projects.</p>
+  </li>
+</ul>
+
+<p style="margin-top: 3rem;">
+  <span class="meta">CONTACT — </span>
+  <a href="https://github.com/deepwa7er" style="color: var(--accent); font-weight: 600; text-decoration: none;">via GitHub</a>
+</p>
