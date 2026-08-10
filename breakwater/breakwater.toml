@@ -265,6 +265,22 @@ upstream = "fedora-1.tailcfab97.ts.net:80"
 label = "mail"
 upstream = "fedora-1.tailcfab97.ts.net:8025"
 
+# agent — skiff, the phone web UI over a headless opencode server. The FIRST
+# service on the fedora DESKTOP behind breakwater: like `source` (the dev box)
+# and `fizzy`/`mail` (the laptop), the upstream is the host's MagicDNS name
+# over the tailnet, never a raw 100.x IP (a node's tailnet IP is not a
+# constant). skiff binds the desktop's tailnet IP on 8120 — breakwater cannot
+# reach a loopback listener on a remote host, so the app stays reachable on
+# that port directly; the tailnet is the boundary either way.
+#
+# The app is deliberately UNAUTHENTICATED: driving opencode is effectively RCE
+# on that box, and this is the same posture breakwater flags for `harness` —
+# reachable from every device on the tailnet. The desktop is often powered
+# off; while it is, this route 502s.
+[[routes]]
+label = "agent"
+upstream = "fedora.tailcfab97.ts.net:8120"
+
 # Note: tidepool is intentionally NOT routed here. It runs as its own Tailscale
 # node (tsnet, `-tls`) and serves HTTPS itself at https://tidepool — there is no
 # plain-HTTP backend to proxy to.
