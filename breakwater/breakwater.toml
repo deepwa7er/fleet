@@ -119,6 +119,15 @@ upstream = "127.0.0.1:8094"
 label = "lagoon"
 upstream = "127.0.0.1:8092"
 
+# notes — the fleet's Rails note-taking app. A NESTED repo at ~/code/fleet/notes
+# (its own git history, not committed to the fleet monorepo), so like lagoon its
+# deploy.toml isn't visible to CI's `fleet gen --check` and the route is
+# hand-written here. Deployed as a Docker container (readout/blog/public_site
+# pattern) publishing loopback.
+[[routes]]
+label = "notes"
+upstream = "127.0.0.1:8105"
+
 # readout — dashboard for campfire-stress load-test results. External member
 # like lagoon (repo at ~/code/readout), so its route is hand-written too.
 #
