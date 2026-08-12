@@ -187,24 +187,25 @@ serve_dir = "/opt/pilot/web"
 label = "netfps"
 serve_dir = "/srv/netfps-dist"
 
-# Source-code viewer (source) — the only upstream NOT on the VPS. The fleet's
-# working trees live on the dev box, so `source` runs there (a launchd agent) and
-# breakwater proxies to it over the tailnet. The page is reachable only while the
-# dev box is awake, which is inherent: that's where the source is.
+# Source-code viewer (source) — a dev-box upstream. The fleet's working trees
+# live on the dev box — since 2026-08-12 the Fedora desktop (fedora), before
+# that the Mac (deepwater-1) — so `source` runs there (a systemd user unit) and
+# breakwater proxies to it over the tailnet. The page is reachable only while
+# the dev box is up, which is inherent: that's where the source is.
 #
-# Addressed by its MagicDNS name, not a raw 100.x address: the dev box's tailnet
+# Addressed by its MagicDNS name, not a raw 100.x address: a node's tailnet
 # IP is not a constant. It changed when a duplicate Tailscale node was retired
 # (2026-07-26) and the hardcoded address here silently pointed at a dead node.
 # The name follows the node.
 [[routes]]
 label = "source"
-upstream = "deepwater-1.tailcfab97.ts.net:7879"
+upstream = "fedora.tailcfab97.ts.net:7879"
 
 # Code map / call tracer (atlas) — dev-box upstream like source, and for the
 # same reason: it runs rust-analyzer over the working trees, which live there.
 [[routes]]
 label = "atlas"
-upstream = "deepwater-1.tailcfab97.ts.net:7880"
+upstream = "fedora.tailcfab97.ts.net:7880"
 
 # Coding-agent harness (harness) — dev-box upstream like source and atlas: the
 # agent loop runs commands against the working trees, which live there.
@@ -214,10 +215,10 @@ upstream = "deepwater-1.tailcfab97.ts.net:7880"
 # can do. harness executes arbitrary commands as the logged-in user, so this
 # route publishes an unauthenticated remote-code-execution surface to every
 # device on the tailnet. That is a decision, not an oversight — revisit it if
-# the tailnet ever gains a device you trust less than this laptop.
+# the tailnet ever gains a device you trust less than the dev box.
 [[routes]]
 label = "harness"
-upstream = "deepwater-1.tailcfab97.ts.net:8098"
+upstream = "fedora.tailcfab97.ts.net:8098"
 
 # Fizzy (37signals' kanban) — the first upstream that is neither a fleet service
 # nor on the VPS nor on the dev box: a Docker app on the `fedora-1` laptop,

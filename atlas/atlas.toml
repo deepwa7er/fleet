@@ -8,9 +8,9 @@
 # The dev box's Tailscale IP. A bind needs a literal local address, so unlike
 # breakwater's upstream (which uses the MagicDNS name) this is the raw IP — and
 # it is therefore the one place that must be re-checked if the dev box's tailnet
-# address ever changes again. It last changed 2026-07-26, when a duplicate
-# Tailscale node on this machine was retired.
-bind = "100.74.202.93"
+# address ever changes again. It last changed 2026-08-12, when the dev box
+# moved from the Mac (deepwater-1) to the Fedora desktop (fedora).
+bind = "100.122.40.4"
 port = 7880
 
 # The built frontend. `cd web && bun run build` produces web/dist.
