@@ -242,7 +242,10 @@ has no runtime dependencies.
 
 ```sh
 rustup target add x86_64-unknown-linux-musl
-# macOS also needs a musl linker: brew install FiloSottile/musl-cross/musl-cross
+# A musl C toolchain must be on PATH. macOS: brew install
+# FiloSottile/musl-cross/musl-cross (provides x86_64-linux-musl-gcc);
+# Fedora: sudo dnf install musl-gcc musl-devel (provides musl-gcc).
+# tugboat deploys resolve this automatically; a manual build names it:
 CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc \
   cargo build --release --target x86_64-unknown-linux-musl
 ```

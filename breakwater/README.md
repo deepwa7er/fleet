@@ -105,11 +105,13 @@ gap rather than silently vanishing.
 
 ## Build
 
-Cross-compiles to a static musl binary (ring crypto provider throughout, so no
-C/cmake toolchain needed):
+Cross-compiles to a static musl binary. A deploy needs no toolchain flags —
+tugboat resolves the host's musl C toolchain (`x86_64-linux-musl-gcc` from
+musl-cross on macOS, `musl-gcc` from the Fedora package of the same name) and
+exports it to the build. For a manual build, name the one your machine has:
 
 ```sh
-CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc \
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc \
   cargo build --release --target x86_64-unknown-linux-musl
 ```
 

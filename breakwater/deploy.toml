@@ -16,8 +16,8 @@ files = true
 
 [build]
 # Static musl release build for the VPS. The target is installed on demand so a
-# fresh dev machine works; the musl linker must be on PATH (see README).
-cmd = "rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true; CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --target x86_64-unknown-linux-musl"
+# fresh dev machine works; tugboat resolves the host's musl C toolchain (see README).
+cmd = "rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true; cargo build --release --target x86_64-unknown-linux-musl"
 
 [[artifacts]]
 src = "{workspace}/target/x86_64-unknown-linux-musl/release/breakwater"
