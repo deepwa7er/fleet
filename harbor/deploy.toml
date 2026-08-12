@@ -13,8 +13,9 @@ port = 8090
 [build]
 # 1. Pack + sign the extension (build/harbor.crx + build/updates.xml).
 # 2. Static musl cross-compile of harbor-server (in ./server). reqwest+rustls
-#    pulls in `ring`, which needs the target C compiler, not just the linker.
-cmd = "extension/pack.sh && (rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true) && cd server && CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc AR_x86_64_unknown_linux_musl=x86_64-linux-musl-ar cargo build --release --target x86_64-unknown-linux-musl"
+#    pulls in `ring`, which needs the target C compiler, not just the linker
+#    (tugboat resolves the host's musl toolchain and exports it to the build).
+cmd = "extension/pack.sh && (rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true) && cd server && cargo build --release --target x86_64-unknown-linux-musl"
 
 [[artifacts]]
 src = "{workspace}/target/x86_64-unknown-linux-musl/release/harbor-server"

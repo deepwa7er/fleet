@@ -12,7 +12,7 @@ port = 8091
 [build]
 # Static musl cross-compile. driftword is pure Rust (no C deps), so only the
 # linker is needed — no target C toolchain like harbor's reqwest/ring build.
-cmd = "rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true; CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --target x86_64-unknown-linux-musl"
+cmd = "rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true; cargo build --release --target x86_64-unknown-linux-musl"
 
 [[artifacts]]
 src = "{workspace}/target/x86_64-unknown-linux-musl/release/driftword"

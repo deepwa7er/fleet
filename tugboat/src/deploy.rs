@@ -314,8 +314,15 @@ fn run_measured(
         note(log, "skipping build (--skip-build)");
     } else {
         step(log, "BUILD", &build_cmd);
+        let build_env = match musl_toolchain(&build_cmd)? {
+            Some(tool) => {
+                note(log, &format!("musl C toolchain: {}", tool.cc));
+                musl_env(tool)
+            }
+            None => Vec::new(),
+        };
         let t = Instant::now();
-        run_local(&build_cmd, &build_dir, log).context("build failed")?;
+        run_local(&build_cmd, &build_dir, &build_env, log).context("build failed")?;
         rec.completed(events::Stage::Build, t);
     }
 
@@ -448,14 +455,87 @@ fn pipe_lines<R: Read>(reader: R, log: &dyn LogSink) {
     }
 }
 
-fn run_local(cmd: &str, dir: &Path, log: &dyn LogSink) -> Result<()> {
+fn run_local(
+    cmd: &str,
+    dir: &Path,
+    env: &[(&'static str, String)],
+    log: &dyn LogSink,
+) -> Result<()> {
     let mut command = Command::new("sh");
     command.arg("-c").arg(cmd).current_dir(dir);
+    command.envs(env.iter().map(|(k, v)| (*k, v.as_str())));
     let status = run_streamed(command, None, log).with_context(|| format!("spawning: {cmd}"))?;
     if !status.success() {
         bail!("command exited with {status}: {cmd}");
     }
     Ok(())
+}
+
+/// The cross-target every VPS-bound fleet build compiles for.
+const MUSL_TARGET: &str = "x86_64-unknown-linux-musl";
+
+/// A C toolchain that can build for [`MUSL_TARGET`]: the compiler (which is
+/// also the linker driver) and the matching archiver for cc-rs-built C deps.
+struct MuslToolchain {
+    cc: &'static str,
+    ar: &'static str,
+}
+
+/// Known toolchains in preference order: the dedicated cross tool (macOS, via
+/// musl-cross, which ships its own binutils), then the distro's wrapper for
+/// the native arch (Fedora's `musl-gcc` package — same-arch objects, so the
+/// system `ar` is the right archiver). Which one a machine carries is a
+/// property of the machine, not of any service — so manifests never name a
+/// toolchain; the engine resolves one here and exports it to the build.
+const MUSL_TOOLCHAINS: [MuslToolchain; 2] = [
+    MuslToolchain { cc: "x86_64-linux-musl-gcc", ar: "x86_64-linux-musl-ar" },
+    MuslToolchain { cc: "musl-gcc", ar: "ar" },
+];
+
+/// Resolve the musl C toolchain for a build command that targets
+/// [`MUSL_TARGET`]; `Ok(None)` when the build doesn't. A musl build on a
+/// machine with no toolchain fails here, at the top of BUILD with install
+/// hints — not minutes into the compile inside a cc-rs build script.
+fn musl_toolchain(build_cmd: &str) -> Result<Option<&'static MuslToolchain>> {
+    if !build_cmd.contains(MUSL_TARGET) {
+        return Ok(None);
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
+    match first_toolchain_in(&dirs) {
+        Some(tool) => Ok(Some(tool)),
+        None => bail!(
+            "build targets {MUSL_TARGET} but no musl C toolchain is on PATH \
+             (looked for `x86_64-linux-musl-gcc` or `musl-gcc`); install one — \
+             macOS: `brew install filosottile/musl-cross/musl-cross`, Fedora: \
+             `sudo dnf install musl-gcc musl-devel musl-libc-static`"
+        ),
+    }
+}
+
+fn first_toolchain_in(dirs: &[PathBuf]) -> Option<&'static MuslToolchain> {
+    MUSL_TOOLCHAINS
+        .iter()
+        .find(|tool| dirs.iter().any(|dir| is_executable(&dir.join(tool.cc))))
+}
+
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata()
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+/// Env that points cargo (the linker) and cc-rs (the C compiler and archiver
+/// for build scripts) at `tool` for [`MUSL_TARGET`]. Cargo gives environment
+/// variables precedence over `.cargo/config.toml`, so this also corrects a
+/// repo whose checked-in config names a toolchain this machine doesn't have.
+fn musl_env(tool: &MuslToolchain) -> Vec<(&'static str, String)> {
+    vec![
+        ("CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER", tool.cc.to_string()),
+        ("CC_x86_64_unknown_linux_musl", tool.cc.to_string()),
+        ("AR_x86_64_unknown_linux_musl", tool.ar.to_string()),
+    ]
 }
 
 /// Ship an artifact to `remote` over rsync. A `File` is copied as-is; a `Dir`
@@ -823,6 +903,71 @@ fn note(log: &dyn LogSink, msg: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A build that doesn't target musl needs no toolchain — and must not fail
+    /// on machines that have none (e.g. a Docker-artifact deploy).
+    #[test]
+    fn non_musl_build_needs_no_toolchain() {
+        let cmd = "docker build -t readout . && docker save readout";
+        assert!(matches!(musl_toolchain(cmd), Ok(None)));
+    }
+
+    /// Toolchain discovery prefers the dedicated cross tool, falls back to the
+    /// distro wrapper, and ignores non-executable files — exercised against a
+    /// scratch dir rather than the real PATH so the test is hermetic.
+    #[test]
+    fn toolchain_discovery_prefers_cross_tool() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("tugboat-musl-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let executable = |name: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+
+        let dirs = vec![dir.clone()];
+        assert!(first_toolchain_in(&dirs).is_none());
+
+        // A plain file is not a toolchain.
+        std::fs::write(dir.join("musl-gcc"), "").unwrap();
+        std::fs::set_permissions(
+            dir.join("musl-gcc"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        assert!(first_toolchain_in(&dirs).is_none());
+
+        executable("musl-gcc");
+        assert_eq!(first_toolchain_in(&dirs).map(|t| t.cc), Some("musl-gcc"));
+
+        executable("x86_64-linux-musl-gcc");
+        assert_eq!(
+            first_toolchain_in(&dirs).map(|t| t.cc),
+            Some("x86_64-linux-musl-gcc")
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The exported env covers every half of a musl cross-build: cargo's
+    /// linker plus cc-rs's C compiler and archiver for build scripts. The
+    /// distro wrapper pairs with the system `ar` — its objects are native-arch.
+    #[test]
+    fn musl_env_sets_linker_cc_and_ar() {
+        let tool = &MUSL_TOOLCHAINS[1];
+        assert_eq!(tool.cc, "musl-gcc");
+        let env = musl_env(tool);
+        assert!(env
+            .iter()
+            .any(|(k, v)| *k == "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER" && v == "musl-gcc"));
+        assert!(env
+            .iter()
+            .any(|(k, v)| *k == "CC_x86_64_unknown_linux_musl" && v == "musl-gcc"));
+        assert!(env
+            .iter()
+            .any(|(k, v)| *k == "AR_x86_64_unknown_linux_musl" && v == "ar"));
+    }
 
     fn sample_stamp() -> Stamp {
         Stamp {
