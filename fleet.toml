@@ -16,7 +16,7 @@
 # register when adding a service.
 #
 # `root` defaults to this file's own directory — the monorepo root — so the
-# manifest works from any checkout location (dev box, fedora, CI).
+# manifest works from any checkout location (dev box, fedora, a bare clone).
 #
 # "UNDEPLOYED COMMITS" ARE SCOPED, NOT DECLARED. `tugboat serve` counts a
 # commit against a service iff it touches the service's directory or something
@@ -48,7 +48,7 @@ repo = "git@github.com:deepwa7er/sonar.git"
 
 # ── backup-set extras ─────────────────────────────────────────────────────────
 # State no in-monorepo deploy.toml can declare: lagoon is an external member
-# (its manifest isn't readable in CI), and tugboat's VPS ledger belongs to a
+# (its manifest isn't readable from this repo), and tugboat's VPS ledger belongs to a
 # tool, not a deployed service. Everything else declares [state] in its own
 # deploy.toml; `tugboat fleet gen` merges both into fleet-backup/state.sh.
 [backup]

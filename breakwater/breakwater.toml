@@ -57,7 +57,7 @@ cache_dir = "/var/lib/breakwater/acme"
 # Tailscale node and serves HTTPS itself.)
 # ── BEGIN GENERATED ROUTES (tugboat fleet gen) ──
 # One route per fleet service declaring `port` in its deploy.toml — derived
-# by `tugboat fleet gen`; CI verifies with --check. Don't edit inside the
+# by `tugboat fleet gen`; `--check` verifies. Don't edit inside the
 # markers: change the service's deploy.toml and re-run the generator.
 # Hand-written routes (sonar's units, docs, source, external members)
 # live outside this block.
@@ -117,15 +117,15 @@ upstream = "127.0.0.1:8094"
 # ── END GENERATED ROUTES ──
 
 # lagoon — capture-first notes. An EXTERNAL member (its repo isn't in the fleet
-# monorepo, so `fleet gen` can't read its deploy.toml in CI); its route is the
-# one fleet service maintained by hand here.
+# monorepo, so `fleet gen` can't read its deploy.toml from a checkout of this
+# repo alone); its route is the one fleet service maintained by hand here.
 [[routes]]
 label = "lagoon"
 upstream = "127.0.0.1:8092"
 
 # notes — the fleet's Rails note-taking app. A NESTED repo at ~/code/fleet/notes
 # (its own git history, not committed to the fleet monorepo), so like lagoon its
-# deploy.toml isn't visible to CI's `fleet gen --check` and the route is
+# deploy.toml isn't visible to `fleet gen --check` and the route is
 # hand-written here. Deployed as a Docker container (readout/blog/public_site
 # pattern) publishing loopback.
 [[routes]]

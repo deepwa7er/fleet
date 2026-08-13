@@ -21,7 +21,7 @@ pub struct Fleet {
     /// Base directory the member `path`s are relative to. A leading `~/`
     /// expands to the home directory. Defaults to the directory `fleet.toml`
     /// itself lives in — the monorepo root — which keeps the manifest
-    /// relocatable (a CI checkout and a dev box resolve the same file with no
+    /// relocatable (a bare checkout and a dev box resolve the same file with no
     /// hardcoded path).
     #[serde(default)]
     root: Option<String>,
@@ -43,7 +43,7 @@ pub struct Fleet {
 /// State the fleet backup must cover but which no in-monorepo `deploy.toml`
 /// declares: tugboat's own ledger (it isn't a deployed service, so it has no
 /// manifest) and external members' databases (their manifests live outside
-/// this repo, where `fleet gen --check` in CI can't read them).
+/// this repo, where `fleet gen --check` can't read them).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct BackupExtras {
     /// `<dir>/<file>` SQLite databases under `/var/lib`, snapshotted online.
@@ -137,7 +137,7 @@ pub struct Deployable {
 /// subdirectories that contain a `deploy.toml`. Sorted by name for stable output.
 /// A directory that is itself a git repository (contains `.git`) is skipped:
 /// it is a nested checkout (e.g. `fleet/notes` before it is committed as a
-/// subtree) whose deploy.toml is not visible to CI and whose route remains
+/// subtree) whose deploy.toml is not visible to `fleet gen` and whose route remains
 /// hand-written in `breakwater.toml` until the import lands.
 pub fn discover_deployables(root: &Path) -> Result<Vec<Deployable>> {
     let mut found = Vec::new();

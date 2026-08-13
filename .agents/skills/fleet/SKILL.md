@@ -46,7 +46,17 @@ cd .worktrees/<slug>   # or <service>/ inside it
 ## 3. Work — build to acceptance criteria
 
 - Match existing conventions; prefer correct design over preserving a flawed one (back-compat not required per `~/.claude/CLAUDE.md`).
-- Run the gates that `tugboat` and CI enforce: `cargo test`, `cargo clippy -- -D warnings`, and `cargo build` for any web app you touched. Keep the worktree's `fleet/Cargo.toml` workspace lockfile intact.
+- Run the gates. CI was archived 2026-08-13 (`ci.ARCHIVED.md`), so these are the *only* enforcement — nothing checks `origin/main` after you push:
+
+```bash
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+TUGBOAT_FLEET=$PWD/fleet.toml cargo run -q -p tugboat -- fleet gen --check
+```
+
+- `fleet gen --check` verifies the generated registries (`breakwater/breakwater.toml`, `fleet-backup/state.sh`) still match each service's `deploy.toml`. Run it whenever you touch a `deploy.toml` or `fleet.toml`; without it drift surfaces only at deploy time.
+- Also `bun run build` in `<app>/web` for any web app you touched — nothing else typechecks it now.
+- Keep the worktree's `fleet/Cargo.toml` workspace lockfile intact.
 - Heartbeat if long-running: `cargo run -p fizzy -- boards` is not a heartbeat — drydock heartbeats were `drydock heartbeat "<step>"` (archived).
 
 ## 4. PR — push and open, then stop
@@ -69,7 +79,7 @@ Fizzy: https://fizzy.intern.deepwa7er.net/1/cards/<card>"
 ## 5. Wait — human gates
 
 - **Never** `gh pr merge`, never `tugboat deploy` / `tugboat fleet deploy`, never push to `main`, never close the Fizzy card from the agent.
-- The human reviews, merges to `main`, and deploy follows automatically (`tugboat` ships `origin/main`; `breakwater` routes, `fleet-backup` captures state declared in each `deploy.toml` + `fleet.toml::backup`). CI (`ci.yml`) must be green on `main`.
+- The human reviews, merges to `main`, and deploy follows automatically (`tugboat` ships `origin/main`; `breakwater` routes, `fleet-backup` captures state declared in each `deploy.toml` + `fleet.toml::backup`). There is no CI gate — archived 2026-08-13 (`ci.ARCHIVED.md`) — so §3's gates must be green *before* you push.
 
 ## Hard rules
 
