@@ -1,0 +1,44 @@
+<% content_for :title, @post.title %>
+
+<article class="post">
+  <header class="post-header">
+    <%# Same incipit as the public page — this is the author's preview, and it
+        is not a preview if the title renders differently. %>
+    <h1 class="incipit"><%= @post.title %></h1>
+    <p class="meta">
+      <%= post_state(@post) %>
+      · /posts/<%= @post.slug %>
+      <% if @post.published? %>
+        · <a href="<%= public_url(post_path(@post)) %>">View public</a>
+      <% end %>
+    </p>
+  </header>
+
+  <%# Deliberately NOT cached: this is the author's preview, and it must show
+      the current draft rather than whatever the public page last rendered.
+
+      Rendered through the same helper as the public page, or it is not a
+      preview. It went un-highlighted here for a release because only the
+      public view was changed — and a draft 404s in public, so the preview is
+      the ONLY way to see a post before it ships. %>
+  <div class="prose"><%= rendered_post_body(@post) %></div>
+</article>
+
+<div class="actions">
+  <a class="button button--secondary" href="<%= edit_admin_post_path(@post) %>">Edit</a>
+
+  <% if @post.published? || @post.scheduled? %>
+    <%= button_to "Unpublish", unpublish_admin_post_path(@post), class: "button button--secondary" %>
+  <% else %>
+    <%= button_to "Publish", publish_admin_post_path(@post), class: "button" %>
+  <% end %>
+
+  <%= button_to "Delete", admin_post_path(@post),
+        method: :delete,
+        class: "button button--danger",
+        form: { data: { turbo_confirm: "Delete “#{@post.title}” permanently?" } } %>
+</div>
+
+<p class="post-footer">
+  <a class="back-link" href="<%= admin_root_path %>">← All posts</a>
+</p>

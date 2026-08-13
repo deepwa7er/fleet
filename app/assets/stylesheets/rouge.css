@@ -1,0 +1,248 @@
+/* Rouge's own Github theme, unmodified.
+ *
+ * GENERATED — do not edit by hand. Regenerate with:
+ *
+ *   bin/rails runner %q{puts Rouge::Themes::Github.mode(:light).render(scope: %q{.prose pre:not([data-language="diff"])})}
+ *
+ * Scoped away from diffs deliberately. A diff is rendered line by line by
+ * SyntaxHighlighter and coloured by ROLE in application.css, per §8 of the
+ * style guide — three roles, reusing the status colours that already exist.
+ * Letting a second palette reach those lines is what put GitHub's green and
+ * red BANDS on the page, and rule 5 makes --fill the only surface change.
+ *
+ * Both modes are shipped because the site has both: a light-only theme is
+ * unreadable on the charcoal page. */
+
+.prose pre:not([data-language="diff"]) table td { padding: 5px; }
+.prose pre:not([data-language="diff"]) table pre { margin: 0; }
+.prose pre:not([data-language="diff"]), .prose pre:not([data-language="diff"]) .w {
+  color: #24292f;
+  background-color: #f6f8fa;
+}
+.prose pre:not([data-language="diff"]) .k, .prose pre:not([data-language="diff"]) .kd, .prose pre:not([data-language="diff"]) .kn, .prose pre:not([data-language="diff"]) .kp, .prose pre:not([data-language="diff"]) .kr, .prose pre:not([data-language="diff"]) .kt, .prose pre:not([data-language="diff"]) .kv {
+  color: #cf222e;
+}
+.prose pre:not([data-language="diff"]) .gr {
+  color: #f6f8fa;
+}
+.prose pre:not([data-language="diff"]) .gd {
+  color: #82071e;
+  background-color: #ffebe9;
+}
+.prose pre:not([data-language="diff"]) .nb {
+  color: #953800;
+}
+.prose pre:not([data-language="diff"]) .nc {
+  color: #953800;
+}
+.prose pre:not([data-language="diff"]) .no {
+  color: #953800;
+}
+.prose pre:not([data-language="diff"]) .nn {
+  color: #953800;
+}
+.prose pre:not([data-language="diff"]) .sr {
+  color: #116329;
+}
+.prose pre:not([data-language="diff"]) .na {
+  color: #116329;
+}
+.prose pre:not([data-language="diff"]) .nt {
+  color: #116329;
+}
+.prose pre:not([data-language="diff"]) .gi {
+  color: #116329;
+  background-color: #dafbe1;
+}
+.prose pre:not([data-language="diff"]) .ges {
+  font-weight: bold;
+  font-style: italic;
+}
+.prose pre:not([data-language="diff"]) .kc {
+  color: #0550ae;
+}
+.prose pre:not([data-language="diff"]) .l, .prose pre:not([data-language="diff"]) .ld, .prose pre:not([data-language="diff"]) .m, .prose pre:not([data-language="diff"]) .mb, .prose pre:not([data-language="diff"]) .mf, .prose pre:not([data-language="diff"]) .mh, .prose pre:not([data-language="diff"]) .mi, .prose pre:not([data-language="diff"]) .il, .prose pre:not([data-language="diff"]) .mo, .prose pre:not([data-language="diff"]) .mx {
+  color: #0550ae;
+}
+.prose pre:not([data-language="diff"]) .sb {
+  color: #0550ae;
+}
+.prose pre:not([data-language="diff"]) .bp {
+  color: #0550ae;
+}
+.prose pre:not([data-language="diff"]) .ne {
+  color: #0550ae;
+}
+.prose pre:not([data-language="diff"]) .nl {
+  color: #0550ae;
+}
+.prose pre:not([data-language="diff"]) .py {
+  color: #0550ae;
+}
+.prose pre:not([data-language="diff"]) .nv, .prose pre:not([data-language="diff"]) .vc, .prose pre:not([data-language="diff"]) .vg, .prose pre:not([data-language="diff"]) .vi, .prose pre:not([data-language="diff"]) .vm {
+  color: #0550ae;
+}
+.prose pre:not([data-language="diff"]) .o, .prose pre:not([data-language="diff"]) .ow {
+  color: #0550ae;
+}
+.prose pre:not([data-language="diff"]) .gh {
+  color: #0550ae;
+  font-weight: bold;
+}
+.prose pre:not([data-language="diff"]) .gu {
+  color: #0550ae;
+  font-weight: bold;
+}
+.prose pre:not([data-language="diff"]) .s, .prose pre:not([data-language="diff"]) .sa, .prose pre:not([data-language="diff"]) .sc, .prose pre:not([data-language="diff"]) .dl, .prose pre:not([data-language="diff"]) .sd, .prose pre:not([data-language="diff"]) .s2, .prose pre:not([data-language="diff"]) .se, .prose pre:not([data-language="diff"]) .sh, .prose pre:not([data-language="diff"]) .sx, .prose pre:not([data-language="diff"]) .s1, .prose pre:not([data-language="diff"]) .ss {
+  color: #0a3069;
+}
+.prose pre:not([data-language="diff"]) .nd {
+  color: #8250df;
+}
+.prose pre:not([data-language="diff"]) .nf, .prose pre:not([data-language="diff"]) .fm {
+  color: #8250df;
+}
+.prose pre:not([data-language="diff"]) .err {
+  color: #f6f8fa;
+  background-color: #82071e;
+}
+.prose pre:not([data-language="diff"]) .c, .prose pre:not([data-language="diff"]) .ch, .prose pre:not([data-language="diff"]) .cd, .prose pre:not([data-language="diff"]) .cm, .prose pre:not([data-language="diff"]) .cp, .prose pre:not([data-language="diff"]) .cpf, .prose pre:not([data-language="diff"]) .c1, .prose pre:not([data-language="diff"]) .cs {
+  color: #6e7781;
+}
+.prose pre:not([data-language="diff"]) .gl {
+  color: #6e7781;
+}
+.prose pre:not([data-language="diff"]) .gt {
+  color: #6e7781;
+}
+.prose pre:not([data-language="diff"]) .ni {
+  color: #24292f;
+}
+.prose pre:not([data-language="diff"]) .si {
+  color: #24292f;
+}
+.prose pre:not([data-language="diff"]) .ge {
+  color: #24292f;
+  font-style: italic;
+}
+.prose pre:not([data-language="diff"]) .gs {
+  color: #24292f;
+  font-weight: bold;
+}
+@media (prefers-color-scheme: dark) {
+  .prose pre:not([data-language="diff"]) table td { padding: 5px; }
+  .prose pre:not([data-language="diff"]) table pre { margin: 0; }
+  .prose pre:not([data-language="diff"]), .prose pre:not([data-language="diff"]) .w {
+    color: #c9d1d9;
+    background-color: #161b22;
+  }
+  .prose pre:not([data-language="diff"]) .k, .prose pre:not([data-language="diff"]) .kd, .prose pre:not([data-language="diff"]) .kn, .prose pre:not([data-language="diff"]) .kp, .prose pre:not([data-language="diff"]) .kr, .prose pre:not([data-language="diff"]) .kt, .prose pre:not([data-language="diff"]) .kv {
+    color: #ff7b72;
+  }
+  .prose pre:not([data-language="diff"]) .gr {
+    color: #f0f6fc;
+  }
+  .prose pre:not([data-language="diff"]) .gd {
+    color: #ffdcd7;
+    background-color: #67060c;
+  }
+  .prose pre:not([data-language="diff"]) .nb {
+    color: #ffa657;
+  }
+  .prose pre:not([data-language="diff"]) .nc {
+    color: #ffa657;
+  }
+  .prose pre:not([data-language="diff"]) .no {
+    color: #ffa657;
+  }
+  .prose pre:not([data-language="diff"]) .nn {
+    color: #ffa657;
+  }
+  .prose pre:not([data-language="diff"]) .sr {
+    color: #7ee787;
+  }
+  .prose pre:not([data-language="diff"]) .na {
+    color: #7ee787;
+  }
+  .prose pre:not([data-language="diff"]) .nt {
+    color: #7ee787;
+  }
+  .prose pre:not([data-language="diff"]) .gi {
+    color: #aff5b4;
+    background-color: #033a16;
+  }
+  .prose pre:not([data-language="diff"]) .ges {
+    font-weight: bold;
+    font-style: italic;
+  }
+  .prose pre:not([data-language="diff"]) .kc {
+    color: #79c0ff;
+  }
+  .prose pre:not([data-language="diff"]) .l, .prose pre:not([data-language="diff"]) .ld, .prose pre:not([data-language="diff"]) .m, .prose pre:not([data-language="diff"]) .mb, .prose pre:not([data-language="diff"]) .mf, .prose pre:not([data-language="diff"]) .mh, .prose pre:not([data-language="diff"]) .mi, .prose pre:not([data-language="diff"]) .il, .prose pre:not([data-language="diff"]) .mo, .prose pre:not([data-language="diff"]) .mx {
+    color: #79c0ff;
+  }
+  .prose pre:not([data-language="diff"]) .sb {
+    color: #79c0ff;
+  }
+  .prose pre:not([data-language="diff"]) .bp {
+    color: #79c0ff;
+  }
+  .prose pre:not([data-language="diff"]) .ne {
+    color: #79c0ff;
+  }
+  .prose pre:not([data-language="diff"]) .nl {
+    color: #79c0ff;
+  }
+  .prose pre:not([data-language="diff"]) .py {
+    color: #79c0ff;
+  }
+  .prose pre:not([data-language="diff"]) .nv, .prose pre:not([data-language="diff"]) .vc, .prose pre:not([data-language="diff"]) .vg, .prose pre:not([data-language="diff"]) .vi, .prose pre:not([data-language="diff"]) .vm {
+    color: #79c0ff;
+  }
+  .prose pre:not([data-language="diff"]) .o, .prose pre:not([data-language="diff"]) .ow {
+    color: #79c0ff;
+  }
+  .prose pre:not([data-language="diff"]) .gh {
+    color: #1f6feb;
+    font-weight: bold;
+  }
+  .prose pre:not([data-language="diff"]) .gu {
+    color: #1f6feb;
+    font-weight: bold;
+  }
+  .prose pre:not([data-language="diff"]) .s, .prose pre:not([data-language="diff"]) .sa, .prose pre:not([data-language="diff"]) .sc, .prose pre:not([data-language="diff"]) .dl, .prose pre:not([data-language="diff"]) .sd, .prose pre:not([data-language="diff"]) .s2, .prose pre:not([data-language="diff"]) .se, .prose pre:not([data-language="diff"]) .sh, .prose pre:not([data-language="diff"]) .sx, .prose pre:not([data-language="diff"]) .s1, .prose pre:not([data-language="diff"]) .ss {
+    color: #a5d6ff;
+  }
+  .prose pre:not([data-language="diff"]) .nd {
+    color: #d2a8ff;
+  }
+  .prose pre:not([data-language="diff"]) .nf, .prose pre:not([data-language="diff"]) .fm {
+    color: #d2a8ff;
+  }
+  .prose pre:not([data-language="diff"]) .err {
+    color: #f0f6fc;
+    background-color: #8e1519;
+  }
+  .prose pre:not([data-language="diff"]) .c, .prose pre:not([data-language="diff"]) .ch, .prose pre:not([data-language="diff"]) .cd, .prose pre:not([data-language="diff"]) .cm, .prose pre:not([data-language="diff"]) .cp, .prose pre:not([data-language="diff"]) .cpf, .prose pre:not([data-language="diff"]) .c1, .prose pre:not([data-language="diff"]) .cs {
+    color: #8b949e;
+  }
+  .prose pre:not([data-language="diff"]) .gl {
+    color: #8b949e;
+  }
+  .prose pre:not([data-language="diff"]) .gt {
+    color: #8b949e;
+  }
+  .prose pre:not([data-language="diff"]) .ni {
+    color: #c9d1d9;
+  }
+  .prose pre:not([data-language="diff"]) .si {
+    color: #c9d1d9;
+  }
+  .prose pre:not([data-language="diff"]) .ge {
+    color: #c9d1d9;
+    font-style: italic;
+  }
+  .prose pre:not([data-language="diff"]) .gs {
+    color: #c9d1d9;
+    font-weight: bold;
+  }}

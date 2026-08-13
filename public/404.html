@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nothing here — 404</title>
+<style>
+/* DW-001 warm paper, one blue, one gargoyle (guide §11 G10).
+   Self-contained: this page is served statically, so the tokens live here
+   rather than in the app stylesheet. */
+:root {
+    color-scheme: light dark;
+    --bg:              #f7f2e9;
+    --fill:            #fffdf8;
+    --text:            #1f1a12;
+    --text-muted:      #6f675a;
+    --accent:          #0066b1;
+    --accent-contrast: #ffffff;
+    --danger:          #c81e1e;
+    --good:            #2f6f3e;
+    --ink:             #1f1a12;
+    --serif:           ui-serif, Georgia, serif;
+    --sans:            system-ui, -apple-system, "Segoe UI", sans-serif;
+    --ease:            cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg:              #121316;
+    --fill:            #1c1e22;
+    --text:            #eceef1;
+    --text-muted:      #8b9199;
+    --accent:          #4d9de0;
+    --accent-contrast: #141311;
+    --danger:          #f87171;
+    --good:            #5cb974;
+    --ink:             #000000;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --bg:              #121316;
+        --fill:            #1c1e22;
+        --text:            #eceef1;
+        --text-muted:      #8b9199;
+        --accent:          #4d9de0;
+        --accent-contrast: #141311;
+        --danger:          #f87171;
+        --good:            #5cb974;
+        --ink:             #000000;
+    }
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 1rem;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+}
+
+.container { max-width: 64rem; margin: 0 auto; padding: 6rem 1.25rem 4rem; }
+.measure   { max-width: 40rem; }
+
+.incipit {
+    text-align: center;
+    margin: 0 auto;
+    font-family: var(--serif);
+    font-size: 2rem;
+    letter-spacing: -0.02em;
+    line-height: 1.4;
+}
+
+.section-no {
+    text-align: center;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    margin: 0 0 1rem;
+}
+
+.verdict {
+    text-align: center;
+    max-width: 40rem;
+    margin: 2rem auto 0;
+    font-family: var(--serif);
+    font-size: 1.1rem;
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+.lead {
+    text-align: center;
+    max-width: 40rem;
+    margin: 1.25rem auto 0;
+}
+
+.gargoyle {
+    margin: 4rem auto 0;
+    width: 10rem;
+    height: 10rem;
+    color: var(--text-muted);
+}
+.gargoyle svg {
+    width: 100%;
+    height: 100%;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.actions {
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 3rem;
+}
+
+.button {
+    display: inline-block;
+    padding: 0.6rem 1.1rem;
+    font-family: var(--sans);
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--accent-contrast);
+    background: var(--accent);
+    border: 2px solid var(--ink);
+    border-radius: 10px;
+    box-shadow: 3px 3px 0 var(--ink);
+    cursor: pointer;
+    text-decoration: none;
+    transition: transform 0.15s var(--ease),
+                box-shadow 0.15s var(--ease),
+                filter 0.15s var(--ease);
+}
+.button:hover  { filter: brightness(0.95); }
+.button:active {
+    transform: translate(3px, 3px);
+    box-shadow: 0 0 0 var(--ink);
+    filter: none;
+}
+
+.backlink {
+    color: var(--accent);
+    font-weight: 600;
+    text-decoration: none;
+}
+.backlink:hover { text-decoration: underline; }
+
+footer {
+    margin-top: 6rem;
+    text-align: center;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<main class="container">
+    <p class="section-no">Not found · 404</p>
+    <h1 class="incipit">Nothing here but a gargoyle</h1>
+
+    <div class="gargoyle" role="img" aria-label="A stone gargoyle keeping watch">
+        <svg viewBox="0 0 140 140">
+            <path d="M16 122 H124"/>
+            <path d="M70 120 C34 120 30 96 38 78 C44 66 52 60 70 58 C88 60 96 66 102 78 C110 96 106 120 70 120 Z"/>
+            <path d="M70 56 C50 56 46 42 50 26 C52 14 60 8 70 8 C80 8 88 14 90 26 C94 42 90 56 70 56 Z"/>
+            <path d="M50 24 Q44 4 60 4"/>
+            <path d="M40 66 Q12 58 16 32 Q26 46 38 56"/>
+            <path d="M100 66 Q128 58 124 32 Q114 46 102 56"/>
+            <circle cx="76" cy="30" r="2.6" fill="currentColor" stroke="none"/>
+            <path d="M62 42 Q68 48 78 42"/>
+            <path d="M104 98 Q124 96 126 82 Q127 74 120 72 Q128 72 126 62"/>
+            <path d="M58 120 V124 H66"/>
+            <path d="M76 120 V124 H84"/>
+        </svg>
+    </div>
+
+    <p class="lead measure">
+        This corner of the site is his post. He has been keeping an eye on it for
+        the better part of a century, and he reports the page you're looking for
+        never existed — or quietly moved. He does not know which, and he is not
+        going to apologise.
+    </p>
+
+    <p class="verdict">He will not be judging you. He is on the roof. That is his job.</p>
+
+    <div class="actions">
+        <a class="button" href="/">Return to the blog</a>
+        <a class="backlink" href="https://deepwa7er.com">deepwa7er.com</a>
+    </div>
+</main>
+
+<footer class="container">
+    <p style="margin:0;">END DW-404 — the gargoyle is the one ornament on this page, and he knows it.</p>
+</footer>
+
+<script>
+(function () {
+    var root = document.documentElement;
+    var mode = localStorage.getItem("dw-theme") || "auto";
+    if (mode !== "auto") { root.dataset.theme = mode; }
+})();
+</script>
+
+</body>
+</html>

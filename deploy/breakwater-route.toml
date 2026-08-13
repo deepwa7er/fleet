@@ -1,0 +1,32 @@
+# The ADMIN front door for the blog: https://blog.intern.deepwa7er.net
+#
+# This is not a file breakwater reads. Paste this block into the hand-maintained
+# section of fleet/breakwater/breakwater.toml — BELOW the
+# `# ── END GENERATED ROUTES ──` marker, next to readout's — and then, from the
+# fleet repo:
+#
+#   cd ~/code/fleet/breakwater && tugboat deploy
+#
+# The route must be hand-written because `tugboat fleet gen` derives routes from
+# deploy.toml files inside the monorepo, and the blog's repo lives outside it
+# (the same reason readout's and lagoon's routes are hand-written).
+#
+# WHY BREAKWATER CARRIES A ROUTE FOR A PUBLIC APP AT ALL
+#
+# It does not — it carries a route for this app's ADMIN, which is not public.
+# The public site is served by nginx on the same VPS under its own certificate;
+# breakwater is untouched by that and keeps binding only the Tailscale IP.
+#
+# This is an ordinary internal route to an ordinary loopback port. What would
+# have conflicted with the fleet's threat model is giving BREAKWATER a public
+# listener, since it is the single front door in front of `harness`, which is
+# unauthenticated RCE. Nothing here does that.
+#
+# The upstream is the same 127.0.0.1:8102 the public nginx vhost proxies to:
+# one process, two front doors. Which one a request came through is decided by
+# the Host header, which breakwater forwards verbatim — that is what makes the
+# app's admin routing constraint match here and not on the public side.
+
+[[routes]]
+label = "blog"
+upstream = "127.0.0.1:8102"
