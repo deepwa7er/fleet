@@ -30,8 +30,8 @@ This is a shortcut into the `fleet` workflow (`.agents/skills/fleet/SKILL.md`) f
    - Exact next commands to start work (from fleet §2):
      ```bash
      cd ~/code/fleet && git fetch origin
-     git worktree add ~/code/.drydock/<slug> -b fleet/<card#>-<slug> origin/main
-     cd ~/code/.drydock/<slug>
+     git worktree add .worktrees/<slug> -b fleet/<card#>-<slug> origin/main
+     cd .worktrees/<slug>
      ```
    - Gates to pass: `cargo test`, `cargo clippy -- -D warnings`, `cargo build`
 5. Stop and ask if the user wants to start the worktree. Never push, merge, deploy, or close the Fizzy card — human merges per fleet §5.
