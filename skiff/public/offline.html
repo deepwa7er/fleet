@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Skiff — offline</title>
+    <style>
+      /* DW-001 G10, inline for this standalone page: a single honest line
+         and a way back. The key is the app's button recipe (accent fill,
+         ink border, offset shadow, press translates into it). */
+      :root { color-scheme: light dark; }
+      @media (prefers-color-scheme: light) {
+        :root { --bg: #f7f2e9; --text: #1f1a12; --accent: #0066b1; --accent-contrast: #ffffff; --ink: #1f1a12; }
+      }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg: #121316; --text: #eceef1; --accent: #4d9de0; --accent-contrast: #141311; --ink: #000000; }
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, sans-serif;
+      }
+      .offline {
+        text-align: center;
+        padding: 2rem;
+      }
+      p {
+        margin: 0 0 2rem;
+        font-weight: 600;
+      }
+      .key {
+        display: inline-block;
+        padding: 0.6rem 1.1rem;
+        font: inherit;
+        font-weight: 600;
+        color: var(--accent-contrast);
+        background: var(--accent);
+        border: 2px solid var(--ink);
+        border-radius: 10px;
+        box-shadow: 3px 3px 0 var(--ink);
+        text-decoration: none;
+      }
+      .key:active {
+        transform: translate(3px, 3px);
+        box-shadow: 0 0 0 var(--ink);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="offline">
+      <p>Skiff — the tailnet is unreachable.</p>
+      <a class="key" href="/">Try again</a>
+    </div>
+  </body>
+</html>

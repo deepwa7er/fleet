@@ -1,0 +1,14 @@
+<svg width="512" height="512" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- The app icon (DW-001): a sailboat in ink on warm paper, the mainsail
+       taking the one accent (rule 4). The mark sits inside the maskable
+       safe circle (center 256,256 radius 205). -->
+  <rect width="512" height="512" fill="#f7f2e9"/>
+  <!-- jib -->
+  <polygon points="256,200 256,344 120,344" fill="#1f1a12"/>
+  <!-- mainsail -->
+  <polygon points="256,140 256,344 392,344" fill="#0066b1"/>
+  <!-- mast -->
+  <rect x="250" y="140" width="12" height="216" fill="#1f1a12"/>
+  <!-- hull -->
+  <path d="M96,336 C96,396 416,396 416,336 Z" fill="#1f1a12"/>
+</svg>

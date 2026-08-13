@@ -1,0 +1,11 @@
+<%# The working readout (M4): a static tag plus the Abort key, replaced by the
+    stream's working events. The tag is instrumentation voice (rule 5) and the
+    Abort key is the interactable signal; no motion (rule 6). The element id
+    is the turbo-stream replace target — the stream must never touch anything
+    else in the wrapper. Locals: working, session_id. %>
+<div id="session-status">
+  <% if working %>
+    <span class="instrumentation status-tag">working</span>
+    <%= button_to "Abort", abort_session_path(session_id), class: "button button--small button--secondary" %>
+  <% end %>
+</div>

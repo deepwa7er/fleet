@@ -1,0 +1,31 @@
+<% flash.each do |type, message| %>
+  <p class="flash flash--<%= type %>"><%= message %></p>
+<% end %>
+
+<main class="measure">
+  <% if @error %>
+    <p class="instrumentation instrumentation--danger"><%= @error %></p>
+  <% else %>
+    <p class="instrumentation"><%= pluralize(@sessions.length, "session") %></p>
+
+    <% if @sessions.empty? %>
+      <p class="prose">No sessions yet. Your first message starts one.</p>
+    <% else %>
+      <ul class="list">
+        <% @sessions.each do |session| %>
+          <li class="item">
+            <%= link_to session_title(session), session_path(session[:id]), class: "item-title" %>
+            <% if (instrumentation = session_instrumentation(session)).present? %>
+              <p class="instrumentation"><%= instrumentation %></p>
+            <% end %>
+          </li>
+        <% end %>
+      </ul>
+    <% end %>
+  <% end %>
+</main>
+
+<nav class="action-bar" aria-label="Session actions">
+  <%= button_to "New session", sessions_path, class: "button" %>
+</nav>
+<div class="action-bar-spacer" aria-hidden="true"></div>

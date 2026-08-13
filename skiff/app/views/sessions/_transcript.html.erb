@@ -1,0 +1,10 @@
+<%# The transcript container. id="transcript" is the anchor M4's stream
+    targets; each message wrapper carries a stable id (see _message). This
+    partial is shared by show's first paint and the stream's snapshot
+    replacement, so a snapshotted transcript renders exactly what a reload
+    would. Locals: messages (the { info:, parts: } entries). %>
+<div id="transcript">
+  <% messages.each_with_index do |entry, index| %>
+    <%= render "sessions/message", message: entry[:info], parts: entry[:parts], message_index: index %>
+  <% end %>
+</div>
