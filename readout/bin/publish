@@ -1,0 +1,226 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# Publishes load-test results to the Readout dashboard.
+#
+#   bin/publish                     publish every run in the results directory
+#   bin/publish 20260809-134656     publish one run (what the runner does)
+#   bin/publish --dry-run           parse and report, send nothing
+#
+# Why this exists: the raw results only exist on the machine that generated the
+# load. bin/run.sh writes them there, so the dashboard has no files to import
+# from — something has to push. A run's directory is ~165MB of CSV and JSON; what
+# this sends is the few hundred kilobytes worth keeping (Analysis::RunBundle).
+#
+# It runs on GENERATOR machines, which are not the dashboard and need not be a
+# Rails host. So: stdlib only, no bundler, no Rails boot, no database. The
+# analysis files are plain Ruby over IO for exactly this reason, and requiring
+# them directly is what keeps one implementation of the arithmetic rather than a
+# second one written in whatever language the generator happens to have.
+#
+# It replaced importing into a local production database and rsyncing that file
+# up. That worked only while exactly one machine generated load: two machines
+# each hold a database containing only their own runs, so whichever published
+# last replaced the other's history — silently, since nothing about the result
+# looked wrong.
+
+require "json"
+require "net/http"
+require "pathname"
+require "set"
+require "uri"
+
+APP_ROOT = Pathname.new(__dir__).parent
+
+# Checked before the app files are required, because that is where it would
+# otherwise fail: those use 3.x syntax, and an old interpreter reports it as a
+# syntax error inside a file this script merely reads. macOS still ships 2.6 as
+# /usr/bin/ruby, so this is a real way to arrive here.
+MINIMUM_RUBY = "3.1"
+if RUBY_VERSION < MINIMUM_RUBY
+  abort "bin/publish needs Ruby #{MINIMUM_RUBY} or newer; this is #{RUBY_VERSION} (#{RbConfig.ruby})"
+end
+
+# Order matters: there is no autoloading here. analysis.rb defines the module and
+# its constants; the rest are read by RunBundle.
+%w[
+  analysis
+  analysis/percentile
+  analysis/metrics_file
+  analysis/server_trace
+  analysis/run_config
+  analysis/level_breakdown
+  analysis/run_bundle
+].each { |file| require APP_ROOT.join("app/models", "#{file}.rb").to_s }
+
+DEFAULT_URL = "https://readout.intern.deepwa7er.net"
+DEFAULT_TOKEN_FILE = File.expand_path("~/.config/readout/ingest-token")
+DEFAULT_RESULTS = File.expand_path("~/code/campfire-stress/results")
+
+# Generous: the dashboard is a small VPS behind a proxy, and a bundle with a
+# large chart payload is a slow write there rather than a hung one.
+OPEN_TIMEOUT = 10
+READ_TIMEOUT = 120
+
+class Publisher
+  class Failed < StandardError; end
+
+  def initialize(url:, token:, dry_run: false)
+    @uri = URI.parse("#{url.chomp('/')}/api/runs")
+    @token = token
+    @dry_run = dry_run
+  end
+
+  def publish(directory)
+    bundle = Analysis::RunBundle.build(directory)
+    summary = "#{bundle.stamp} (#{bundle.machine || 'machine not recorded'}, " \
+              "#{bundle.levels.length} level(s), #{bundle.server_samples.length} server samples)"
+
+    if @dry_run
+      warn "    would publish #{summary}"
+      return
+    end
+
+    send_bundle(bundle)
+    warn "    published #{summary}"
+  end
+
+  private
+
+  def send_bundle(bundle)
+    request = Net::HTTP::Post.new(@uri)
+    request["Content-Type"] = "application/json"
+    request["X-Readout-Token"] = @token
+    request.body = JSON.generate(bundle.to_h)
+
+    response = Net::HTTP.start(
+      @uri.host, @uri.port,
+      use_ssl: @uri.scheme == "https",
+      open_timeout: OPEN_TIMEOUT, read_timeout: READ_TIMEOUT
+    ) { |http| http.request(request) }
+
+    return if response.is_a?(Net::HTTPSuccess)
+
+    raise Failed, "#{@uri} returned #{response.code}: #{explain(response)}"
+  rescue SystemCallError, Net::OpenTimeout, Net::ReadTimeout, IOError, OpenSSL::SSL::SSLError => e
+    raise Failed, "could not reach #{@uri}: #{e.class}: #{e.message}"
+  end
+
+  # The dashboard names what was wrong with a bundle it refused, and that message
+  # is the whole value of a failed publish: the results still exist here, so the
+  # question is always what to fix before sending them again.
+  def explain(response)
+    JSON.parse(response.body.to_s)["error"] || response.body.to_s.slice(0, 500)
+  rescue JSON::ParserError
+    response.body.to_s.slice(0, 500)
+  end
+end
+
+def parse_options(argv)
+  options = {
+    url: ENV.fetch("READOUT_URL", DEFAULT_URL),
+    token_file: ENV.fetch("READOUT_INGEST_TOKEN_FILE", DEFAULT_TOKEN_FILE),
+    results: ENV.fetch("CAMPFIRE_STRESS_RESULTS", DEFAULT_RESULTS),
+    dry_run: false,
+    run_ids: []
+  }
+
+  until argv.empty?
+    argument = argv.shift
+
+    case argument
+    when "--url"        then options[:url] = argv.shift
+    when "--token-file" then options[:token_file] = argv.shift
+    when "--results"    then options[:results] = argv.shift
+    when "--dry-run"    then options[:dry_run] = true
+    when "-h", "--help" then usage_and_exit
+    when /\A-/          then abort "unknown option: #{argument} (try --help)"
+    else                     options[:run_ids] << argument
+    end
+  end
+
+  options
+end
+
+def usage_and_exit
+  File.foreach(__FILE__).with_index do |line, index|
+    next if index.zero? # shebang
+    next if line.match?(/\A#\s*frozen_string_literal/)
+    break unless line.start_with?("#")
+
+    puts line.sub(/\A# ?/, "").chomp
+  end
+  exit 0
+end
+
+# The directories to publish, in run order.
+#
+# A named run is looked up by stamp rather than searched for, so a typo fails
+# with "no such run" rather than silently publishing nothing.
+def directories_for(options)
+  root = Pathname.new(options[:results])
+  abort "no results directory at #{root}" unless root.directory?
+
+  return options[:run_ids].map { |id| resolve(root, id) } if options[:run_ids].any?
+
+  root.children
+      .select(&:directory?)
+      .select { |dir| dir.join(Analysis::RunBundle::METRICS_FILE).exist? }
+      .sort
+end
+
+def resolve(root, run_id)
+  # The stamp names a directory, so a caller must not be able to reach outside
+  # the results root by naming one.
+  abort "#{run_id.inspect} is not a run stamp" unless run_id.match?(Analysis::RunBundle::STAMP)
+
+  directory = root.join(run_id)
+  abort "no such run: #{directory}" unless directory.directory?
+
+  directory
+end
+
+def read_token(path)
+  token = File.read(path).strip
+  abort "#{path} is empty" if token.empty?
+
+  token
+rescue SystemCallError
+  abort <<~MESSAGE
+    no ingest token at #{path}
+
+    Generator machines present a shared secret when publishing. Copy it from the
+    dashboard host (/opt/readout/ingest-token), or set READOUT_INGEST_TOKEN_FILE.
+  MESSAGE
+end
+
+options = parse_options(ARGV)
+
+# Parsing a 700k-line metrics.csv is several seconds of hard CPU, and this
+# machine is the load generator. Stealing cores from a run in progress shows up
+# as latency that would be blamed on the application under test.
+if system("pgrep -x k6 > /dev/null 2>&1")
+  abort "k6 is running — refusing to parse results mid-run, since this machine is the load generator."
+end
+
+directories = directories_for(options)
+abort "nothing to publish" if directories.empty?
+
+token = options[:dry_run] ? "" : read_token(options[:token_file])
+publisher = Publisher.new(url: options[:url], token: token, dry_run: options[:dry_run])
+
+warn "==> publishing #{directories.length} run(s) to #{options[:url]}"
+
+failures = directories.filter_map do |directory|
+  publisher.publish(directory)
+  nil
+rescue Analysis::RunBundle::Invalid, Publisher::Failed => e
+  warn "    FAILED #{directory.basename}: #{e.message}"
+  directory.basename.to_s
+end
+
+if failures.any?
+  abort "==> #{failures.length} run(s) failed to publish: #{failures.join(', ')}"
+end
+
+warn "==> #{options[:url]}"

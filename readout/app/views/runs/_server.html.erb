@@ -1,0 +1,40 @@
+<%# What the load was applied TO.
+
+    Two runs are only comparable if this matches, or differs on purpose. Shown
+    from the first second of a run rather than only once it has been imported:
+    it is fixed for the whole run — the runner refuses to switch the server
+    while a test is measuring it — so there is nothing to wait for.
+
+    Live, it comes from the run-config.txt the harness writes at launch; after
+    import, from the row that recorded the same file. One source, read twice. %>
+
+<h2>Server</h2>
+
+<dl class="settings">
+  <div>
+    <dt>variant</dt>
+    <dd><%= variant.presence || "server not recorded" %></dd>
+  </div>
+  <% if image.present? %>
+    <div>
+      <dt>image</dt>
+      <dd><%= image %></dd>
+    </div>
+  <% end %>
+  <% if settings.present? %>
+    <div>
+      <dt>settings</dt>
+      <dd><%= settings.split(",").join(" · ") %></dd>
+    </div>
+  <% end %>
+</dl>
+
+<% if variant.blank? || variant == Run::UNKNOWN_VARIANT %>
+  <p class="finding-body measure muted">
+    This run does not name the server it measured, so it cannot be compared
+    against one that does. Runs record it from
+    <code>bin/campfire-variant</code> on the machine that generates the load;
+    runs from before that, or taken while the deployed image did not match the
+    recorded variant, say so here rather than guessing.
+  </p>
+<% end %>

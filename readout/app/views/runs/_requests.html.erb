@@ -1,0 +1,30 @@
+<%# How much was asked of the server, and how much of it went unanswered.
+
+    Counted from the first second rather than after the run, because this is the
+    figure that says whether the server is still there at all: a request that
+    got no answer is not a slow request. Live, the runner totals them as it
+    reads k6's output; afterwards, the dashboard recomputes them from the same
+    file. Same statuses, same definition, same numbers. %>
+
+<h2>Requests</h2>
+
+<dl class="settings">
+  <div>
+    <dt>Received</dt>
+    <dd><%= request_count_figure(received) %></dd>
+  </div>
+  <div>
+    <dt>Never answered</dt>
+    <dd><%= unanswered_figure(unanswered, share) %></dd>
+  </div>
+</dl>
+
+<p class="finding-body measure muted">
+  <strong>Received</strong> is every request the harness sent during the run,
+  including the ones it sent while people were still arriving.
+  <strong>Never answered</strong> counts the ones Campfire produced no response
+  for at all — the connection failed, or the proxy in front of it gave up
+  waiting and answered with a gateway error on its behalf. A 404 or a 500 is
+  <em>not</em> counted here: those are the application responding, and a server
+  that refuses is telling you something different from one that goes quiet.
+</p>

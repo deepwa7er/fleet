@@ -1,0 +1,59 @@
+# tugboat deploy manifest — deepwa7er fleet
+#   deploy:  tugboat deploy      (from this directory)
+#
+# readout is an EXTERNAL member: its repo lives outside the fleet monorepo, so
+# `tugboat fleet gen` cannot read this file in CI and the breakwater route is
+# maintained by hand (same arrangement as lagoon).
+#
+# It is also the fleet's first containerised deployable. The VPS ships Ruby
+# 3.2.3 and this app targets 3.4.8, so a native install would mean maintaining a
+# second Ruby on the host; the image carries its own instead. What tugboat ships
+# is that image as a tar, and the systemd unit loads it on start — so the deploy
+# is still one atomic artifact swap plus a unit restart, and a failed health
+# check still rolls back to the previous image exactly like a binary would.
+#
+# Infra provisioning (directory layout, master key, systemd unit) is
+# deploy/provision.sh — a one-time/on-change step, not run here.
+name = "readout"
+description = "Load-test results dashboard for campfire-stress."
+host = "deepwa7er"
+
+# Loopback port the container publishes; breakwater fronts it at
+# https://readout.intern.deepwa7er.net. The route is hand-written in
+# breakwater.toml because `fleet gen` cannot see this repo.
+port = 8101
+
+[build]
+# Cross-build for the VPS: this Mac is arm64 and the VPS is x86_64, so the
+# platform is pinned rather than inherited. buildx runs the Linux build under
+# emulation, which is slow but avoids needing a builder on a 2GB host.
+#
+# `docker save` writes the image as a tar for tugboat to rsync. It is left
+# uncompressed on purpose: successive builds share most layers, so rsync's delta
+# transfer moves far less than a fresh gzip would each time.
+cmd = "docker buildx build --platform linux/amd64 -t readout:deploy --load . && docker save readout:deploy -o {workdir}/readout-image.tar"
+
+[[artifacts]]
+src = "{workdir}/readout-image.tar"
+dest = "/opt/readout/readout-image.tar"
+mode = "0644"
+
+# readout binds loopback, so health is a real HTTP check on it. /up is Rails'
+# built-in health endpoint: it returns 200 only if the app boots cleanly, which
+# is exactly the failure this needs to catch — a bad image loads fine and then
+# dies on boot.
+#
+# The retries are generous: the unit has to `docker load` a ~400MB tar before
+# the container even starts.
+[health]
+url = "http://127.0.0.1:8101/up"
+retries = 40
+interval_ms = 1000
+
+[verify]
+# Checked from this machine after the deploy, through breakwater.
+url = "https://readout.intern.deepwa7er.net/up"
+
+[lighthouse]
+# Monitor readout from the fleet dashboard (status + logs).
+enroll = true

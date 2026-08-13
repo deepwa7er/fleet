@@ -1,0 +1,590 @@
+/*
+ * Design rules — carried over verbatim from the notes app, which is the source
+ * of this style. Anything below that the notes app did not need is an
+ * extension, and is marked as such with the rule it derives from.
+ *
+ * The full system, including the tokens, the component recipes, and how to add
+ * an extension, is documented in ~/code/deepwater-style-guide.md (DW-001). The
+ * six rules are repeated here because the comments below refer to them by
+ * number; if they change, they change in both places.
+ * -------------------------------------------------------------------------
+ * 1. Whitespace separates content. No borders or dividers between notes,
+ *    sections, or text. Proximity and typography carry the hierarchy.
+ * 2. Depth marks interactivity. Solid offset shadows and outlines appear
+ *    only on things you can press (buttons) or type into (fields).
+ * 3. Warm light mode (cream paper, warm ink); barely-warm charcoal dark
+ *    mode. Never pure neutral gray, never brown.
+ * 4. One accent color — a deep Bavarian blue — used only for interactive
+ *    elements.
+ * 5. Metadata is instrumentation: uppercase, letterspaced, tabular
+ *    numerals. Dashboard readouts, not prose.
+ * 6. Motion is engineered: short durations, strong ease-out, like a
+ *    well-damped switch.
+ */
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+:root {
+    /* Tells the browser to render built-in controls appropriately for the
+       active color scheme. */
+    color-scheme: light dark;
+
+    --bg: #f7f2e9;            /* warm cream paper */
+    --fill: #fffdf8;          /* slightly lighter surface for fields */
+    --text: #1f1a12;          /* warm near-black ink */
+    --text-muted: #7a7264;
+    --accent: #0066b1;
+    --accent-contrast: #ffffff;
+    --danger: #dc2626;
+    --ink: #1f1a12;           /* button outlines and hard shadows */
+
+    /* An extension to the notes palette, which has a colour for "bad" but none
+       for "good" — it never needed one. The delivery chart does: it shades the
+       gap between what was delivered and what was needed, and that gap has a
+       sign. Muted deliberately, since it appears as a wash behind data and must
+       not compete with the ink. */
+    --good: #2f6f3e;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #121316;         /* cool charcoal, blue undertone, not warm */
+        --fill: #1c1e22;       /* same family, one step lighter */
+        --text: #eceef1;       /* neutral paper-white, drop the warm tint */
+        --text-muted: #8b9199; /* cool gray */
+        --accent: #4d9de0;     /* dashboard backlight blue */
+        --accent-contrast: #141311;
+        --danger: #f87171;
+        --ink: #000000;
+        --good: #5cb974;
+    }
+}
+
+body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    font-size: 1rem;
+    line-height: 1.6;
+    color: var(--text);
+    background: var(--bg);
+}
+
+/* The notes app uses 40rem, sized for prose. A per-level results table has ten
+   numeric columns and cannot honestly be squeezed into that measure; widening
+   the container is preferable to shrinking type below a readable size. Prose
+   sections keep the original measure via .measure. */
+.container {
+    max-width: 64rem;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem;
+}
+
+.measure {
+    max-width: 40rem;
+}
+
+h1 {
+    font-family: ui-serif, Georgia, serif;
+    font-size: 2rem;
+    letter-spacing: -0.02em; /* tight tracking on large headings */
+    margin: 0;
+}
+
+h2 {
+    font-family: ui-serif, Georgia, serif;
+    font-size: 1.35rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 2.5rem 0 0.75rem;
+}
+
+.page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+/* Metadata as instrumentation (rule 5): dashboard readouts. */
+.meta {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+}
+
+.muted {
+    color: var(--text-muted);
+}
+
+.empty-state {
+    margin-top: 4rem;
+    text-align: center;
+    font-size: 1.1rem;
+    color: var(--text-muted);
+}
+
+/* --- Run list: whitespace-only separation (rule 1) --- */
+
+.runs {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.run {
+    padding: 0.75rem 0;
+}
+
+/* The gap between runs replaces the divider. */
+.run + .run {
+    margin-top: 1rem;
+}
+
+.run-title {
+    display: block;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--text);
+    text-decoration: none;
+    margin-bottom: 0.15rem;
+}
+
+.run-title:hover {
+    color: var(--accent);
+    text-decoration: underline;
+}
+
+/* --- Tables (extension) ---
+   Not present in the notes app. Derived from rules 1 and 5: no rules or zebra
+   striping between rows — the gaps carry the grouping — and every column
+   header is instrumentation. Figures use tabular numerals so digits line up
+   down a column. */
+
+.table-scroll {
+    overflow-x: auto;   /* the page itself must never scroll sideways */
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+}
+
+thead th {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    text-align: right;
+    padding: 0 0 0.6rem 1rem;
+    white-space: nowrap;
+}
+
+thead th:first-child {
+    text-align: left;
+    padding-left: 0;
+}
+
+tbody td {
+    padding: 0.45rem 0 0.45rem 1rem;
+    text-align: right;
+    white-space: nowrap;
+}
+
+tbody td:first-child {
+    text-align: left;
+    padding-left: 0;
+    font-weight: 600;
+}
+
+/* A figure called out by color only where it means "bad". The accent stays
+   reserved for interactive elements (rule 4). */
+.figure--bad {
+    color: var(--danger);
+}
+
+.figure--none {
+    color: var(--text-muted);
+}
+
+/* --- Verdict block (extension of rule 1) ---
+   A conclusion the reader should not miss, separated by space and a shift in
+   type rather than by a box or a border. */
+
+.verdict {
+    margin: 1.5rem 0;
+}
+
+.verdict p {
+    margin: 0.4rem 0 0;
+}
+
+.verdict strong {
+    font-family: ui-serif, Georgia, serif;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+/* --- Findings (extension of rule 1) ---
+   The plain-language reading of a run. Separated by space and a shift in type
+   rather than by boxes or rules, and set at a comfortable reading measure —
+   this is prose, not instrumentation, so it does not get the uppercase
+   letterspaced treatment. */
+
+.finding-title {
+    font-family: ui-serif, Georgia, serif;
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 1.75rem 0 0.25rem;
+}
+
+.finding-body {
+    margin: 0;
+}
+
+.suggestions {
+    margin: 0.25rem 0 0;
+    padding-left: 1.1rem;
+}
+
+.suggestions li + li {
+    margin-top: 0.6rem;
+}
+
+/* --- Reading key (extension of rules 1 and 5) ---
+   What a value on the chart above actually means. Rows are separated by space,
+   never rules; the band this run landed in is marked by weight and a small
+   instrumentation-styled note, not by a coloured box. */
+
+.key {
+    margin: 0.75rem 0 0;
+    max-width: 40rem;
+}
+
+.key-row {
+    display: grid;
+    grid-template-columns: 7.5rem 1fr;
+    gap: 0 1rem;
+    padding: 0.3rem 0;
+}
+
+.key-row dt {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    padding-top: 0.15rem;
+}
+
+.key-row dd {
+    margin: 0;
+    color: var(--text-muted);
+}
+
+/* The band this run actually landed in. */
+.key-row--here dt,
+.key-row--here dd {
+    color: var(--text);
+}
+
+.key-row--here dd {
+    font-weight: 600;
+}
+
+.key-here {
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+}
+
+/* --- Glossary --- */
+
+.glossary {
+    margin: 0.5rem 0 0;
+}
+
+.glossary div + div {
+    margin-top: 0.9rem;
+}
+
+.glossary dt {
+    font-weight: 600;
+}
+
+.glossary dd {
+    margin: 0;
+    color: var(--text-muted);
+}
+
+/* Unit, stated in the column header rather than a footnote. */
+.unit {
+    display: block;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    text-transform: none;
+    opacity: 0.75;
+}
+
+/* --- Plotted charts (axes, ticks, points) --- */
+
+.chart--plotted {
+    height: auto;
+    aspect-ratio: 720 / 250;
+    margin-bottom: 0.25rem;
+}
+
+.chart-guide {
+    stroke: var(--text-muted);
+    stroke-width: 0.5;
+    opacity: 0.25;
+}
+
+.chart-point {
+    fill: var(--text);
+}
+
+.chart-tick {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    fill: var(--text-muted);
+}
+
+.chart-tick--y { text-anchor: end; }
+.chart-tick--x { text-anchor: middle; }
+
+.chart-tick--reference {
+    text-anchor: end;
+    fill: var(--danger);
+}
+
+.chart-axis-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--text-muted);
+    text-anchor: middle;
+}
+
+/* --- Settings grid --- */
+
+.settings {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    gap: 0.75rem 1.5rem;
+    margin: 0;
+}
+
+.settings div {
+    min-width: 0;
+}
+
+.settings dt {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.settings dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+
+/* --- Charts ---
+   The plotted line uses ink, not the accent: a chart is not interactive, and
+   rule 4 reserves the accent. Danger marks a reference threshold only. */
+
+/* The live chart's canvas needs a sized parent: Chart.js with
+   maintainAspectRatio:false fills its container, and a container with no height
+   collapses to nothing. */
+.chart-frame {
+    position: relative;
+    height: 260px;
+    margin: 0.5rem 0 1.25rem;
+}
+
+/* The canvas MUST be sized in CSS.
+   Without this its layout size comes from its width/height attributes, which the
+   controller sets to (measured size x devicePixelRatio) for a sharp backing
+   store — so on a retina screen the element doubles every time it is measured,
+   growing out of its container and under the text below it. CSS fixes the layout
+   size; the attributes then only control resolution. */
+.chart-frame canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* Explicit height, not `auto`.
+   These SVGs carry preserveAspectRatio="none" so they stretch to the container,
+   which means they have no intrinsic aspect ratio for `height: auto` to resolve
+   against — WebKit collapses them to zero height, so the chart vanishes and
+   reappears seemingly at random as the polled frame swaps. A fixed height also
+   keeps the page from reflowing every two seconds. */
+.chart {
+    display: block;
+    width: 100%;
+    height: 160px;
+    margin-top: 0.5rem;
+}
+
+.chart-line {
+    fill: none;
+    stroke: var(--text);
+    stroke-width: 1.5;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+.chart-area {
+    fill: var(--text);
+    opacity: 0.07;
+}
+
+.chart-threshold {
+    stroke: var(--danger);
+    stroke-width: 1;
+    stroke-dasharray: 4 4;
+    opacity: 0.7;
+}
+
+.chart-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--text-muted);
+}
+
+/* --- Buttons: the only elements with depth (rule 2) --- */
+
+.button,
+input[type="submit"] {
+    display: inline-block;
+    padding: 0.6rem 1.1rem;  /* yields ~44px height: a proper touch target */
+    font: inherit;
+    font-weight: 600;
+    color: var(--accent-contrast);
+    background: var(--accent);
+    border: 2px solid var(--ink);
+    border-radius: 10px;
+    box-shadow: 3px 3px 0 var(--ink);  /* solid offset shadow: a physical key */
+    cursor: pointer;
+    text-decoration: none;   /* links are underlined by default */
+    transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1),  /* damped (rule 6) */
+                box-shadow 0.15s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.button:hover,
+input[type="submit"]:hover {
+    filter: brightness(0.95);
+}
+
+/* The press: the key slides down into its own shadow. */
+.button:active,
+input[type="submit"]:active {
+    transform: translate(3px, 3px);
+    box-shadow: 0 0 0 var(--ink);
+    filter: none;
+}
+
+.button--secondary {
+    color: var(--accent);
+    background: var(--fill);
+}
+
+.button--danger {
+    color: var(--danger);
+    background: var(--fill);
+}
+
+/* --- Harness output (extension) ---
+   Monospace because it is program output whose alignment carries meaning; the
+   fill surface marks it as a distinct plane without needing a border (rule 1). */
+
+.log {
+    margin: 0;
+    padding: 1rem;
+    max-height: 26rem;
+    overflow: auto;      /* scrolls itself; the page never scrolls sideways */
+    background: var(--fill);
+    border-radius: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+/* Form controls inherit the field treatment from rule 2. */
+select,
+input[type="number"] {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font: inherit;
+    color: var(--text);
+    background: var(--fill);
+    border: none;
+    border-radius: 10px;
+}
+
+select:focus,
+input[type="number"]:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+/* button_to wraps its input in its own <form class="button_to">, which is
+   block-level by default and would break an inline action row. */
+.button_to {
+    display: inline;
+    margin: 0;
+}
+
+.actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+}
+
+/* --- Flash messages --- */
+
+.flash {
+    margin-bottom: 1.5rem;
+    font-weight: 600;
+}
+
+.flash--alert {
+    color: var(--danger);
+}
+
+/* --- Back link --- */
+
+.back-link {
+    display: inline-block;
+    margin-bottom: 1rem;
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.back-link:hover {
+    text-decoration: underline;
+}
