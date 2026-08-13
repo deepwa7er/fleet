@@ -1,0 +1,13 @@
+# Pins the toolchain for this project.
+#
+# Without this, mise serves whatever Ruby is globally active (4.0.6 on this
+# machine) and `bin/rails` fails outright, because mise does not read
+# .ruby-version unless told to. Declaring the version here makes mise switch on
+# entering the directory, so the ordinary Rails commands work bare:
+#
+#   bin/rails server
+#   bin/rails test
+#
+# Keep this in step with .ruby-version, which Rails' own tooling reads.
+[tools]
+ruby = "3.4.8"

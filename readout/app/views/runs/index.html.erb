@@ -1,0 +1,90 @@
+<% content_for :title, "Readout — load test runs" %>
+
+<header class="page-header">
+  <h1>Readout</h1>
+  <div class="actions" style="margin-top: 0">
+    <%# Only where a runner is actually reachable: launching is meaningless on
+        an instance that has neither k6 nor the results directory. %>
+    <% if @runner_available %>
+      <%= link_to "New load test", new_test_run_path, class: "button" %>
+    <% end %>
+    <% if @results_available %>
+      <%= button_to "Rescan results", import_runs_path, class: "button button--secondary" %>
+    <% end %>
+    <% if @runs.length >= 2 %>
+      <%= link_to "Compare last two", compare_runs_path, class: "button button--secondary" %>
+    <% end %>
+    <% if @results_available %>
+      <% if @runs.any? %>
+        <%= button_to "Archive to cold storage", archive_runs_path, class: "button button--secondary", form: { data: { turbo_confirm: "Move #{@runs.length} runs to storage/archive and clear the live DB? Raw results/ stays on disk." } } %>
+      <% end %>
+      <% archive_count = Dir[Rails.root.join("storage", "archive", "readout-*.json")].length %>
+      <% if archive_count > 0 %>
+        <%= button_to "Restore latest archive", restore_runs_path, class: "button button--secondary", form: { data: { turbo_confirm: "Restore the most recent archive into the live DB?" } } %>
+        <span class="meta"><%= archive_count %> archived</span>
+      <% end %>
+    <% end %>
+  </div>
+</header>
+
+<% if @runs.empty? && Dir[Rails.root.join("storage", "archive", "readout-*.json")].any? %>
+  <p class="empty-state">
+    Live DB is cold — <%= Dir[Rails.root.join("storage", "archive", "readout-*.json")].length %> archived dump(s) in <code>storage/archive/</code>.
+    Raw <code>results/</code> is still on disk. Use <em>Restore latest archive</em> or re-import from <code>results/</code>.
+  </p>
+<% end %>
+
+<% if @results_available %>
+  <p class="meta">Campfire load tests · <%= @results_root %></p>
+<% else %>
+  <p class="meta">Campfire load tests · published snapshot</p>
+<% end %>
+
+<% if @active_test_id %>
+  <%= render "runs/active_banner", test_id: @active_test_id, machine: @active_test_machine %>
+<% end %>
+
+<% if @runs.empty? %>
+  <p class="empty-state">
+    <% if @results_available %>
+      No runs imported yet. Run the harness, then rescan.
+    <% else %>
+      Nothing published yet. Run <code>bin/publish</code> on the machine that
+      generates load.
+    <% end %>
+  </p>
+<% else %>
+  <ul class="runs">
+    <% @runs.each do |run| %>
+      <li class="run">
+        <%= link_to run.stamp, run_path(run), class: "run-title" %>
+
+        <p class="meta">
+          <%= run.scenario.to_s.sub("scenarios/", "").presence || "unknown scenario" %>
+          <%# Which server each run measured, so a list of runs can be read as
+              an experiment rather than a pile of numbers. %>
+          <% if run.variant_known? %>
+            · <%= run.variant %>
+          <% end %>
+          <%# And which machine generated it, so two runs of the same shape can
+              be told apart when one came from Wi-Fi and one from the wire. %>
+          <% if run.machine_known? %>
+            · from <%= run.machine_label %>
+          <% end %>
+          <% if run.peak_vus %>
+            · peak <%= run.peak_vus %> vus
+          <% end %>
+          <% if run.peak_cpu_pct %>
+            · cpu <%= run.peak_cpu_pct.round %>%
+          <% end %>
+          <% if run.started_at %>
+            · <%= run.started_at.strftime("%b %-d %H:%M") %>
+          <% end %>
+        </p>
+
+        <% narrative = RunNarrative.new(run) %>
+        <p class="muted"><%= narrative.headline %></p>
+      </li>
+    <% end %>
+  </ul>
+<% end %>

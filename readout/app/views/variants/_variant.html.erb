@@ -1,0 +1,117 @@
+<%# Which build of Campfire the next test will measure, and — while one is being
+    deployed — what that deployment is doing.
+
+    A switch is a build, a push, a redeploy and a health check, and the build
+    alone can take minutes. "Switching…" on its own leaves you unable to tell
+    working from hung, so this reports the step the runner is on, how long it
+    has been going, and says plainly when it has landed.
+
+    Separate from the launch form on purpose: a switch restarts the application
+    under test, so it begins with an empty page cache. Switch, throw away a
+    warm-up run, then start the run you mean to keep. %>
+
+<% current = data["current"] || {} %>
+<% state = data["state"] || {} %>
+<% switching = state["state"] == "switching" %>
+<% variants = data["variants"] || [] %>
+<% started_at = Time.parse(state["started_at"]) if state["started_at"].present? %>
+<% finished_at = Time.parse(state["finished_at"]) if state["finished_at"].present? %>
+
+<%# A confirmation is worth showing while it is news. Left up for good it would
+    become furniture, and a page that always says "switched to tuned" says
+    nothing about whether this switch worked. %>
+<% just_landed = finished_at.present? && finished_at > 2.minutes.ago %>
+
+<%= turbo_frame_tag "server-variant" do %>
+  <div data-controller="poll" data-poll-active-value="<%= switching %>" data-poll-interval-value="2000"
+       data-poll-url-value="<%= variant_path %>">
+    <section class="verdict measure">
+      <% if switching %>
+        <strong>Switching the server to <%= state["target"] %>…</strong>
+
+        <p class="meta" style="margin: 0.35rem 0 0 0">
+          <% if state["step"].present? %>
+            <%= state["step"] %>
+          <% else %>
+            starting…
+          <% end %>
+          <% if started_at %>
+            · <%= distance_of_time_in_words(started_at, Time.current, include_seconds: true) %> so far
+          <% end %>
+        </p>
+
+        <p class="meta" style="margin: 0.35rem 0 0 0">
+          Tests cannot be started until this finishes. A change of settings alone
+          takes seconds; a new image takes a few minutes to build.
+        </p>
+
+      <% elsif current["variant"].blank? %>
+        <strong>The deployed server could not be read.</strong>
+        <p class="meta">
+          <%= data["current_error"].presence || "The machine under test did not answer." %>
+        </p>
+
+      <% else %>
+        <% if just_landed && state["state"] != "failed" %>
+          <p style="margin: 0 0 0.5rem 0">
+            <strong>Switched to <%= state["target"] %>.</strong>
+            <span class="meta">
+              took <%= distance_of_time_in_words(started_at, finished_at, include_seconds: true) if started_at %> ·
+              the app restarted, so take a warm-up run before the one you keep
+            </span>
+          </p>
+        <% end %>
+
+        <p style="margin: 0 0 0.25rem 0">
+          <span class="meta">Server under test</span><br>
+          <strong><%= current["variant"] %></strong>
+          <% if current["variant"] == "unknown" %>
+            <span class="figure--bad">— the running image does not match what was deployed from here</span>
+          <% end %>
+        </p>
+
+        <% described = variants.find { |v| v["name"] == current["variant"] } %>
+        <% if described %>
+          <p class="meta" style="margin: 0"><%= described["description"] %></p>
+        <% end %>
+
+        <p class="meta" style="margin: 0.5rem 0 0 0">
+          <code><%= current["image"] %></code>
+          <% if current["env"].present? %>
+            <br><code><%= current["env"] %></code>
+          <% end %>
+        </p>
+      <% end %>
+
+      <% if state["state"] == "failed" %>
+        <p class="finding-body figure--bad" style="margin-top: 0.75rem">
+          Switching to <%= state["target"] %> failed<%= " after #{distance_of_time_in_words(started_at, finished_at, include_seconds: true)}" if started_at && finished_at %>:
+          <%= state["error"] %>
+        </p>
+      <% end %>
+
+      <% if error.present? %>
+        <p class="finding-body figure--bad" style="margin-top: 0.75rem"><%= error %></p>
+      <% end %>
+
+      <% unless switching %>
+        <div class="actions" style="margin-top: 0.75rem">
+          <% variants.reject { |v| v["name"] == current["variant"] }.each do |variant| %>
+            <%= button_to "Switch to #{variant['name']}",
+                  switch_variant_path(variant["name"]),
+                  class: "button button--secondary",
+                  form: { data: { turbo_confirm: "Switch the server to #{variant['name']}? This restarts Campfire, so the next run starts with a cold cache — take a warm-up run before the one you keep." } } %>
+          <% end %>
+        </div>
+
+        <% if variants.any? %>
+          <p class="meta" style="margin-top: 0.5rem">
+            <% variants.reject { |v| v["name"] == current["variant"] }.each do |variant| %>
+              <strong><%= variant["name"] %></strong> — <%= variant["description"] %><br>
+            <% end %>
+          </p>
+        <% end %>
+      <% end %>
+    </section>
+  </div>
+<% end %>

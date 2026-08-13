@@ -1,0 +1,135 @@
+<% content_for :title, "Readout — compare #{@previous.stamp} vs #{@newest.stamp}" %>
+
+<%= link_to "← All runs", runs_path, class: "back-link" %>
+
+<header class="page-header">
+  <h1>Compare last two</h1>
+  <p class="meta"><%= @previous.stamp %> → <%= @newest.stamp %></p>
+</header>
+
+<p class="finding-body measure muted">
+  The two most recent runs, newest on the right. Timings are <code>p95</code> in seconds — lower is better.
+  Dashes mean not measured. Delta is newest minus previous.
+</p>
+
+<h2>Overview</h2>
+
+<table class="compare-table">
+  <thead>
+    <tr>
+      <th></th>
+      <th>
+        <%= link_to @previous.stamp, run_path(@previous), class: "run-title" %><br>
+        <span class="meta"><%= @previous.scenario.to_s.sub("scenarios/", "").presence || "unknown" %> · <%= @previous.started_at&.strftime("%b %-d %H:%M") %></span>
+      </th>
+      <th>
+        <%= link_to @newest.stamp, run_path(@newest), class: "run-title" %><br>
+        <span class="meta"><%= @newest.scenario.to_s.sub("scenarios/", "").presence || "unknown" %> · <%= @newest.started_at&.strftime("%b %-d %H:%M") %></span>
+      </th>
+      <th class="meta">delta</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th class="meta">Scenario</th>
+      <td><%= @previous.scenario.to_s.sub("scenarios/", "") %></td>
+      <td><%= @newest.scenario.to_s.sub("scenarios/", "") %></td>
+      <td></td>
+    </tr>
+    <tr>
+      <th class="meta">Settings</th>
+      <td>
+        <% @previous.settings.each do |k, v| %><span class="meta"><%= lever_label(k) %>:</span> <%= v %><br><% end %>
+        <% if @previous.settings.empty? %><span class="meta">defaults</span><% end %>
+      </td>
+      <td>
+        <% @newest.settings.each do |k, v| %><span class="meta"><%= lever_label(k) %>:</span> <%= v %><br><% end %>
+        <% if @newest.settings.empty? %><span class="meta">defaults</span><% end %>
+      </td>
+      <td></td>
+    </tr>
+    <tr>
+      <th class="meta">Total requests</th>
+      <td><%= request_count_figure(@previous.total_requests) %></td>
+      <td><%= request_count_figure(@newest.total_requests) %></td>
+      <td class="meta">
+        <% if @previous.total_requests && @newest.total_requests %>
+          <%= @newest.total_requests - @previous.total_requests > 0 ? "+" : "" %><%= number_with_delimiter(@newest.total_requests - @previous.total_requests) %>
+        <% else %>—<% end %>
+      </td>
+    </tr>
+    <tr>
+      <th class="meta">Never answered</th>
+      <td><%= unanswered_figure(@previous.unanswered_requests, @previous.unanswered_share) %></td>
+      <td><%= unanswered_figure(@newest.unanswered_requests, @newest.unanswered_share) %></td>
+      <td></td>
+    </tr>
+    <tr>
+      <th class="meta">Peak CPU</th>
+      <td><%= effort_figure(@previous.peak_cpu_pct) %> <span class="meta">(<%= @previous.peak_cpu_pct&.round %>%)</span></td>
+      <td><%= effort_figure(@newest.peak_cpu_pct) %> <span class="meta">(<%= @newest.peak_cpu_pct&.round %>%)</span></td>
+      <td class="meta">
+        <% if @previous.peak_cpu_pct && @newest.peak_cpu_pct %>
+          <%= (@newest.peak_cpu_pct - @previous.peak_cpu_pct).round > 0 ? "+" : "" %><%= (@newest.peak_cpu_pct - @previous.peak_cpu_pct).round %>%
+        <% else %>—<% end %>
+      </td>
+    </tr>
+    <tr>
+      <th class="meta">Peak WAL</th>
+      <td><%= bytes_in_mb(@previous.peak_wal_bytes) %></td>
+      <td><%= bytes_in_mb(@newest.peak_wal_bytes) %></td>
+      <td class="meta">
+        <% if @previous.peak_wal_bytes && @newest.peak_wal_bytes %>
+          <%= (@newest.peak_wal_bytes - @previous.peak_wal_bytes) > 0 ? "+" : "" %><%= bytes_in_mb((@newest.peak_wal_bytes - @previous.peak_wal_bytes).abs).sub(" MB","") %> MB
+        <% else %>—<% end %>
+      </td>
+    </tr>
+    <tr>
+      <th class="meta">Broadcasts</th>
+      <td><%= request_count_figure(@previous.total_broadcasts) %></td>
+      <td><%= request_count_figure(@newest.total_broadcasts) %></td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Timings by load (p95, seconds)</h2>
+
+<% all_vus = (@previous.level_stats.map(&:vus) + @newest.level_stats.map(&:vus)).uniq.sort %>
+<table class="compare-table">
+  <thead>
+    <tr>
+      <th class="meta">people at once</th>
+      <% all_vus.each do |v| %><th class="meta"><%= v %></th><% end %>
+    </tr>
+  </thead>
+  <tbody>
+    <% ["room_open_p95", "post_message_p95", "fanout_p95", "history_p95"].each do |col| %>
+      <% label = LevelStat::LATENCY_COLUMNS.find { |c,_| c.to_s == col }&.last || col %>
+      <tr>
+        <th class="meta"><%= @previous.stamp %> — <%= label %></th>
+        <% all_vus.each do |v| %>
+          <% stat = @previous.level_stats.find { |s| s.vus == v } %>
+          <td><%= seconds_figure(stat&.public_send(col)) %></td>
+        <% end %>
+      </tr>
+      <tr>
+        <th class="meta"><%= @newest.stamp %> — <%= label %></th>
+        <% all_vus.each do |v| %>
+          <% stat = @newest.level_stats.find { |s| s.vus == v } %>
+          <td><%= seconds_figure(stat&.public_send(col)) %></td>
+        <% end %>
+      </tr>
+    <% end %>
+  </tbody>
+</table>
+
+<p class="finding-body measure muted">
+  Degraded timings are tinted — the same thresholds the single-run view uses.
+  Compare <code>fan-out</code> and <code>post msg</code> at the same <em>people at once</em> to see the hypothesis: batching the <code>unread_at</code> update and coalescing the per-member broadcast should lower those two without moving the hardware.
+</p>
+
+<div style="margin-top: 2rem">
+  <%= link_to "View #{@previous.stamp}", run_path(@previous), class: "button button--secondary" %>
+  <%= link_to "View #{@newest.stamp}", run_path(@newest), class: "button button--secondary" %>
+</div>

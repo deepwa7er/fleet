@@ -1,0 +1,12 @@
+<%# The request totals while a run is still in flight.
+
+    The same section a finished run shows, wrapped in a frame that refreshes
+    because these numbers climb. It stops refreshing when the run does: after
+    that they are final, and the imported page shows the same figures recomputed
+    from the same file. %>
+<%= turbo_frame_tag "run-requests" do %>
+  <div data-controller="poll" data-poll-active-value="<%= active %>"
+       data-poll-url-value="<%= requests_run_path(stamp) %>">
+    <%= render "runs/requests", received: received, unanswered: unanswered, share: share %>
+  </div>
+<% end %>

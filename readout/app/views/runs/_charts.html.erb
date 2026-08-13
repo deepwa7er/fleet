@@ -1,0 +1,36 @@
+<%# The charts, and the reasons there might not be any yet.
+
+    Wrapped in a frame for a live run because which of these three it is
+    CHANGES while the page is open: a run that is building its company has no
+    series to draw, and a few seconds later it does. Deciding that once, when
+    the page was rendered, meant the note stayed put and the charts only ever
+    appeared on a refresh.
+
+    The frame stops polling the moment there is something to draw, so the
+    canvases are swapped in once rather than rebuilt every couple of seconds —
+    which is what would make them flicker. %>
+<%= turbo_frame_tag "run-charts" do %>
+  <div data-controller="poll"
+       data-poll-active-value="<%= seeding %>"
+       data-poll-interval-value="2000"
+       data-poll-url-value="<%= charts_run_path(stamp) %>">
+    <% if seeding %>
+      <p class="finding-body measure muted">
+        The charts appear once the load test starts. Its company is being built
+        first — see below.
+      </p>
+    <% elsif live || stored %>
+      <%= render "shared/coping_charts",
+            progress_url: progress_run_path(stamp, format: :json),
+            live: live %>
+    <% else %>
+      <p class="finding-body measure muted">
+        <strong>No delivery charts for this run.</strong> They are computed from k6's
+        sub-second output on the machine that generated the load, and this run was
+        imported before that payload was being saved. Run
+        <code>bin/runner --rebuild-progress</code> there and publish again to fill
+        them in.
+      </p>
+    <% end %>
+  </div>
+<% end %>

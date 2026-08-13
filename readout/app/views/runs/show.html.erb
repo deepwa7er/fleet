@@ -1,0 +1,146 @@
+<%# One page for a run, whether it is happening or happened.
+
+    A run in flight and the same run afterwards used to be two pages at two
+    addresses, reached different ways and behaving differently. They are one
+    thing. What differs is only how far along the run is:
+
+      in flight  — @live is the runner's record; the charts poll it, and the
+                   status frame carries the state and the stop button.
+      imported   — @run is the row; the charts read the payload stored with it,
+                   and the request figures only a finished run can offer appear
+                   underneath.
+
+    The window between the two — finished, still publishing — has @live and no
+    @run, and says so rather than pretending to be either. %>
+
+<% live = @live.present? %>
+<% stamp = @run&.stamp || @live["id"] %>
+
+<% if live %>
+  <%# A page that is still filling must not be restored from the back-forward
+      cache as a stale snapshot. %>
+  <% content_for :head do %>
+    <meta name="turbo-cache-control" content="no-preview">
+  <% end %>
+<% end %>
+
+<% content_for :title, "Readout — #{stamp}" %>
+
+<%= link_to "← All runs", runs_path, class: "back-link" %>
+
+<header class="page-header">
+  <h1><%= stamp %></h1>
+</header>
+
+<p class="meta">
+  <% if live %>
+    <%= @live["scenario"] %>
+    <% if @live["note"].present? %> · <%= @live["note"] %><% end %>
+  <% else %>
+    <%= @run.scenario.to_s.sub("scenarios/", "").presence || "unknown scenario" %>
+    · <%= @run.variant_label %>
+  <% end %>
+  <%# Which box generated the load. Stated on every run because it changes how
+      the numbers read: the desktop is wired to the target's own LAN, while the
+      Mac is on Wi-Fi where a ~400KB room page can saturate the link before the
+      application does. Runs from before this was recorded say so rather than
+      being attributed to whichever machine seems likely. %>
+  · <%= @machine ? "generated from #{@machine}" : "generator not recorded" %>
+</p>
+
+<h2>Settings</h2>
+
+<%= render "shared/settings", settings: live ? @live["levers"].to_h : @run.settings %>
+
+<%# The charts are the same three in both states, drawn by the same code from
+    the same shape of payload — polled from the runner while the run is in
+    flight, read from the row afterwards.
+
+    A live run gets them in a frame, because which of "no series yet", "here
+    they are" and "this run never recorded any" applies changes while the page
+    is open. A finished run cannot change, so it renders them directly and
+    fetches nothing extra. Both paths render the same partial. %>
+<% if live %>
+  <%= turbo_frame_tag "run-charts", src: charts_run_path(stamp), loading: :eager do %>
+    <p class="muted">Loading…</p>
+  <% end %>
+<% else %>
+  <%= render "runs/charts",
+        stamp: stamp, seeding: false, live: false, stored: @run.progress.present? %>
+<% end %>
+
+<%# The server under test, and how much of what was asked of it came back.
+
+    Both appear from the first second of a run rather than only once it has been
+    imported. The server is fixed for the whole run — the runner refuses to
+    switch it while a test is measuring — so it is rendered once. The request
+    totals climb as the run goes, so they sit in a frame that refreshes. %>
+<% if live %>
+  <%= render "runs/server",
+        variant: @live.dig("server", "variant"),
+        image: @live.dig("server", "server_image"),
+        settings: @live.dig("server", "server_env") %>
+
+  <%= turbo_frame_tag "run-requests", src: requests_run_path(stamp), loading: :eager do %>
+    <h2>Requests</h2>
+    <p class="muted">Counting…</p>
+  <% end %>
+<% else %>
+  <%= render "runs/server",
+        variant: @run.variant,
+        image: @run.server_image,
+        settings: @run.server_env %>
+
+  <%= render "runs/requests",
+        received: @run.total_requests,
+        unanswered: @run.unanswered_requests,
+        share: @run.unanswered_share %>
+
+  <%# Throughput against LOAD, which is a different chart from the one above and
+      only exists for a run that visited several levels: it is the curve across
+      them, and a run holding one population is a single dot. Cannot be drawn
+      live for the same reason — the levels are not known until the run is over.
+      See Run#load_curve?. %>
+  <% if @run.load_curve? %>
+    <h2>Requests per second, by load</h2>
+
+    <%= throughput_by_load_chart(@run) %>
+
+    <p class="finding-body measure muted">
+      <strong>People at once</strong> is how many simulated users were browsing
+      simultaneously. If the line stops rising as people are added, the server has
+      reached as much work as it can do.
+    </p>
+  <% elsif @run.progress %>
+    <%# Already drawn above, by the same chart a live run uses. %>
+  <% elsif (over_time = throughput_over_time_chart(@run)) %>
+    <%# Only for runs imported before the chart payload was saved. Everything
+        since draws the same canvas chart as a live run, from the same series. %>
+    <h2>Requests per second</h2>
+
+    <%= over_time %>
+
+    <p class="finding-body measure muted">
+      <strong>Requests per second</strong> is how many actions the server finished
+      each second. This run held one load level from start to finish, so it is
+      drawn against time rather than against people.
+      <% if (level = @run.level_stats.first) %>
+        It was measured at <strong><%= level.vus %></strong> people at once.
+      <% end %>
+    </p>
+  <% else %>
+    <h2>Requests per second</h2>
+
+    <p class="muted measure">
+      This run did not last long enough to record anything.
+    </p>
+  <% end %>
+<% end %>
+
+<% if live %>
+  <%# Status and the stop button only. Everything else that used to live on the
+      live page has been removed deliberately. %>
+  <%= turbo_frame_tag "run-status", src: status_run_path(stamp), loading: :eager do %>
+    <p class="muted">Loading…</p>
+  <% end %>
+<% end %>

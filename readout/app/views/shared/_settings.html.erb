@@ -1,0 +1,21 @@
+<%# What was asked for, in words rather than variable names.
+
+    Shared between the two run pages, whose settings reach them by different
+    routes — the runner reports a live run's levers, an imported one has them
+    from its run-config.txt — but which describe the same thing and must
+    therefore read the same way. %>
+
+<dl class="settings">
+  <% if settings.blank? %>
+    <div>
+      <dt>defaults</dt>
+      <dd>nothing overridden</dd>
+    </div>
+  <% end %>
+  <% settings.each do |key, value| %>
+    <div>
+      <dt><%= lever_label(key) %></dt>
+      <dd><%= value %></dd>
+    </div>
+  <% end %>
+</dl>
