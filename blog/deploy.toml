@@ -1,31 +1,30 @@
 # tugboat deploy manifest — deepwa7er fleet
 #   deploy:  tugboat deploy      (from this directory)
 #
-# blog is an EXTERNAL member: its repo lives outside the fleet monorepo, so
-# `tugboat fleet gen` cannot read this file in CI (same arrangement as readout
-# and lagoon).
+# blog is the public blog at blog.deepwa7er.com; admin on the tailnet via
+# breakwater at https://blog.intern.deepwa7er.net.
 #
-# IT IS ALSO THE FIRST PUBLICLY-REACHABLE SERVICE THE FLEET DEPLOYS, and that
-# makes it different from every other manifest here in one specific way: it does
-# NOT declare a breakwater route for its public name. The fleet's threat model
-# is that the tailnet is the security boundary and breakwater binds only the
-# Tailscale IP; giving breakwater a public listener would put that boundary in
-# front of `harness`, which is unauthenticated RCE. So the public edge is nginx
-# on the same VPS, terminating TLS for blog.deepwa7er.com with its own Certbot
-# certificate — the arrangement that already serves notes.deepwa7er.com and
-# music.deepwa7er.com.
+# It is the fleet's first publicly-reachable service, and that makes it
+# different from every other manifest in one way: it does NOT declare a
+# breakwater route for its public name. The fleet's threat model is that the
+# tailnet is the security boundary and breakwater binds only the Tailscale IP;
+# giving breakwater a public listener would put that boundary in front of
+# `harness`, which is unauthenticated RCE. So the public edge is nginx on the
+# same VPS, terminating TLS for blog.deepwa7er.com with its own Certbot
+# certificate — the arrangement already serving notes.deepwa7er.com. See
+# deploy/nginx-blog.conf.
 #
-# breakwater DOES carry one hand-written route for this app, for the ADMIN
+# breakwater DOES carry one GENERATED route for this app, for the ADMIN
 # hostname only (blog.intern.deepwa7er.net). That is an ordinary internal route
-# and changes nothing about breakwater's posture. See deploy/nginx-blog.conf and
-# deploy/breakwater-route.toml.
+# derived from `port` below (`tugboat fleet gen`) and changes nothing about
+# breakwater's posture.
 #
-# Containerised for the same reason as readout: the VPS ships Ruby 3.2.3 and
-# this app targets 3.4.8, so a native install would mean maintaining a second
-# Ruby on the host. What tugboat ships is the image as a tar, and the systemd
-# unit loads it on start — so the deploy is still one atomic artifact swap plus
-# a unit restart, and a failed health check still rolls back to the previous
-# image exactly like a binary would.
+# Containerised for the same reason as readout/notes/public_site: the VPS ships
+# Ruby 3.2.3 and this app targets 3.4.8, so a native install would mean
+# maintaining a second Ruby on the host. What tugboat ships is the image as a
+# tar, and the systemd unit loads it on start — so the deploy is still one
+# atomic artifact swap plus a unit restart, and a failed health check still
+# rolls back to the previous image exactly like a binary would.
 #
 # Infra provisioning (directory layout, master key, systemd unit) is
 # deploy/provision.sh — a one-time/on-change step, not run here.
@@ -37,8 +36,8 @@ host = "deepwa7er"
 # the public hostname and breakwater for the admin one. Which of the two an
 # incoming request came through is decided by the Host header it carries, which
 # is what the app's routing constraint reads (see config/application.rb).
-#
-# 8101 is readout's; this is the next one.
+# Route for blog.intern.deepwa7er.net is GENERATED from this
+# (`tugboat fleet gen`); the public name is served by nginx, not breakwater.
 port = 8102
 
 [build]

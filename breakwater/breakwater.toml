@@ -63,6 +63,10 @@ cache_dir = "/var/lib/breakwater/acme"
 # live outside this block.
 
 [[routes]]
+label = "blog"
+upstream = "127.0.0.1:8102"
+
+[[routes]]
 label = "clothes"
 upstream = "127.0.0.1:8099"
 
@@ -131,33 +135,6 @@ upstream = "127.0.0.1:8092"
 [[routes]]
 label = "notes"
 upstream = "127.0.0.1:8105"
-
-# blog — the ADMIN half of the public blog at https://blog.deepwa7er.com.
-# External member (repo at ~/code/blog), so hand-written like lagoon's.
-#
-# READ THIS BEFORE CHANGING IT. This is the first route here that points at an
-# app the public internet can also reach, and the arrangement is deliberate:
-#
-#   internet ──▶ nginx :443 (own certbot cert)  ──┐
-#                                                 ├─▶ 127.0.0.1:8102
-#   tailnet  ──▶ breakwater (this route)       ──┘
-#
-# One Rails process, two front doors, separated by the Host header. The app
-# draws its /admin routes inside a constraint on `blog.intern.deepwa7er.net`,
-# so they do not exist for a request carrying any other host. breakwater
-# forwards the inbound Host verbatim, which is exactly what makes the admin
-# reachable here; the public nginx vhost pins Host to a literal, which is what
-# keeps it unreachable there.
-#
-# breakwater's own posture is UNCHANGED by this. It still binds only the
-# Tailscale IP and still serves only *.intern.deepwa7er.net — the public name is
-# nginx's business, not this file's. Giving breakwater a public listener is the
-# thing that would have been unsafe, because it fronts `harness`, which is
-# unauthenticated RCE; nothing here does that. Do not "simplify" this by moving
-# blog.deepwa7er.com onto breakwater.
-[[routes]]
-label = "blog"
-upstream = "127.0.0.1:8102"
 
 # The fleet documentation site (pilot) — process-less static files, so breakwater
 # serves the directory directly instead of proxying an upstream. `tugboat fleet
