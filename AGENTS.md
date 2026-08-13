@@ -11,7 +11,25 @@ Reference: [DW-001](docs/deepwater-style-guide.md) · [specimen](docs/deepwater-
 
 ## Workflow — one card = one branch = one PR
 
-For any fleet change, read `.agents/skills/fleet/SKILL.md` first. It covers: search first, create Fizzy triage card (`cargo run -p fizzy -- create --board Playground --dedupe`), `git worktree` isolation in `~/code/.drydock/<slug>` (never `main`), `cargo test` / `cargo clippy -- -D warnings` / `cargo build`, `git push -u origin fleet/<card#>-<slug>` + `gh pr create` linking the Fizzy card, then stop — human merges, `tugboat` ships `origin/main`. Drydock autonomous worker archived 2026-08-13 — see `drydock.ARCHIVED.md` + tag `archive/drydock-2026-08-13`.
+For any fleet change, read `.agents/skills/fleet/SKILL.md` first. It covers: search first, create a Fizzy triage card (`cargo run -p fizzy -- create --board Playground --dedupe`), `git worktree` isolation in `.worktrees/<slug>` inside this repo (never `main`), the gates below, `git push -u origin fleet/<card#>-<slug>` + `gh pr create` linking the Fizzy card, then stop — human merges, `tugboat` ships `origin/main`.
+
+Gates before every PR. CI was archived 2026-08-13, so these are the *only* enforcement — nothing checks `origin/main` after you push:
+
+```bash
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+TUGBOAT_FLEET=$PWD/fleet.toml cargo run -q -p tugboat -- fleet gen --check
+```
+
+`fleet gen --check` verifies the generated registries (`breakwater/breakwater.toml`, `fleet-backup/state.sh`) still match each service's `deploy.toml`. Also `bun run build` in `<app>/web` for any web app touched — nothing else typechecks it.
+
+Skills live in `.agents/skills/<name>/SKILL.md`:
+
+- `fleet` — the workflow above, card → branch → PR → human merges
+- `fizzy` — the Fizzy card CLI: `cargo run -p fizzy -- boards | stream | show | create` (a workspace member, not a binary on `PATH`)
+- `pull-card` — shortcut: pull the most recent open card and summarize what closing it needs
+
+Archived, both 2026-08-13: the drydock autonomous worker (`drydock.ARCHIVED.md`, tag `archive/drydock-2026-08-13`) and CI (`ci.ARCHIVED.md`, tag `archive/ci-2026-08-13`). Nothing in this workflow writes to `~/code/.drydock`.
 
 ## Quality — NO HACKS (authoritative)
 
