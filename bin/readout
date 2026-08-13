@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+# Starts the Readout dashboard on this machine.
+#
+#   bin/readout                 prepare the database, import results, serve
+#   bin/readout --no-import     serve without importing (use during a load run)
+#   bin/readout --import-only   import and exit, without starting a server
+#   bin/readout -p 3123         serve on a different port (default 3001)
+#   bin/readout --open          open a browser once the server is up
+#
+# Ruby is resolved through mise explicitly rather than relying on the shell
+# hook, so this works from a bare shell, a cron job, or an editor's task runner
+# where `mise activate` has never run.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+PORT=3001
+IMPORT=true
+SERVE=true
+OPEN_BROWSER=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-import)   IMPORT=false; shift ;;
+    --import-only) SERVE=false; shift ;;
+    --open)        OPEN_BROWSER=true; shift ;;
+    -p|--port)     PORT="${2:?--port needs a value}"; shift 2 ;;
+    # Prints the header comment, stopping at the first line that is not one --
+    # a fixed line range drifts out of date the moment the header is edited.
+    -h|--help)     awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; exit 0 ;;
+    *)             echo "unknown option: $1 (try --help)" >&2; exit 1 ;;
+  esac
+done
+
+# Run everything through the project's pinned Ruby. Falling back to a bare
+# bin/rails would silently use whatever Ruby is globally active, which on this
+# machine is a different major version and fails in a confusing way.
+if command -v mise >/dev/null 2>&1; then
+  rails() { mise exec -- bin/rails "$@"; }
+else
+  echo "warning: mise not found; using whatever ruby is on PATH" >&2
+  rails() { bin/rails "$@"; }
+fi
+
+# Idempotent: creates the database and runs any pending migrations, and is a
+# no-op once both are already true.
+echo "==> preparing database"
+rails db:prepare
+
+if [ "$IMPORT" = true ]; then
+  RESULTS="${CAMPFIRE_STRESS_RESULTS:-$HOME/code/campfire-stress/results}"
+
+  if [ ! -d "$RESULTS" ]; then
+    echo "==> no results directory at $RESULTS — skipping import"
+  elif pgrep -x k6 >/dev/null 2>&1; then
+    # Parsing a 700k-line CSV is several seconds of hard CPU, and this machine
+    # is the load generator. Stealing cores from a run in progress shows up as
+    # latency that would be wrongly blamed on the application under test.
+    echo "==> k6 is running — skipping import so the run is not disturbed."
+    echo "    Re-run this once the load test finishes, or pass --no-import."
+  else
+    echo "==> importing runs from $RESULTS"
+    rails runner 'runs = Analysis::Importer.import_all(Rails.configuration.x.campfire_stress.results_root); puts "    imported #{runs.length} run(s); #{Run.count} total"'
+  fi
+fi
+
+if [ "$SERVE" = false ]; then
+  exit 0
+fi
+
+URL="http://localhost:${PORT}"
+echo "==> starting Readout on ${URL}"
+
+if [ "$OPEN_BROWSER" = true ]; then
+  # Wait for the port to answer before opening, so the browser does not land on
+  # a connection error.
+  ( for _ in $(seq 1 40); do
+      if curl -sf -o /dev/null "$URL" 2>/dev/null; then open "$URL"; exit 0; fi
+      sleep 0.5
+    done ) &
+fi
+
+# exec so Ctrl-C reaches Puma directly rather than this wrapper.
+exec mise exec -- bin/rails server -p "$PORT"

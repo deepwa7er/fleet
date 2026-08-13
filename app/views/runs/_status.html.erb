@@ -1,0 +1,94 @@
+<%# Deliberately minimal: how the run ended, and whether its results are safe.
+    The charts above carry the actual result.
+
+    Two things this has to get right, both of which it got wrong before:
+
+    a run that k6 ended because its thresholds were crossed is a RESULT, not a
+    broken run — it is often the most interesting run of the day — and
+
+    the results are saved automatically, so this must keep watching until they
+    land rather than offering to save them. Publishing starts a few seconds
+    after a run finishes, because the final chart payload is computed from k6's
+    whole output first, and a frame that stopped polling in that gap froze on
+    the moment before. %>
+
+<% publish_state = run["publish_state"].to_s %>
+<% awaiting_results = publish_state.in?(%w[ pending publishing ]) %>
+<% seeding = run["state"] == "seeding" %>
+
+<%= turbo_frame_tag "run-status" do %>
+  <div data-controller="poll"
+       data-poll-active-value="<%= run["state"].in?(%w[ running seeding ]) || awaiting_results %>"
+       data-poll-url-value="<%= status_run_path(run["id"]) %>">
+    <p class="meta">
+      <% if seeding %>
+        building a company of <%= number_with_delimiter(run["employees"]) %> employees
+        <% if run["step"].present? %> · <%= run["step"] %><% end %>
+      <% elsif run["state"] == "running" %>
+        running · started <%= time_ago_in_words(Time.parse(run["started_at"])) %> ago
+      <% elsif run["threshold_breach"] %>
+        finished · thresholds crossed
+      <% else %>
+        <%= run["state"] %>
+      <% end %>
+      <% if run["state"] != "running" && run["finished_at"].present? %>
+        · took <%= distance_of_time_in_words(Time.parse(run["started_at"]), Time.parse(run["finished_at"])) %>
+      <% end %>
+    </p>
+
+    <%# A company is built before the load test that measures it, when the one in
+        the database is a different size. It takes seconds rather than the
+        instant a reader might assume, and saying nothing would make the wait
+        look like a run that had started and produced nothing. %>
+    <% if seeding %>
+      <p class="finding-body measure muted">
+        Every employee in this company will be online during the run, so the
+        database is rebuilt to that size first: employees, their sessions, an
+        all-hands room containing all of them, and Pareto-distributed team
+        rooms. The load test starts by itself once that is done.
+      </p>
+    <% end %>
+
+    <% if run["threshold_breach"] %>
+      <p class="finding-body measure muted">
+        The run completed and every number above is good. k6 ended it reporting
+        that thresholds were crossed, which means the server was slower than the
+        limits the harness asks for — a finding about the server, not a fault in
+        the run. The latencies are in the report.
+      </p>
+    <% elsif run["state"] == "failed" %>
+      <p class="finding-body measure figure--bad">
+        The run did not complete: <%= run["error"] %>. Its results are likely
+        partial.
+      </p>
+    <% end %>
+
+    <% if publish_state == "failed" %>
+      <p class="muted measure figure--bad">Saving the results failed: <%= run["publish_error"] %></p>
+    <% end %>
+
+    <div class="actions">
+      <% if seeding %>
+        <%= button_to "Stop", cancel_run_path(run["id"]), class: "button button--danger" %>
+      <% elsif run["state"] == "running" %>
+        <%= button_to "Stop", cancel_run_path(run["id"]), class: "button button--danger" %>
+      <% else %>
+        <% if publish_state == "published" %>
+          <%# The results have landed, so this address now has the imported run
+              behind it: the request figures, the throughput chart, everything.
+              Offered as a link rather than reloading automatically — a page that
+              reloaded itself whenever the runner said "published" would loop
+              forever if the import ever failed to produce a row. %>
+          <%= link_to "Open the full report", run_path(run["id"]), class: "button" %>
+        <% elsif awaiting_results %>
+          <p class="muted">Saving the results…</p>
+        <% else %>
+          <%# Nothing is coming on its own: either the run was stopped, or this
+              runner has no publish command. Asking is the only way. %>
+          <%= button_to "Save the results", publish_run_path(run["id"]), class: "button" %>
+        <% end %>
+        <%= link_to "New test", new_test_run_path, class: "button button--secondary" %>
+      <% end %>
+    </div>
+  </div>
+<% end %>

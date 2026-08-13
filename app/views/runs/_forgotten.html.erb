@@ -1,0 +1,12 @@
+<%# The runner no longer has this run.
+
+    Its state lives in memory, so restarting the service forgets every run it
+    started. Nothing is lost — the results are on disk and the row is in this
+    database once published — but the live half of this page has nothing left to
+    report, and saying so beats a frame that fails to load. %>
+<%= turbo_frame_tag "run-status" do %>
+  <p class="muted">
+    The runner no longer has this run — it forgets them when it restarts.
+    <%= link_to "Reload", run_path(stamp) %> once the results have been saved.
+  </p>
+<% end %>

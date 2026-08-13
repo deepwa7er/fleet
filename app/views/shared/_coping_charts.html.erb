@@ -1,0 +1,78 @@
+<%# The two charts that say whether the server is coping, shared by the page for
+    a run in flight and the page for a finished one.
+
+    Shared as markup, not merely as a look: both pages point the same controller
+    at a payload of the same shape — live from the runner, or stored at import
+    for a run that is over — so there is one implementation of these charts and
+    they cannot drift apart again. That they had drifted is why this partial
+    exists: the same run looked like two different runs depending on which page
+    you arrived by.
+
+    Two charts rather than one, deliberately. They answer different questions and
+    have different units, and stacking both onto one set of axes made neither
+    readable. %>
+
+<h2>How long a message takes to arrive</h2>
+
+<div data-controller="coping-chart"
+     data-coping-chart-series-value="latency"
+     data-coping-chart-live-value="<%= live %>"
+     data-coping-chart-url-value="<%= progress_url %>">
+  <p class="meta" data-coping-chart-target="readout">—</p>
+  <div class="chart-frame">
+    <canvas data-coping-chart-target="canvas"></canvas>
+  </div>
+</div>
+
+<p class="finding-body measure muted">
+  Time between someone sending a message and it appearing on another person's
+  screen. <strong>This is the number that decides whether a room is usable</strong> —
+  a server can deliver almost every message and still be seconds behind.
+  <span style="color: var(--good); font-weight: 600">Green</span> is under a
+  second, which feels immediate;
+  <span style="color: var(--danger); font-weight: 600">red</span> is above it,
+  where the conversation stops feeling live.
+</p>
+
+<h2>Messages delivered per second</h2>
+
+<div data-controller="coping-chart"
+     data-coping-chart-live-value="<%= live %>"
+     data-coping-chart-url-value="<%= progress_url %>">
+  <p class="meta" data-coping-chart-target="readout">—</p>
+  <div class="chart-frame">
+    <canvas data-coping-chart-target="canvas"></canvas>
+  </div>
+  <p class="finding-body measure figure--bad"
+     data-coping-chart-target="warning" hidden></p>
+</div>
+
+<p class="finding-body measure muted">
+  The <strong>solid line</strong> is how many messages the server delivered each
+  second. The <strong>dashed line</strong> is how many it owed — every message
+  someone sent, times the number of people who had to receive it.
+  <span style="color: var(--good); font-weight: 600">Green</span> is keeping up,
+  <span style="color: var(--danger); font-weight: 600">red</span> is falling
+  behind. Sending one message to a room of 100 people is 100 deliveries, which is
+  why this climbs so steeply with room size.
+</p>
+
+<h2>Requests per second</h2>
+
+<div data-controller="coping-chart"
+     data-coping-chart-series-value="requests"
+     data-coping-chart-live-value="<%= live %>"
+     data-coping-chart-url-value="<%= progress_url %>">
+  <p class="meta" data-coping-chart-target="readout">—</p>
+  <div class="chart-frame">
+    <canvas data-coping-chart-target="canvas"></canvas>
+  </div>
+</div>
+
+<p class="finding-body measure muted">
+  How many actions the server finished each second — opening a room, loading
+  older messages, sending a message. No reference line, because nobody asked for
+  a particular number of them: unlike deliveries, which are owed the moment
+  somebody posts, this is simply how much work got done. A line that stops
+  rising while people keep arriving is the server reaching its ceiling.
+</p>

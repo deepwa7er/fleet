@@ -1,0 +1,176 @@
+<% content_for :title, "Readout — new load test" %>
+
+<%= link_to "← All runs", runs_path, class: "back-link" %>
+
+<header class="page-header">
+  <h1>New load test</h1>
+</header>
+
+<%# What the next run will measure. Above the form rather than in it: a run and
+    the server it runs against are separate decisions, and switching restarts
+    Campfire — which a launch must never do as a side effect. %>
+<%= turbo_frame_tag "server-variant", src: variant_path, loading: :eager do %>
+  <p class="muted">Reading the deployed server…</p>
+<% end %>
+
+<% if @active %>
+  <section class="verdict measure">
+    <strong>A load test is already running<%= " on #{@active_machine}" if @active_machine %>.</strong>
+    <p>
+      Only one runs at a time, on any machine. Every generator points at the
+      same Campfire, so a second run would measure the first as well as the
+      server.
+    </p>
+    <div class="actions">
+      <%= link_to "Watch it", run_path(@active["id"]), class: "button" %>
+      <%= button_to "Stop it", cancel_run_path(@active["id"]), class: "button button--danger" %>
+    </div>
+  </section>
+<% else %>
+  <%= form_with url: test_runs_path, method: :post do |form| %>
+    <%# Which machine generates the load.
+        Not cosmetic: the desktop is wired to the same LAN as the Campfire host,
+        while this Mac is on Wi-Fi, where a ~400KB room page can saturate the
+        link before the application saturates. The same test from the two boxes
+        can therefore give different answers, and the difference is the network
+        rather than the server. Only machines whose runner is answering appear —
+        a box that is asleep is simply not on the list. %>
+    <div class="measure">
+      <fieldset style="border: 0; padding: 0; margin: 0 0 1.25rem 0">
+        <legend style="font-weight: 600; margin-bottom: 0.5rem">Generate the load from</legend>
+        <% @machines.each do |presence| %>
+          <label style="display: flex; gap: 0.5rem; align-items: flex-start; margin-bottom: 0.75rem; cursor: pointer">
+            <%= radio_button_tag :machine, presence.runner.key, @machine == presence.runner.key,
+                                 id: "machine_#{presence.runner.key}" %>
+            <span>
+              <strong><%= presence.runner.name %></strong>
+              <br><span class="meta"><%= presence.runner.url %></span>
+            </span>
+          </label>
+        <% end %>
+        <% if @machines.one? %>
+          <p class="meta">
+            The only machine answering right now. Others appear here when their
+            runner is up.
+          </p>
+        <% end %>
+      </fieldset>
+    </div>
+
+    <div class="measure">
+      <fieldset style="border: 0; padding: 0; margin: 0 0 1.25rem 0">
+        <legend style="font-weight: 600; margin-bottom: 0.5rem">Scenario</legend>
+        <label style="display: flex; gap: 0.5rem; align-items: flex-start; margin-bottom: 0.75rem; cursor: pointer">
+          <%= radio_button_tag :scenario, "chat", @scenario == "chat", id: "scenario_chat" %>
+          <span>
+            <strong>Hot room</strong> — one huge room
+            <br><span class="meta">Everyone joins the same 10,000-member room and chats. Delivery cost grows with the square of PEOPLE, so this finds the worst-case fan-out ceiling.</span>
+          </span>
+        </label>
+        <label style="display: flex; gap: 0.5rem; align-items: flex-start; cursor: pointer">
+          <%= radio_button_tag :scenario, "enterprise", @scenario == "enterprise", id: "scenario_enterprise" %>
+          <span>
+            <strong>Enterprise</strong> — whole company spread
+            <br><span class="meta">Employees spread across many rooms with a power-law distribution (median 4–6, p95 150–250). Requires POWER_LAW=1 seeding. Measures what a company floor costs on one box.</span>
+          </span>
+        </label>
+      </fieldset>
+    </div>
+
+    <div class="measure" id="field-chat" style="<%= @scenario == "enterprise" ? "display:none" : "" %>">
+      <%= label_tag :people, "People in the chat" %>
+      <%= number_field_tag :people, @people, min: 1, max: 2000, autocomplete: "off" %>
+      <p class="meta">how many are in the single hot room at the same time</p>
+    </div>
+
+    <div class="measure" id="field-enterprise" style="<%= @scenario == "chat" ? "display:none" : "" %>">
+      <%= label_tag :vus, "Company size" %>
+      <%= number_field_tag :vus, @vus, min: 1, max: 2000, autocomplete: "off" %>
+      <p class="meta">
+        the whole company, all of them online. The database is rebuilt to this
+        size before the run if it is not already: employees, sessions, an
+        all-hands room containing everyone, and Pareto team rooms. A few
+        seconds for a few hundred.
+      </p>
+    </div>
+
+    <p class="finding-body measure muted" id="desc-chat" style="<%= @scenario == "enterprise" ? "display:none" : "" %>">
+      Everyone joins at once over about
+      <%= TestRunsController::JOIN_SECONDS %> seconds, then the room chats at a
+      flat rate for <%= TestRunsController::CHAT_SECONDS %> seconds —
+      <%= TestRunsController::JOIN_SECONDS + TestRunsController::CHAT_SECONDS %>
+      seconds in total. There is no ramp: everyone is present for the whole
+      measured window, so the run tells you what a room of this size costs
+      rather than averaging across every size on the way up.
+    </p>
+
+    <p class="finding-body measure muted" id="desc-enterprise" style="<%= @scenario == "chat" ? "display:none" : "" %>">
+      Employees are spread across Pareto-distributed rooms seeded by
+      <code>POWER_LAW=1 ROOM_COUNT=300 bin/seed-rooms.sh</code>. Each holds a
+      live connection and chats at the same rate, but a write fans out to only
+      the members of its room (5–50 rows, not 10,000). The dashboard still shows
+      <code>p95</code> delivery and <code>WAL</code> size alongside the trace —
+      under spread the WAL should stay small if SQLite is no longer the ceiling.
+    </p>
+
+    <p class="finding-body measure muted" id="desc-enterprise-shape" style="<%= @scenario == "chat" ? "display:none" : "" %>">
+      Unlike the hot-room test, this one ramps: employees arrive over
+      <%= TestRunsController::ENTERPRISE_RAMP_UP_SECONDS %> seconds, stay for
+      <%= TestRunsController::ENTERPRISE_HOLD_SECONDS / 60 %> minutes, then leave
+      over <%= TestRunsController::ENTERPRISE_RAMP_DOWN_SECONDS %> seconds —
+      about
+      <%= number_with_precision(
+            (TestRunsController::ENTERPRISE_RAMP_UP_SECONDS +
+             TestRunsController::ENTERPRISE_HOLD_SECONDS +
+             TestRunsController::ENTERPRISE_RAMP_DOWN_SECONDS) / 60.0,
+            precision: 1
+          ) %>
+      minutes in total. Only the hold is measured as a level; the ramps are
+      transition.
+    </p>
+
+    <p class="finding-body measure muted" id="desc-chat-detail" style="<%= @scenario == "enterprise" ? "display:none" : "" %>">
+      Everyone joins the same room, holds a live connection, and posts a message
+      about every <%= TestRunsController::MESSAGE_INTERVAL_SECONDS %> seconds.
+      Every message has to be delivered to everyone else present — so the work
+      grows with the <em>square</em> of this number, which is what makes a chat
+      server expensive.
+    </p>
+
+    <div class="measure" style="margin-top: 1.5rem">
+      <%= label_tag :note, "Note (optional)" %>
+      <%= text_field_tag :note, nil, placeholder: "what this run is testing" %>
+    </div>
+
+    <div class="actions">
+      <%= form.submit "Start test", class: "button" %>
+      <%= link_to "Cancel", runs_path, class: "back-link" %>
+    </div>
+  <% end %>
+
+  <script>
+    (function() {
+      var chat = document.getElementById("scenario_chat");
+      var enterprise = document.getElementById("scenario_enterprise");
+      var fieldChat = document.getElementById("field-chat");
+      var fieldEnterprise = document.getElementById("field-enterprise");
+      var descChat = document.getElementById("desc-chat");
+      var descChatDetail = document.getElementById("desc-chat-detail");
+      var descEnterprise = document.getElementById("desc-enterprise");
+      var descEnterpriseShape = document.getElementById("desc-enterprise-shape");
+      function sync() {
+        var isEnterprise = enterprise.checked;
+        fieldChat.style.display = isEnterprise ? "none" : "";
+        descChat.style.display = isEnterprise ? "none" : "";
+        descChatDetail.style.display = isEnterprise ? "none" : "";
+        fieldEnterprise.style.display = isEnterprise ? "" : "none";
+        descEnterprise.style.display = isEnterprise ? "" : "none";
+        descEnterpriseShape.style.display = isEnterprise ? "" : "none";
+      }
+      if (chat && enterprise) {
+        chat.addEventListener("change", sync);
+        enterprise.addEventListener("change", sync);
+      }
+    })();
+  </script>
+<% end %>
