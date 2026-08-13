@@ -28,13 +28,17 @@ cargo run -p fizzy -- create --board Playground --title "fleet: <area> — <what
 
 Never work in the shared checkout. Never commit to `main`.
 
+Worktrees live in `.worktrees/<slug>` inside this repo (gitignored). Fizzy and
+drydock are unrelated systems — nothing in this workflow writes to
+`~/code/.drydock`, which the archived worker owned.
+
 ```bash
 cd ~/code/fleet && git fetch origin
 # fresh card:
-git worktree add ~/code/.drydock/<slug> -b fleet/<card#>-<slug> origin/main
+git worktree add .worktrees/<slug> -b fleet/<card#>-<slug> origin/main
 # resumed card (branch already on origin):
-git worktree add ~/code/.drydock/<slug> fleet/<card#>-<slug>
-cd ~/code/.drydock/<slug>   # or ~/code/fleet/<service>/ inside it
+git worktree add .worktrees/<slug> fleet/<card#>-<slug>
+cd .worktrees/<slug>   # or <service>/ inside it
 ```
 
 > Archived: Drydock `ticket/<id>-<slug>` workflow removed 2026-08-13 — see `drydock.ARCHIVED.md` + tag `archive/drydock-2026-08-13` for the autonomous worker docs.
@@ -60,7 +64,7 @@ Fizzy: https://fizzy.intern.deepwa7er.net/1/cards/<card>"
 ```
 
 - One PR per card. Link the Fizzy URL in the PR body.
-- Clean up the worktree after push (branch is safe on origin): `git worktree remove --force ~/code/.drydock/<slug>`
+- Clean up the worktree after push (branch is safe on origin): `git worktree remove --force .worktrees/<slug>`
 
 ## 5. Wait — human gates
 
