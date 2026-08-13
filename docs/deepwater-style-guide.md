@@ -23,7 +23,7 @@ three separate apps looking like one hand made them.
 Rev A adds five Gothic elements to the composite — §11. They were prototyped
 on a living specimen (`deepwater-style-guide.html`), and the ones that survived
 contact with rules 1–8 are now part of the system; the ones that did not are
-rejected, with reasons, in §11. Every element names the rule it extends.
+rejected, with reasons, in the [appendix](deepwater-style-guide-appendix.md#rejected-gothic-ideas). Every element names the rule it extends.
 
 **Relationship to DG-001 / DG-002.** Retired and archived: the U.S. Graphics
 design guide (DG-001) and TRITIUM (DG-002) now live at
@@ -447,53 +447,15 @@ The style has survived three apps because extensions are made one way:
 
 ## 9. KNOWN DIVERGENCES
 
-The three apps have drifted. Recorded honestly so the next person to touch them
-can converge rather than pick one at random.
+The three original Rails apps plus newer surfaces have drifted (container measure, `--good`/`--success`, `--mono`, `prefers-reduced-motion`, heading scale). Converge per §8 when touching — the single Cargo workspace does not by itself converge the stylesheets.
 
-| | notes | agent-harness | readout |
-| --- | --- | --- | --- |
-| `.container` max-width | `40rem` | `46rem` | `64rem` + `.measure` |
-| "good" token | — | `--success` `#15803d`/`#4ade80` | `--good` `#2f6f3e`/`#5cb974` |
-| `--mono` token | — | yes | inlined |
-| `prefers-reduced-motion` | no | yes | no |
-| Heading scale | `h1` only | `h1` + `.section-heading` (`1.1rem`/500) | `h1` + `h2` (`1.35rem`/600) |
-
-To converge: pick one name and one pair of values for the positive color;
-define `--mono` everywhere; add the reduced-motion block to notes and readout;
-and treat 40rem as the prose measure with per-app container widths justified in
-a comment.
-
-The Gothic composite (§11) has now shipped in two apps beyond the specimen
-pages: the public_site (G1, G5, G11 on the home page; G10 on the 404) and the
-blog (the same, with G5/G11 carried onto each post's title — the post title is
-the incipit of its page, so a post title is set in Fraktur). Fraktur on a title
-is the one accepted strain on G11: it holds because a title is display text,
-not prose, and the `26rem` measure bounds the run. Within the original three
-apps the composite is still not carried; carry it into one of them per §8 and
-record the divergence here.
+The full pre-monorepo table and the Gothic shipping notes at extraction are preserved in the [appendix](deepwater-style-guide-appendix.md#known-divergences-pre-monorepo) (snapshot `3169da3`).
 
 ---
 
 ## 10. PRE-SHIP CHECKLIST
 
-```
-[ ] Zero borders and dividers between content. Is every separation a gap?
-[ ] Does anything but a button or a field have a shadow or an outline?
-[ ] Is the accent used anywhere that is not interactive?
-[ ] Do the shadow offset and the :active translate match?
-[ ] Are all stacked numbers tabular? Are units in the column header?
-[ ] Is every uppercase letterspaced run actually metadata, not prose?
-[ ] Is prose inside a 40rem measure?
-[ ] Does any wide element scroll the page sideways instead of itself?
-[ ] Does every color come from a token — no literal hex outside :root?
-[ ] Is dark mode cool and light mode warm — no brown, no neutral gray?
-[ ] Does every new class name the rule it extends?
-[ ] Do transitions honor prefers-reduced-motion?
-[ ] Is the page's vertical rhythm a nave — tall voids, never filled?
-[ ] If a page uses an aisle, does only instrumentation run in it?
-[ ] Is there at most one ornament — one initial, one gargoyle — per page?
-[ ] Is blackletter used on the masthead only?
-```
+See [`pre-ship-checklist.md`](pre-ship-checklist.md) — the 16-item checklist extracted from this section so the spec stays scannable. Check it before shipping any UI.
 
 ---
 
@@ -515,21 +477,12 @@ verticality, structure, and *one* sacred thing per page.
 
 Each lives where it belongs: G1 and G2 in §4, G5 and G10 in §7, G11 in §3.
 
-**Tested and rejected**, with the reason recorded so nobody re-tries them:
-
-| Idea | Why not |
-| --- | --- |
-| G3 | The vault of the document — pure metaphor, no behavior |
-| G4 | The pointed arch — a second geometry strained the depth rule; the verdict was already the altar |
-| G6 | The quatrefoil divider — clutter; the pure void is stronger |
-| G7 | Chartres blue framing + `--stone` — the framing changed nothing; the stone broke "one surface" |
-| G8 | Stone grain — the flat-paper rule |
-| G9 | Rubrication — rule 4: color means something, or it means nothing |
+**Tested and rejected** — six ideas were tried and rejected; see the [appendix](deepwater-style-guide-appendix.md#rejected-gothic-ideas) for the table and reasons so nobody re-tries them. The fleet-wide `taste` skill also covers the negative filter.
 
 **Compounding.** Extensions may delegate responsibility to one another, and the
 record must say so. The 6rem section gap was introduced as an h2 margin under
 G1, then carried by a divider element under G6, then returned to the h2 margin
-when G6 was rejected. A later editor reading the stylesheet sees only the
+when G6 was rejected (see [appendix](deepwater-style-guide-appendix.md#rejected-gothic-ideas)). A later editor reading the stylesheet sees only the
 margin; this note is why it exists.
 
 **Specimens.** `deepwater-style-guide.html` (G1, G2, G5, G11) and
