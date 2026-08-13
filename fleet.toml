@@ -77,11 +77,6 @@ label = "Global CLAUDE.md"
 path = "~/.claude/CLAUDE.md"
 
 [[docs.guidance]]
-category = "Worker prompt"
-label = "Drydock worker-task"
-path = "drydock/docs/worker-task.md"
-
-[[docs.guidance]]
 category = "Skills"
 path = "~/.claude/skills"
 

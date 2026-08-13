@@ -5,7 +5,7 @@ description: End-to-end workflow for making changes to the fleet monorepo — Fi
 
 # Fleet — monorepo change workflow
 
-Use when making **any** change to `fleet` (code, docs, style, config). This is the interactive counterpart to `drydock/docs/worker-task.md` (the autonomous Drydock worker). One card = one branch = one PR. Never merge or deploy — the human merges; `tugboat` ships `origin/main`.
+Use when making **any** change to `fleet` (code, docs, style, config). One card = one branch = one PR. Never merge or deploy — the human merges; `tugboat` ships `origin/main`. (Drydock was the autonomous worker; archived 2026-08-13 at `drydock.ARCHIVED.md` — tag `archive/drydock-2026-08-13`)
 
 ## 0. Orient (every run)
 
@@ -37,13 +37,13 @@ git worktree add ~/code/.drydock/<slug> fleet/<card#>-<slug>
 cd ~/code/.drydock/<slug>   # or ~/code/fleet/<service>/ inside it
 ```
 
-Drydock tickets use `ticket/<id>-<slug>` instead of `fleet/<card#>-<slug>` — same isolation, same prohibition on touching the shared tree. Read the target service's `README.md` before coding.
+> Archived: Drydock `ticket/<id>-<slug>` workflow removed 2026-08-13 — see `drydock.ARCHIVED.md` + tag `archive/drydock-2026-08-13` for the autonomous worker docs.
 
 ## 3. Work — build to acceptance criteria
 
 - Match existing conventions; prefer correct design over preserving a flawed one (back-compat not required per `~/.claude/CLAUDE.md`).
 - Run the gates that `tugboat` and CI enforce: `cargo test`, `cargo clippy -- -D warnings`, and `cargo build` for any web app you touched. Keep the worktree's `fleet/Cargo.toml` workspace lockfile intact.
-- Heartbeat if long-running: `cargo run -p fizzy -- boards` is not a heartbeat — for Drydock-backed work use `drydock heartbeat "<step>"`.
+- Heartbeat if long-running: `cargo run -p fizzy -- boards` is not a heartbeat — drydock heartbeats were `drydock heartbeat "<step>"` (archived).
 
 ## 4. PR — push and open, then stop
 
@@ -69,7 +69,7 @@ Fizzy: https://fizzy.intern.deepwa7er.net/1/cards/<card>"
 
 ## Hard rules
 
-- `~/.claude/CLAUDE.md` is authoritative on quality: no hacks, no workarounds, no partial fixes. If blocked, `drydock block` or report — don't ship a hack to reach "done".
+- `~/.claude/CLAUDE.md` is authoritative on quality: no hacks, no workarounds, no partial fixes. If blocked, report — don't ship a hack to reach "done". (Was `drydock block`; drydock archived 2026-08-13.)
 - `docs/deepwater-style-guide.md` (DW-001) governs all UI; `taste` is the anti-slop filter — DW-001 wins on conflict.
 - Deployability is discovered: a top-level dir is deployable iff it has `deploy.toml` (`fleet.toml:14-20`). No registry to update.
 - `fleet.toml::docs.guidance` and `fleet.toml::backup` are the only central manifests — keep them in sync when adding docs or state.
