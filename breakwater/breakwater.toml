@@ -79,10 +79,6 @@ label = "driftword"
 upstream = "127.0.0.1:8091"
 
 [[routes]]
-label = "drydock"
-upstream = "127.0.0.1:8093"
-
-[[routes]]
 label = "ferry"
 upstream = "127.0.0.1:7777"
 
