@@ -17,12 +17,14 @@
 //!    silently regress to "whatever the script hardcodes".
 //!
 //! `--check` rewrites nothing: it fails (with a diff summary) when a file
-//! doesn't match what the declarations produce. CI runs it, so adding a
-//! service and forgetting the registries is a red build, not an incident.
+//! doesn't match what the declarations produce. It is a pre-PR gate in
+//! `.agents/skills/fleet/SKILL.md` §3 — CI was archived 2026-08-13
+//! (`ci.ARCHIVED.md`), so nothing runs it automatically. Skip it after adding a
+//! service and the registries drift silently until deploy time.
 //!
-//! Only in-monorepo deployables feed generation, deliberately: CI checks out
-//! this repository alone, and generation must produce identical output there
-//! and on the dev box.
+//! Only in-monorepo deployables feed generation, deliberately: generation must
+//! produce identical output from a checkout of this repository alone and from
+//! the dev box.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -120,7 +122,7 @@ fn render_routes_file(root: &Path, services: &[Declared]) -> Result<String> {
     let _ = writeln!(
         block,
         "# One route per fleet service declaring `port` in its deploy.toml — derived\n\
-         # by `tugboat fleet gen`; CI verifies with --check. Don't edit inside the\n\
+         # by `tugboat fleet gen`; `--check` verifies. Don't edit inside the\n\
          # markers: change the service's deploy.toml and re-run the generator.\n\
          # Hand-written routes (sonar's units, docs, source, external members)\n\
          # live outside this block."

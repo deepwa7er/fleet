@@ -187,7 +187,7 @@ enum FleetAction {
 #[derive(Parser)]
 struct GenArgs {
     /// Verify instead of write: exit non-zero when any generated registry
-    /// doesn't match the declarations (CI runs this).
+    /// doesn't match the declarations (a pre-PR gate; nothing runs it for you).
     #[arg(long)]
     check: bool,
 }

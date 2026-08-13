@@ -1,6 +1,6 @@
-# Pin the fleet to one toolchain so local builds, CI, and deploys agree —
-# clippy lints shift between stable releases, and CI denies warnings, so a
-# floating `stable` means CI can fail on code that was clean locally. Bump
+# Pin the fleet to one toolchain so every machine's builds and deploys agree —
+# clippy lints shift between stable releases, and the gates deny warnings, so a
+# floating `stable` means one box fails on code that was clean on another. Bump
 # deliberately: update the version here, fix whatever the new clippy flags,
 # and land both in one commit.
 [toolchain]

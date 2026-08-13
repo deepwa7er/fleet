@@ -59,10 +59,12 @@ Cargo workspace sharing `fleet-common` and `fleet-api`. The whole fleet
 cross-compiles locally to statically linked musl binaries, so nothing is ever
 built on the server.
 
-**CI is the deploy gate.** tugboat ships `origin/main`, so the invariant behind
+**The gates are local.** tugboat ships `origin/main`, so the invariant behind
 every deploy is that main stays deployable: workspace tests, `clippy -D
-warnings`, a build of every web app, and a check that generated registries match
-their declarations.
+warnings`, and a check that generated registries match their declarations
+(`tugboat fleet gen --check`). These run before every PR — see
+`.agents/skills/fleet/SKILL.md` §3. CI was archived 2026-08-13 and there is no
+automated gate on `origin/main`; see `ci.ARCHIVED.md`.
 
 ## Threat model
 
@@ -92,7 +94,7 @@ Each service directory has its own README covering its design in more detail.
 ## Stack
 
 Rust (Tokio, Axum, rusqlite, Clap, tracing) · Go · React + TypeScript (Vite,
-Tailwind) · SQLite · systemd · Tailscale · GitHub Actions
+Tailwind) · SQLite · systemd · Tailscale
 
 ## License
 
