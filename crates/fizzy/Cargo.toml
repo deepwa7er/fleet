@@ -1,0 +1,19 @@
+[package]
+name = "fizzy"
+version = "0.1.0"
+edition = "2021"
+description = "Fizzy (Once) API client for the fleet — read boards/cards and create triage cards from Muse or any fleet service. Wraps the account-prefixed JSON API that mirror already pulls from."
+license = "MIT"
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
+serde = { workspace = true, features = ["derive"] }
+# "env" (not a clap default) backs the FIZZY_BASE / FIZZY_ACCOUNT / FIZZY_TOKEN_FILE overrides.
+clap = { workspace = true, features = ["derive", "env"] }
+# rustls rather than platform TLS, matching mirror/sonar/trawler — workspace disables reqwest default TLS for musl.
+reqwest = { workspace = true, features = ["rustls-tls", "json"] }
+
+[[bin]]
+name = "fizzy"
+path = "src/main.rs"

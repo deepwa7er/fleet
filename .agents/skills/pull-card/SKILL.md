@@ -12,13 +12,16 @@ This is a shortcut into the `fleet` workflow (`.agents/skills/fleet/SKILL.md`) f
 ## Steps
 
 1. Orient — read `~/.claude/CLAUDE.md` (NO HACKS) and `.agents/skills/fleet/SKILL.md` §0.
-2. List open work:
+2. List open work — from the repo root (`cargo -p` needs the workspace manifest):
    ```bash
-   cargo run -p fizzy -- boards
+   cd ~/code/fleet
    cargo run -p fizzy -- stream --board Playground
    ```
-   If `cargo run -p fizzy` fails (fizzy not in this workspace), try `fizzy boards` / `fizzy stream --board Playground` and note which invocation worked.
-3. Pick the most recent open card on `Playground` (by creation time or card number). Fetch its full body (`cargo run -p fizzy -- show <id>` or `fizzy show <id>`) and note its URL `https://fizzy.intern.deepwa7er.net/1/cards/<id>`.
+   `fizzy` is a workspace member (`crates/fizzy`); there is no installed `fizzy` binary on `PATH`, so always invoke it through `cargo run -p fizzy --`. If that command fails, **stop and report the error to the user** — do not retry it, and do not fall back to another invocation. See `.agents/skills/fizzy/SKILL.md` for the CLI contract.
+3. Pick the most recent open card on `Playground` (highest card number). Fetch its full body and URL:
+   ```bash
+   cargo run -p fizzy -- show <number>
+   ```
 4. Summarize for the user:
    - Card title, number, URL, and board
    - Why / evidence (files:lines if present)
