@@ -1,0 +1,83 @@
+<% flash.each do |type, message| %>
+  <p class="flash flash--<%= type %>"><%= message %></p>
+<% end %>
+
+<main class="measure">
+  <p><%= link_to "Sessions", root_path, class: "back-link" %></p>
+
+  <% if @error %>
+    <p class="instrumentation instrumentation--danger"><%= @error %></p>
+  <% else %>
+    <h2 class="session-title"><%= session_title(@session) %></h2>
+    <% if (instrumentation = session_detail_instrumentation(@session)).present? %>
+      <p class="instrumentation"><%= instrumentation %></p>
+    <% end %>
+
+    <%# Rename disclosure: a native <details> (rule 6 — the browser's own
+        toggle, no custom affordance), the summary reads as a small secondary
+        key, and the form inside is a recess holding the name field and the
+        save key. It lives outside the stream wrapper so a stream event can
+        never clobber it. %>
+    <details class="rename">
+      <summary class="button button--small button--secondary">Rename</summary>
+      <%= form_with url: rename_session_path(@session[:id]), class: "rename-form" do |form| %>
+        <%= form.label :name, "Session name" %>
+        <%= form.text_field :name, value: @session[:title], autocomplete: "off" %>
+        <button type="submit" class="button">Save name</button>
+      <% end %>
+    </details>
+
+    <%# M4: status, orchestrator readout, and transcript under one stable
+        wrapper that carries the stream wiring. Only #session-status,
+        #orchestrator-readout, and #transcript themselves are targeted by
+        streams — never the wrapper — so chat-scroll and user-jump survive
+        the transcript replacements that settle every reconnect. The wiring
+        lives here, not on #transcript, and only on the healthy path (no URL
+        to stream when the fetch already failed). chat-scroll shares the
+        wrapper: opening the chat lands at the newest message, and its
+        observer watches this element for appends and replacements alike.
+        The user-jump widget rides the same wrapper for the same reason.
+        %>
+    <div data-controller="stream chat-scroll user-jump" data-stream-url="<%= session_stream_path(@session[:id]) %>">
+      <%= render "sessions/status", working: @working, session_id: @session[:id] %>
+
+      <%= render "sessions/orchestrator_readout", orchestrator_active: @orchestrator_active,
+                                                  orchestrator_widget: @orchestrator_widget,
+                                                  session_id: @session[:id] %>
+
+      <%= render "sessions/transcript", messages: Array(@messages) %>
+
+      <%# The jump keys (M4): two small physical keys that hop the reader
+          between the reader's own messages. Hidden by default — the
+          controller reveals the widget only once there are two messages to
+          jump between — and the keys start disabled until the controller
+          knows where the reader is. The aria-labels name the keys; the
+          arrows are the glyph, universally understood. %>
+      <nav class="user-jump" aria-label="Jump between your messages" hidden data-user-jump-target="widget">
+        <button type="button" class="button button--small user-jump-button" disabled
+                data-user-jump-target="previous" data-action="user-jump#previous"
+                aria-label="Jump to your previous message">↑</button>
+        <button type="button" class="button button--small user-jump-button" disabled
+                data-user-jump-target="next" data-action="user-jump#next"
+                aria-label="Jump to your next message">↓</button>
+      </nav>
+    </div>
+  <% end %>
+</main>
+
+<% unless @error %>
+  <%= form_with url: session_messages_path(@session[:id]), class: "composer",
+        data: { controller: "composer", action: "submit->composer#disableDuringSubmit" } do |form| %>
+    <textarea
+      name="message"
+      rows="1"
+      placeholder="Message opencode…"
+      aria-label="Message"
+      autocomplete="off"
+      data-composer-target="input"
+      data-action="keydown->composer#submitOnEnter input->composer#autoGrow"
+    ></textarea>
+    <button type="submit" class="button" data-composer-target="submit">Send</button>
+  <% end %>
+  <div class="action-bar-spacer" aria-hidden="true"></div>
+<% end %>

@@ -1,0 +1,226 @@
+# skiff
+
+A phone-optimized web UI for the pi bridge. Browse sessions, read transcripts,
+send messages, watch replies stream live, and abort a run — all from a phone
+browser over the tailnet. The app is deployable to either of two tailnet
+hosts: the Fedora desktop (`fedora`, the current home) and the Mac
+(`deepwater-1`, still running until retired).
+
+## Architecture
+
+```
+phone (Tailscale) ──https──> breakwater (TLS) ──http──> Rails on fedora:8120 (tailnet IP)
+                                                          │
+                                              SSE proxy (sessions#stream)
+                                                          │  streaming HTTP, basic auth
+                                                          ▼
+                                              pi bridge on 127.0.0.1:4120
+                                                          │  spawns `pi --mode rpc` sessions,
+                                                          │  watches session files
+                                                          ▼
+                                            ~/.pi/agent/sessions (same sessions the pi CLI drives)
+```
+
+The session view streams: the bridge (bridge/lib/stream-registry.js) holds a
+per-session live state — the mapped transcript, the in-flight assistant
+overlay, the orchestrator readout — fed by pi's RPC events and a file
+watcher, and pushes it over SSE. Rails proxies that stream and translates
+each event into turbo-streams; the browser renders them with
+Turbo.renderStreamMessage. No polling, no fingerprints, no position
+bookkeeping: every connect (and every reconnect) starts with a snapshot that
+replaces the transcript, so the DOM always converges.
+
+Rails is the only consumer of the pi bridge and reaches it over loopback. The
+bridge speaks opencode's HTTP API to Rails but is backed by pi, sharing pi's
+session directory — so the phone sees and drives the same sessions the `pi`
+CLI does.
+
+Design decisions (recorded so they are not re-litigated later):
+
+- **TLS terminated by breakwater.** The public URL
+  `https://agent.intern.deepwa7er.net` is served by breakwater, which
+  terminates TLS and forwards plain HTTP to Rails. `config.assume_ssl` is on
+  so Rails generates https URLs behind the proxy; `config.force_ssl` is off
+  because breakwater 308-redirects HTTP itself and direct tailnet http access
+  still works. SSE must pass through unbuffered — verify breakwater's proxy
+  buffering before changing anything there.
+- **Explicit Host allowlist.** `config.hosts` in production.rb is exactly
+  `agent.intern.deepwa7er.net` (breakwater forwards the inbound Host verbatim),
+  `fedora.tailcfab97.ts.net`, `deepwater-1.tailcfab97.ts.net`, `localhost`,
+  `127.0.0.1` — both MagicDNS names, because the app deploys to either host.
+  Everything else — including poking at the tailnet IP directly — gets a 403.
+- **Secrets live in one file.** `~/.config/skiff/secrets`, loaded by
+  `config/initializers/skiff_env.rb`; the skiff deploy wrapper never reads it.
+  It holds one consumer's credential — the pi bridge's basic-auth password
+  (`OPENCODE_SERVER_PASSWORD`, env key unchanged from the opencode-server
+  days). The path resolves from the home directory (`SKIFF_SECRETS_FILE`
+  overrides) so the same file location works on the Mac and the desktop.
+- **Ports.** Rails: 8120 on the tailnet IP. pi bridge: 127.0.0.1:4120
+  (replaces `opencode serve`; the port is the opencode-compatible API's
+  contract, so the Rails client's default URL is unchanged).
+- **The session view streams, deliberately.** DW-001 §6 originally chose
+  polling (phone battery discipline: the poller went radio-silent when the
+  session was idle). The stream reverses that trade: one open SSE connection
+  per page view, for the page's lifetime — simpler (no position protocol, no
+  fingerprints, no backoff) and smoother (coalesced ~100ms overlay pushes
+  instead of 300ms poll turns). The battery cost is accepted: the phone is
+  not the primary client. Each open stream occupies one Puma thread
+  (`RAILS_MAX_THREADS`, default 3, is the knob; one or two viewers fit
+  comfortably).
+- **Reconciliation lives in the bridge, not the view.** The registry decides
+  what changed — file appends, overlay growth, overlay resolution, aborted
+  runs, compaction — and emits exact append/replace/remove ops. The view
+  renders ops; it never diffs. The one structural rule (deterministic, not
+  guessed): pi persists the assistant entry exactly at `message_end`, so the
+  next file entry at the overlay's index is the same message and replaces it
+  in place.
+
+## Setup (macOS)
+
+Prerequisites on the Mac:
+
+- Ruby 4.0.6 via mise (the repo's `.ruby-version`).
+- The pi bridge at `127.0.0.1:4120`, run by a launchd agent (installed
+  separately, out of repo — like the old opencode agent; its wrapper is
+  `~/.config/skiff/pi-bridge.sh`, installed out-of-band on the Mac — the repo's
+  `deploy/install-desktop.sh` covers the desktop).
+- The secrets file `~/.config/skiff/secrets`, containing the pi bridge's
+  basic-auth password (`OPENCODE_SERVER_PASSWORD`).
+
+Then:
+
+```sh
+bundle install
+bin/setup
+```
+
+## Run
+
+Development:
+
+```sh
+bin/rails server -p 3000
+```
+
+Production on macOS (runs forever under launchd, bound to the tailnet IP on
+port 8120):
+
+```sh
+deploy/install-agent.sh   # installs com.deepwa7er.skiff; safe to re-run
+```
+
+The skiff agent is installed by that script; the pi bridge agent is installed
+separately (out of repo). Uninstall with `deploy/uninstall-agent.sh`.
+
+On the Fedora desktop the same role is filled by systemd user units — see
+"Deploy to the desktop (Fedora)" below.
+
+## Deploy to the desktop (Fedora)
+
+The desktop runs skiff as systemd **user** units (`skiff.service` and
+`com.deepwa7er.pi-bridge.service`) — everything lives under `$HOME`, no
+sudo. This is the current primary deployment.
+
+Prerequisites, shipped out-of-band (never in git):
+
+- Ruby 4.0.6 (the desktop's system Ruby, resolved through PATH — no mise).
+- Node (the desktop's `/usr/bin/node`).
+- The `pi` CLI on PATH (`~/.local/bin/pi`).
+- The secrets file `~/.config/skiff/secrets` (same format as the Mac's:
+  `OPENCODE_SERVER_PASSWORD`).
+- The repo's `config/master.key`, copied onto the box.
+
+First install:
+
+```sh
+git clone git@github.com:deepwa7er/skiff.git
+cd skiff
+bundle install
+bin/rails assets:precompile
+deploy/install-desktop.sh   # installs both user units; safe to re-run
+```
+
+Deploying an update:
+
+```sh
+git pull && systemctl --user restart skiff com.deepwa7er.pi-bridge
+```
+
+Uninstall with `deploy/uninstall-desktop.sh`.
+
+## Remote power-on (Wake-on-LAN)
+
+The desktop is usually powered off. To bring it back — and skiff with it —
+from anywhere, Wake-on-LAN gets the NIC to power the machine on. Set it up
+once:
+
+1. **BIOS, once, by hand** — enable "Wake on LAN" / "Power On By PCI-E" and
+   disable ErP / Deep Sleep (S5) if the option exists (ErP cuts standby
+   power, which WoL needs).
+2. **Desktop, once** — `deploy/enable-wol.sh` (auto-runs under sudo; sets the
+   NetworkManager profile to wake on magic packet and verifies with
+   ethtool).
+3. **Laptop, once** — install the sender on fedora-1 (always on, same LAN):
+   `install -m 755 deploy/wake-desktop ~/.local/bin/wake-desktop`. No root
+   needed — it only broadcasts a UDP magic packet.
+
+Then, from the Mac:
+
+```sh
+ssh laptop wake-desktop   # send the magic packet
+# wait ~30 s for the desktop to boot and join the tailnet
+ssh desktop               # or open https://agent.intern.deepwa7er.net
+```
+
+Why the laptop: a magic packet is an L2 broadcast and must originate on the
+desktop's LAN; the VPS is not on that LAN and cannot do it. fedora-1 is the
+always-on host there.
+
+## Access
+
+From any device on the tailnet (the phone needs Tailscale):
+
+```
+https://agent.intern.deepwa7er.net
+```
+
+No password — the tailnet is the security boundary. If the domain is
+unreachable, fall back to the desktop's tailnet IP directly:
+`http://fedora.tailcfab97.ts.net:8120`.
+
+The https URL is an installable PWA (manifest + service worker): "Add to
+Home Screen" gives a standalone window. The worker's policy is asset-only
+caching — digested files from the cache, transcripts and streams always from
+the network — plus the offline page when the tailnet is unreachable. The
+http fallback URL has no service worker (a secure context is required) and
+simply works as a normal page.
+
+The Mac instance still serves the same app at
+`http://deepwater-1.tailcfab97.ts.net:8120` until it is retired.
+
+## Caveats
+
+- **The host must be awake.** The phone URL resolves to the tailnet node
+  serving skiff (currently the desktop, fedora); sleeping or powered-off means
+  no response. The same holds for the Mac instance while it runs. If the
+  desktop is powered off, bring it back with Wake-on-LAN — see "Remote
+  power-on (Wake-on-LAN)" above.
+- **Tailnet-only.** Rails binds the tailnet IP, so skiff is reachable only
+  inside the tailnet.
+- **pi is effectively remote code execution on the host.** The tailnet is the
+  security boundary — anyone on the tailnet can drive shell-capable agent
+  runs through the phone UI. The pi bridge on 127.0.0.1:4120 still guards its
+  own HTTP with basic auth (`OPENCODE_SERVER_PASSWORD` in the secrets file);
+  keep that password out of reach.
+- **The phone UI's persona label still reads "opencode".** Hard-coded in the
+  Rails partial `app/views/sessions/_message.html.erb` — cosmetic only.
+
+## Testing
+
+```sh
+bin/rails test
+bin/rails test test/lib/opencode_client_test.rb
+bin/rails test test/controllers/sessions_test.rb
+bin/rails test test/controllers/stream_test.rb
+node --test bridge/test/*.test.js
+```

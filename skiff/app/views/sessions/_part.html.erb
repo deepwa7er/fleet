@@ -1,0 +1,26 @@
+<%# DW-001 §8: one part of a message. Control parts (step-start/step-finish)
+    and anything unknown render nothing; synthetic text parts (auto-attached
+    context) are dropped; text parts stream in M4, so the partial must tolerate
+    partial text (render_markdown handles blank). Locals: part, message_index
+    (message_index is not needed here yet — kept in the render signature so M4
+    can pass it through unchanged), streaming (the message is the live overlay:
+    reasoning renders open so the thinking is readable as it streams). %>
+<% case part[:type] %>
+<% when "text" %>
+  <% unless part[:synthetic] %>
+    <div class="prose"><%= render_markdown(part[:text]) %></div>
+  <% end %>
+<% when "reasoning" %>
+  <details class="reasoning"<%= " open" if streaming %>>
+    <summary class="instrumentation">reasoning</summary>
+    <div class="prose"><%= render_markdown(part[:text]) %></div>
+  </details>
+<% when "tool" %>
+  <% pieces = [ part[:tool], part.dig(:state, :status) ] %>
+  <% pieces << part.dig(:state, :title) if part.dig(:state, :title).present? %>
+  <p class="instrumentation tool-line <%= "tool-line--bad" if tool_line_bad?(part) %>">
+    <%= pieces.compact.join(" · ") %>
+  </p>
+<% when "file" %>
+  <p class="instrumentation tool-line"><%= [ "file", part[:filename] ].compact.join(" · ") %></p>
+<% end %>
