@@ -11,8 +11,8 @@ Reference: [DW-001](docs/deepwater-style-guide.md) · [specimen](docs/deepwater-
 
 ## Workflow — one card = one branch = one PR
 
-For any fleet change, read `.agents/skills/fleet/SKILL.md` first. It covers: search first, create Fizzy triage card (`cargo run -p fizzy -- create --board Playground --dedupe`), `git worktree` isolation in `~/code/.drydock/<slug>` (never `main`), `cargo test` / `cargo clippy -- -D warnings` / `cargo build`, `git push -u origin fleet/<card#>-<slug>` + `gh pr create` linking the Fizzy card, then stop — human merges, `tugboat` ships `origin/main`. See also `drydock/docs/worker-task.md` for the autonomous worker variant.
+For any fleet change, read `.agents/skills/fleet/SKILL.md` first. It covers: search first, create Fizzy triage card (`cargo run -p fizzy -- create --board Playground --dedupe`), `git worktree` isolation in `~/code/.drydock/<slug>` (never `main`), `cargo test` / `cargo clippy -- -D warnings` / `cargo build`, `git push -u origin fleet/<card#>-<slug>` + `gh pr create` linking the Fizzy card, then stop — human merges, `tugboat` ships `origin/main`. Drydock autonomous worker archived 2026-08-13 — see `drydock.ARCHIVED.md` + tag `archive/drydock-2026-08-13`.
 
 ## Quality — NO HACKS (authoritative)
 
-Read `~/.claude/CLAUDE.md` — ABSOLUTE code quality, no hacks/workarounds/monkey-patches/partial fixes; if blocked, fix the root cause properly or report honestly (per `drydock/docs/worker-task.md` STANDARDS block). Back-compat not required.
+Read `~/.claude/CLAUDE.md` — ABSOLUTE code quality, no hacks/workarounds/monkey-patches/partial fixes; if blocked, fix the root cause properly or report honestly. Back-compat not required.
