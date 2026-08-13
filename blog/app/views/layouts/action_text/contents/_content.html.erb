@@ -1,0 +1,13 @@
+<%# `lexxy-content`, not the `trix-content` that `action_text:install` generates.
+
+    Lexxy's content stylesheet is written entirely as `:where(.lexxy-content)`,
+    so with the stock wrapper class none of it applies to a PUBLISHED post —
+    including the code-token colours. The editor would highlight a code block
+    and the published page would show the same block flat, which defeats the
+    point of a WYSIWYG editor.
+
+    Everything in that stylesheet has zero specificity by construction, so the
+    `.prose` rules in application.css still win wherever DW-001 disagrees. %>
+<div class="lexxy-content">
+  <%= yield -%>
+</div>

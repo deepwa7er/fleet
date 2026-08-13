@@ -1,0 +1,45 @@
+<%= form_with model: [ :admin, post ] do |form| %>
+  <% if post.errors.any? %>
+    <ul class="form-errors">
+      <% post.errors.full_messages.each do |message| %>
+        <li><%= message %></li>
+      <% end %>
+    </ul>
+  <% end %>
+
+  <div class="field">
+    <%= form.label :title %>
+    <%= form.text_field :title, autofocus: true %>
+  </div>
+
+  <div class="field">
+    <%= form.label :slug %>
+    <%= form.text_field :slug, placeholder: post.new_record? ? "generated from the title" : nil %>
+    <p class="field-hint">
+      The public URL. Generated from the title on create; changing it later
+      breaks any link that already points at this post.
+    </p>
+  </div>
+
+  <div class="field">
+    <%= form.label :summary %>
+    <%= form.text_area :summary, rows: 3 %>
+    <p class="field-hint">Shown on the index and in the feed. Falls back to the first paragraph.</p>
+  </div>
+
+  <div class="field">
+    <%= form.label :body %>
+    <%# Lexxy prepends itself to Action Text's tag helper, so the ordinary
+        rich_text_area renders <lexxy-editor> rather than <trix-editor>. %>
+    <%= form.rich_text_area :body, placeholder: "Start writing…" %>
+    <p class="field-hint">
+      Markdown shortcuts work as you type — <code>##</code> for a heading,
+      <code>```</code> for a code block. Paste a URL over selected text to link it.
+    </p>
+  </div>
+
+  <div class="actions">
+    <%= form.submit post.new_record? ? "Create post" : "Save" %>
+    <a class="back-link" href="<%= post.new_record? ? admin_root_path : admin_post_path(post) %>">Cancel</a>
+  </div>
+<% end %>

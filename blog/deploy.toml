@@ -1,0 +1,97 @@
+# tugboat deploy manifest — deepwa7er fleet
+#   deploy:  tugboat deploy      (from this directory)
+#
+# blog is the public blog at blog.deepwa7er.com; admin on the tailnet via
+# breakwater at https://blog.intern.deepwa7er.net.
+#
+# It is the fleet's first publicly-reachable service, and that makes it
+# different from every other manifest in one way: it does NOT declare a
+# breakwater route for its public name. The fleet's threat model is that the
+# tailnet is the security boundary and breakwater binds only the Tailscale IP;
+# giving breakwater a public listener would put that boundary in front of
+# `harness`, which is unauthenticated RCE. So the public edge is nginx on the
+# same VPS, terminating TLS for blog.deepwa7er.com with its own Certbot
+# certificate — the arrangement already serving notes.deepwa7er.com. See
+# deploy/nginx-blog.conf.
+#
+# breakwater DOES carry one GENERATED route for this app, for the ADMIN
+# hostname only (blog.intern.deepwa7er.net). That is an ordinary internal route
+# derived from `port` below (`tugboat fleet gen`) and changes nothing about
+# breakwater's posture.
+#
+# Containerised for the same reason as readout/notes/public_site: the VPS ships
+# Ruby 3.2.3 and this app targets 3.4.8, so a native install would mean
+# maintaining a second Ruby on the host. What tugboat ships is the image as a
+# tar, and the systemd unit loads it on start — so the deploy is still one
+# atomic artifact swap plus a unit restart, and a failed health check still
+# rolls back to the previous image exactly like a binary would.
+#
+# Infra provisioning (directory layout, master key, systemd unit) is
+# deploy/provision.sh — a one-time/on-change step, not run here.
+name = "blog"
+description = "Public blog at blog.deepwa7er.com; admin on the tailnet."
+host = "deepwa7er"
+
+# Loopback port the container publishes. BOTH front doors proxy to it: nginx for
+# the public hostname and breakwater for the admin one. Which of the two an
+# incoming request came through is decided by the Host header it carries, which
+# is what the app's routing constraint reads (see config/application.rb).
+# Route for blog.intern.deepwa7er.net is GENERATED from this
+# (`tugboat fleet gen`); the public name is served by nginx, not breakwater.
+port = 8102
+
+[build]
+# Cross-build for the VPS: this Mac is arm64 and the VPS is x86_64, so the
+# platform is pinned rather than inherited. buildx runs the Linux build under
+# emulation, which is slow but avoids needing a builder on a 2GB host.
+#
+# `docker save` writes the image as a tar for tugboat to rsync. It is left
+# uncompressed on purpose: successive builds share most layers, so rsync's delta
+# transfer moves far less than a fresh gzip would each time.
+cmd = "docker buildx build --platform linux/amd64 -t blog:deploy --load . && docker save blog:deploy -o {workdir}/blog-image.tar"
+
+[[artifacts]]
+src = "{workdir}/blog-image.tar"
+dest = "/opt/blog/blog-image.tar"
+mode = "0644"
+
+# blog binds loopback, so health is a real HTTP check on it. /up is Rails'
+# built-in health endpoint: it returns 200 only if the app boots cleanly, which
+# is exactly the failure this needs to catch — a bad image loads fine and then
+# dies on boot.
+#
+# The retries are generous: the unit has to `docker load` the image tar before
+# the container even starts.
+[health]
+url = "http://127.0.0.1:8102/up"
+retries = 40
+interval_ms = 1000
+
+[verify]
+# Checked from this machine after the deploy. Deliberately the PUBLIC URL: it is
+# the one that must never be broken, and checking it exercises the whole path —
+# public DNS, nginx, the Certbot certificate, and the app — rather than just the
+# half of it the tailnet can see.
+url = "https://blog.deepwa7er.com/up"
+
+[lighthouse]
+# Monitor blog from the fleet dashboard (status + logs).
+enroll = true
+
+# NO [state] BLOCK, and the database is NOT YET BACKED UP. Both facts are
+# deliberate, and this comment is here so neither is mistaken for an oversight.
+#
+# Two separate things stand in the way, and moving one app around would only
+# hide them:
+#
+#   1. `tugboat fleet gen` builds fleet-backup/state.sh from each service's
+#      [state] block, but can only read manifests INSIDE the monorepo. This repo
+#      is an external member, so a [state] block here would contribute nothing
+#      to state.sh while looking like enrollment.
+#
+#   2. fleet-backup only reaches /var/lib/<service>/. This app keeps its SQLite
+#      at /opt/blog/storage — the standard layout, matching readout — which is
+#      outside everything the backup looks at.
+#
+# readout has exactly the same gap. The fix belongs to both of them at once,
+# and is being handled separately. See deploy/fleet-backup.md.

@@ -1,0 +1,26 @@
+<% content_for :title, @post.title %>
+
+<article class="post">
+  <header class="post-header">
+    <%# G5 + G11: the post's title is the incipit of its page — the blackletter
+        display voice opening with the illuminated first letter. One ornament
+        per page, same as the home page's title. %>
+    <h1 class="incipit"><%= @post.title %></h1>
+    <%= readout_date(@post.published_at) %>
+  </header>
+
+  <%# Cached on the post's own cache key, so an edit invalidates it and nothing
+      else has to. Action Text sanitizes and renders attachments on every read,
+      which is the cost this cache is here to bound.
+
+      `[@post, @post.body]` and not just `@post`: editing only the body touches
+      the rich text record, not the post row, so a key built from @post alone
+      would serve the previous body until some other column happened to change. %>
+  <% cache [ @post, @post.body ] do %>
+    <div class="prose"><%= rendered_post_body(@post) %></div>
+  <% end %>
+</article>
+
+<p class="post-footer">
+  <a class="back-link" href="<%= root_path %>">← All posts</a>
+</p>

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title><%= [ content_for(:title), site_title ].compact_blank.join(" — ") %></title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <%= csrf_meta_tags %>
+    <%= csp_meta_tag %>
+
+    <%# The canonical URL is always the PUBLIC one, even when this page is being
+        served over the tailnet to the author. Otherwise a search engine that
+        somehow saw an internal URL would be told the internal hostname is the
+        real address of the content. %>
+    <link rel="canonical" href="<%= public_url(request.path) %>">
+    <link rel="alternate" type="application/atom+xml"
+          title="<%= site_title %>" href="<%= public_url(feed_path) %>">
+
+    <%= yield :head %>
+
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icon.png">
+
+    <%# G11: the blackletter masthead voice (UnifrakturCook). Falls back to
+        Georgia if the font can't load. %>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=UnifrakturCook:wght@700&display=swap" rel="stylesheet">
+
+    <%# Lexxy's stylesheets, from the gem's engine. They must come BEFORE
+        application.css: ours re-points Lexxy's CSS variables at the DW-001
+        tokens and overrides several of its rules (the table grid, the
+        blockquote rule, the inline-code pill), and the cascade only works in
+        that order.
+
+        The public site gets lexxy-content.css alone, which styles a RENDERED
+        post. lexxy-editor.css is twice the size and styles a toolbar no reader
+        will ever see. %>
+    <% if admin_context? %>
+      <%= stylesheet_link_tag "lexxy" %>
+    <% else %>
+      <%= stylesheet_link_tag "lexxy-content" %>
+    <% end %>
+
+    <%= stylesheet_link_tag :app, "data-turbo-track": "reload" %>
+
+    <%# Rouge's own theme for highlighted code, kept separate from the house
+        stylesheet because it is a second palette and may not survive. %>
+    <%= stylesheet_link_tag "rouge", "data-turbo-track": "reload" %>
+
+    <%# Two entry points, chosen by hostname: the admin gets the 933 KB editor,
+        the public site does not. See config/importmap.rb. %>
+    <%= javascript_importmap_tags admin_context? ? "admin" : "application" %>
+  </head>
+
+  <body>
+    <div class="container measure">
+      <header class="masthead">
+        <%# On the home page the masthead title and the page's heading are the
+            same string, so it is said once — as the incipit (G5 + G11), in the
+            masthead's place. Everywhere else the wordmark is a navigation link
+            back home. The title never appears twice on a page. %>
+        <% if current_page?(root_path) %>
+          <h1 class="incipit"><%= site_title %></h1>
+        <% else %>
+          <a class="wordmark" href="<%= admin_context? ? admin_root_path : root_path %>"><%= site_title %></a>
+        <% end %>
+        <nav class="masthead-nav">
+          <% if admin_context? %>
+            <a href="<%= root_path %>">Public</a>
+            <a href="<%= admin_root_path %>">Admin</a>
+          <% else %>
+            <a href="<%= feed_path %>">Feed</a>
+          <% end %>
+        </nav>
+      </header>
+
+      <%= render "shared/flash" %>
+
+      <%= yield %>
+    </div>
+  </body>
+</html>
