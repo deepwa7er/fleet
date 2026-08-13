@@ -135,6 +135,10 @@ pub struct Deployable {
 
 /// Discover deployable services by scanning the fleet `root` for immediate
 /// subdirectories that contain a `deploy.toml`. Sorted by name for stable output.
+/// A directory that is itself a git repository (contains `.git`) is skipped:
+/// it is a nested checkout (e.g. `fleet/notes` before it is committed as a
+/// subtree) whose deploy.toml is not visible to CI and whose route remains
+/// hand-written in `breakwater.toml` until the import lands.
 pub fn discover_deployables(root: &Path) -> Result<Vec<Deployable>> {
     let mut found = Vec::new();
     let entries = match fs::read_dir(root) {
@@ -150,6 +154,10 @@ pub fn discover_deployables(root: &Path) -> Result<Vec<Deployable>> {
             .with_context(|| format!("reading {}", root.display()))?
             .path();
         if !dir.is_dir() {
+            continue;
+        }
+        // Nested git checkout — not yet part of the monorepo history.
+        if dir.join(".git").exists() {
             continue;
         }
         let manifest_path = dir.join("deploy.toml");

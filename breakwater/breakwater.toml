@@ -95,6 +95,10 @@ label = "mirror"
 upstream = "127.0.0.1:8103"
 
 [[routes]]
+label = "readout"
+upstream = "127.0.0.1:8101"
+
+[[routes]]
 label = "recipes"
 upstream = "127.0.0.1:8097"
 
@@ -128,23 +132,8 @@ upstream = "127.0.0.1:8092"
 label = "notes"
 upstream = "127.0.0.1:8105"
 
-# readout — dashboard for campfire-stress load-test results. External member
-# like lagoon (repo at ~/code/readout), so its route is hand-written too.
-#
-# The first fleet service that runs as a Docker container rather than a native
-# binary: it's a Rails app needing Ruby 3.4, and this host has 3.2. The container
-# publishes to loopback, so from breakwater's side it is an ordinary upstream.
-#
-# Its data does NOT originate here. Load-test results are written on the dev box
-# by the k6 harness; `bin/publish` in the readout repo imports them there and
-# ships the resulting SQLite file up. So this page is a published snapshot, not a
-# live view of a running test.
-[[routes]]
-label = "readout"
-upstream = "127.0.0.1:8101"
-
 # blog — the ADMIN half of the public blog at https://blog.deepwa7er.com.
-# External member (repo at ~/code/blog), so hand-written like readout's.
+# External member (repo at ~/code/blog), so hand-written like lagoon's.
 #
 # READ THIS BEFORE CHANGING IT. This is the first route here that points at an
 # app the public internet can also reach, and the arrangement is deliberate:
