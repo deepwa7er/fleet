@@ -1,0 +1,5 @@
+<% flash.each do |type, message| %>
+  <%# Flashes are text in flow, not boxes — DW-001 rule 1. Only "alert" takes
+      colour, because only "alert" is a fact the reader must not miss. %>
+  <p class="flash flash--<%= type == "alert" ? "alert" : "notice" %>"><%= message %></p>
+<% end %>

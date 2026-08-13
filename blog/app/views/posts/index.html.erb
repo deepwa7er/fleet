@@ -1,0 +1,18 @@
+<%# The site title is the masthead's incipit (see layouts/application.html.erb)
+    — never repeated as a heading here, or the page says it twice. %>
+<% if @posts.any? %>
+  <ol class="posts">
+    <% @posts.each do |post| %>
+      <li class="post-item">
+        <%# The gap between entries is the divider (rule 1). No rule, no card. %>
+        <a class="post-item-title" href="<%= post_path(post) %>"><%= post.title %></a>
+        <%= readout_date(post.published_at) %>
+        <% if post.summary_text.present? %>
+          <p class="post-item-summary"><%= post.summary_text %></p>
+        <% end %>
+      </li>
+    <% end %>
+  </ol>
+<% else %>
+  <p class="empty-state">Nothing published yet.</p>
+<% end %>
