@@ -208,7 +208,7 @@ impl RemoteWorkspace {
         anyhow::ensure!(
             init.version == rpc::PROTOCOL_VERSION,
             "protocol version mismatch (client {} / server {}): rebuild ide-server on the host \
-             (cd ~/code/fleet && git pull && cargo install --path ide --bin ide-server)",
+             (cd ~/code/fleet && git pull && cargo install --locked --path ide --bin ide-server)",
             rpc::PROTOCOL_VERSION,
             init.version,
         );

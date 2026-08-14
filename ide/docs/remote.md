@@ -57,7 +57,7 @@ ide-server` from the fleet checkout (login-shell PATH includes
 Lifecycle: `initialize` (client sends `PROTOCOL_VERSION: u32` + workspace
 path; server replies with its version and the canonicalized root — mismatch
 is an instructive error: "rebuild ide-server: ssh desktop 'cd ~/code/fleet &&
-git pull && cargo install --path ide --bin ide-server'"), then `initialized`,
+git pull && cargo install --locked --path ide --bin ide-server'"), then `initialized`,
 then traffic; `shutdown` on quit.
 
 Workspace methods — exactly the `WorkspaceService` trait, 1:1:
@@ -195,7 +195,7 @@ From the fleet checkout on the desktop:
 
 ```bash
 cd ~/code/fleet && git pull
-cargo install --path ide --bin ide-server
+cargo install --locked --path ide --bin ide-server
 ~/.cargo/bin/ide-server --version   # prints binary + protocol version
 ```
 
@@ -205,6 +205,22 @@ additions from `.zshrc` never apply there. `cargo install`'s destination is
 fixed, so the path is named outright.
 
 ### Mac (once)
+
+**The short way** — clone, then let the installer do steps 1–4 (idempotent,
+re-run after fixing anything it complains about):
+
+```bash
+gh repo clone deepwa7er/fleet ~/code/fleet   # or git clone git@github.com:deepwa7er/fleet
+~/code/fleet/ide/install.sh
+```
+
+It checks the Xcode CLT, installs Rust if missing, builds and installs the
+`ide` binary (release; the first build is the long part), and preflights
+`ide-server` on the desktop with a precise message for each failure mode.
+`IDE_REMOTE_HOST` overrides the `desktop` alias; `FLEET_DIR` the checkout
+location when run standalone.
+
+**The long way**, same steps by hand:
 
 1. Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 2. Xcode Command Line Tools: `xcode-select --install`. Honest uncertainty,

@@ -53,7 +53,8 @@ status bar. A directory argument becomes the workspace root (default: the
 current directory); a file argument roots at its parent with the file open.
 `ide <ssh-alias>:<path>` (e.g. `ide desktop:code/fleet`) opens a **remote**
 workspace — the full IDE against code on another machine, language servers
-and auto-save running next to the code. Setup and troubleshooting:
+and auto-save running next to the code. Install on a new machine with
+[`install.sh`](install.sh); setup and troubleshooting:
 [`docs/remote.md`](docs/remote.md) §10.
 
 - Single-click a file in the tree to open it in a tab; `ctrl-f4` closes it.
@@ -146,7 +147,7 @@ libxkbcommon-devel libxkbcommon-x11-devel wayland-devel vulkan-loader`.
    (card #57).
    ~~5c (transport)~~ landed: `ide <ssh-alias>:<path>` opens a remote
    workspace — `ide-server --stdio` (install on the host:
-   `cargo install --path ide --bin ide-server`) serves a `LocalWorkspace`
+   `cargo install --locked --path ide --bin ide-server`) serves a `LocalWorkspace`
    over JSON-RPC; auto-save runs server-side; the crate is now lib + two
    bins; integration tests drive the real server binary over pipes
    (card #58).
