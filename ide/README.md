@@ -6,7 +6,21 @@ Decided 2026-08-14 (Fizzy card #51) after ruling out IntelliJ Ultimate
 project). Engines are borrowed — tree-sitter grammars, LSP servers,
 gpui-component's editor widget — the shell is ours.
 
-## Status — milestone 2 (real LSP)
+## Status — milestone 3 (search-everywhere)
+
+Double-shift (or `ctrl-shift-f`) opens the search overlay: one query, two
+sections — fuzzy file-path matches (nucleo, smart-case) and literal full-text
+hits with line previews. Enter opens the selection (text hits jump to the
+line); esc closes. Backed by `WorkspaceService::{list_files, search_text}`,
+implemented with ripgrep's own library crates (`ignore` + `grep-searcher`)
+in-process — gitignore respected (`require_git(false)`, so it works before
+`git init`), hidden files skipped, binaries detected and skipped, smart-case.
+The file index reloads on each overlay open. Double-shift detection watches
+modifier transitions with a 400ms window; typing two capitalized words
+quickly can false-trigger — acceptable for now, IntelliJ has the same class
+of heuristic.
+
+## Previously — milestone 2 (real LSP)
 
 Editors now have language intelligence: diagnostics (squiggles), hover,
 completions, and go-to-definition (ctrl-click; cross-file targets open in a
@@ -109,7 +123,8 @@ libxkbcommon-devel libxkbcommon-x11-devel wayland-devel vulkan-loader`.
    place (card #52).
 3. ~~M2 LSP mux~~ — hand-rolled smol client, five-server table, diagnostics/
    hover/completion/definition (card #53).
-4. M3 search-everywhere (double-shift), backed by ripgrep.
+4. ~~M3 search-everywhere~~ — double-shift overlay, nucleo + ripgrep crates
+   behind the workspace seam (card #54).
 5. M4 daily-drive on the desktop.
 6. M5 remote: headless `ide-server` on the desktop + native macOS client over
    SSH. Buffer sync gets designed then — the trait boundary exists so this is

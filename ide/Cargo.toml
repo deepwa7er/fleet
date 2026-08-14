@@ -20,8 +20,14 @@ anyhow = "1"
 # for dyn-compatibility. Both are already in gpui's tree via smol.
 blocking = "1"
 futures = "0.3"
+# ripgrep's own library crates power search-everywhere in-process — no
+# dependency on an rg binary on PATH.
+grep-regex = "0.1"
+grep-searcher = "0.1"
+ignore = "0.4"
 # Matches gpui-component's lsp-types exactly so provider traits are passthrough.
 lsp-types = { version = "0.97", features = ["proposed"] }
+nucleo-matcher = "0.3"
 serde = "1"
 serde_json = "1"
 smol = "2"
@@ -58,6 +64,9 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "
     "tree-sitter-yaml",
 ] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "f3ba893bd6a996ab0699266ba774b5bbb7f0ca1c" }
+
+[dev-dependencies]
+tempfile = "3"
 
 # Debug builds of the GPU/UI stack are unusably slow at opt-level 0; upstream
 # gpui-component applies the same overrides.
