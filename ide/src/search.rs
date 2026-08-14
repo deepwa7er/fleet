@@ -14,8 +14,9 @@ use gpui_component::{
 };
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 
+use ide::workspace::{TextMatch, WorkspaceService};
+
 use crate::app::IdeShell;
-use crate::workspace::{TextMatch, WorkspaceService};
 
 const MAX_FILE_HITS: usize = 20;
 const MAX_TEXT_HITS: usize = 30;

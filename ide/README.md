@@ -140,3 +140,9 @@ libxkbcommon-devel libxkbcommon-x11-devel wayland-devel vulkan-loader`.
    ~~5b (auto-save)~~ landed: `DocumentStore` behind the seam owns open
    documents and persists on idle/close/quit; dirty-state UI deleted
    (card #57).
+   ~~5c (transport)~~ landed: `ide <ssh-alias>:<path>` opens a remote
+   workspace — `ide-server --stdio` (install on the host:
+   `cargo install --path ide --bin ide-server`) serves a `LocalWorkspace`
+   over JSON-RPC; auto-save runs server-side; the crate is now lib + two
+   bins; integration tests drive the real server binary over pipes.
+   No language intelligence over the wire until 5d (card #58).

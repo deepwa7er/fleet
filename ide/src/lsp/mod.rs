@@ -7,7 +7,6 @@
 
 pub mod client;
 pub mod hub;
-pub mod providers;
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;

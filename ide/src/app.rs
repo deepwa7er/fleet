@@ -29,10 +29,11 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::lsp::providers::EditorLsp;
-use crate::lsp::uri_to_path;
+use ide::lsp::uri_to_path;
+use ide::workspace::WorkspaceService;
+
+use crate::providers::EditorLsp;
 use crate::search::SearchDelegate;
-use crate::workspace::WorkspaceService;
 
 actions!(ide, [Save, CloseTab, OpenSearch]);
 

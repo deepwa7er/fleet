@@ -12,7 +12,7 @@ use gpui_component::input::{
     CompletionProvider, DefinitionProvider, HoverProvider, InputBaseState, Rope, RopeExt as _,
 };
 
-use crate::workspace::WorkspaceService;
+use ide::workspace::WorkspaceService;
 
 pub struct EditorLsp {
     workspace: Arc<dyn WorkspaceService>,
