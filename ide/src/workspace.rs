@@ -13,6 +13,7 @@ use futures::FutureExt as _;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 
+use crate::documents::DocumentStore;
 use crate::lsp::hub::LanguageHub;
 
 #[derive(Debug, Clone)]
@@ -46,8 +47,6 @@ pub trait WorkspaceService: Send + Sync {
 
     fn read_file(&self, path: &Path) -> BoxFuture<'static, Result<String>>;
 
-    fn write_file(&self, path: &Path, contents: String) -> BoxFuture<'static, Result<()>>;
-
     /// Every searchable file, as paths relative to the root — gitignore
     /// respected, hidden files skipped. Feeds the fuzzy file picker.
     fn list_files(&self) -> BoxFuture<'static, Result<Vec<PathBuf>>>;
@@ -68,9 +67,9 @@ pub trait WorkspaceService: Send + Sync {
     /// The full current text after an edit (ordered per document).
     fn document_changed(&self, path: &Path, text: String);
 
-    /// Persist and announce: write the file, then didSave to the language
-    /// server. (Slice 5b turns this into a flush of the workspace's own
-    /// document copy; the signature already fits both.)
+    /// Explicit save (ctrl-s): adopt `text`, flush to disk immediately, then
+    /// didSave to the language server. Auto-save persists edits regardless;
+    /// this is the user-driven "now, and tell the tools" variant.
     fn document_save(&self, path: &Path, text: String) -> BoxFuture<'static, Result<()>>;
 
     /// The document closed; the language server hears didClose.
@@ -104,11 +103,20 @@ pub trait WorkspaceService: Send + Sync {
     fn subscribe_diagnostics(
         &self,
     ) -> Option<BoxStream<'static, (PathBuf, Vec<lsp_types::Diagnostic>)>>;
+
+    /// Auto-save sync state: emits `true` when every open document is
+    /// flushed, `false` when something is pending — transitions only.
+    /// Single-subscriber, like diagnostics.
+    fn subscribe_sync_state(&self) -> Option<BoxStream<'static, bool>>;
+
+    /// Flush every dirty document — the app-quit hook.
+    fn flush_all(&self) -> BoxFuture<'static, Result<()>>;
 }
 
 pub struct LocalWorkspace {
     root: PathBuf,
     hub: Arc<LanguageHub>,
+    docs: Arc<DocumentStore>,
 }
 
 impl LocalWorkspace {
@@ -118,7 +126,8 @@ impl LocalWorkspace {
             .with_context(|| format!("cannot open workspace root {}", root.display()))?;
         anyhow::ensure!(root.is_dir(), "{} is not a directory", root.display());
         let hub = Arc::new(LanguageHub::new(root.clone()));
-        Ok(Self { root, hub })
+        let docs = DocumentStore::new();
+        Ok(Self { root, hub, docs })
     }
 }
 
@@ -162,15 +171,6 @@ impl WorkspaceService for LocalWorkspace {
         blocking::unblock(move || {
             std::fs::read_to_string(&path)
                 .with_context(|| format!("cannot read {}", path.display()))
-        })
-        .boxed()
-    }
-
-    fn write_file(&self, path: &Path, contents: String) -> BoxFuture<'static, Result<()>> {
-        let path = path.to_owned();
-        blocking::unblock(move || {
-            std::fs::write(&path, contents)
-                .with_context(|| format!("cannot write {}", path.display()))
         })
         .boxed()
     }
@@ -240,19 +240,21 @@ impl WorkspaceService for LocalWorkspace {
     }
 
     fn document_open(&self, path: &Path, text: String) {
+        self.docs.open(path, text.clone());
         self.hub.document_open(path, text);
     }
 
     fn document_changed(&self, path: &Path, text: String) {
+        self.docs.changed(path, text.clone());
         self.hub.document_changed(path, text);
     }
 
     fn document_save(&self, path: &Path, text: String) -> BoxFuture<'static, Result<()>> {
-        let write = self.write_file(path, text.clone());
+        let docs = self.docs.clone();
         let hub = self.hub.clone();
         let path = path.to_owned();
         async move {
-            write.await?;
+            docs.save_now(&path, text.clone()).await?;
             hub.document_saved(&path, text);
             Ok(())
         }
@@ -261,6 +263,10 @@ impl WorkspaceService for LocalWorkspace {
 
     fn document_closed(&self, path: &Path) {
         self.hub.document_closed(path);
+        let docs = self.docs.clone();
+        let path = path.to_owned();
+        // Final flush-if-dirty happens off-thread; failures are logged there.
+        smol::spawn(async move { docs.close(&path).await }).detach();
     }
 
     fn completion(
@@ -296,6 +302,15 @@ impl WorkspaceService for LocalWorkspace {
         &self,
     ) -> Option<BoxStream<'static, (PathBuf, Vec<lsp_types::Diagnostic>)>> {
         Some(futures::StreamExt::boxed(self.hub.take_diagnostics()?))
+    }
+
+    fn subscribe_sync_state(&self) -> Option<BoxStream<'static, bool>> {
+        Some(futures::StreamExt::boxed(self.docs.take_sync_state()?))
+    }
+
+    fn flush_all(&self) -> BoxFuture<'static, Result<()>> {
+        let docs = self.docs.clone();
+        async move { docs.flush_all().await }.boxed()
     }
 }
 

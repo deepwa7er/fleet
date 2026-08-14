@@ -6,6 +6,7 @@
 //! root with that file already open.
 
 mod app;
+mod documents;
 mod lsp;
 mod search;
 mod workspace;
@@ -60,6 +61,21 @@ fn main() {
             app::init(cx);
             apply_deepwater_theme(cx);
             cx.activate(true);
+
+            // Auto-save's last line of defense: flush every dirty document
+            // before the process exits (docs/remote.md §6).
+            cx.on_app_quit({
+                let workspace = workspace.clone();
+                move |_| {
+                    let flush = workspace.flush_all();
+                    async move {
+                        if let Err(err) = flush.await {
+                            eprintln!("ide: flush on quit failed: {err:#}");
+                        }
+                    }
+                }
+            })
+            .detach();
 
             let options = WindowOptions {
                 titlebar: Some(TitlebarOptions {

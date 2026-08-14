@@ -18,7 +18,7 @@ use futures::{FutureExt as _, StreamExt as _};
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme as _, IconName, WindowExt as _, h_flex,
+    ActiveTheme as _, IconName, h_flex,
     highlighter::{Diagnostic, DiagnosticSeverity, Language},
     input::{Input, InputBaseState, InputEvent, Position, TabSize},
     list::{ListItem, ListState},
@@ -62,7 +62,6 @@ struct OpenFile {
     name: SharedString,
     language: Language,
     editor: Entity<InputBaseState>,
-    dirty: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -78,6 +77,8 @@ pub struct IdeShell {
     search: Option<Entity<ListState<SearchDelegate>>>,
     prev_shift: bool,
     last_shift_tap: Option<Instant>,
+    /// Auto-save state for the status-bar readout: true = all flushed.
+    synced: bool,
 }
 
 impl IdeShell {
@@ -120,6 +121,21 @@ impl IdeShell {
             .detach();
         }
 
+        if let Some(mut sync_state) = workspace.subscribe_sync_state() {
+            cx.spawn(async move |this, cx| {
+                while let Some(synced) = sync_state.next().await {
+                    let alive = this.update(cx, |this, cx| {
+                        this.synced = synced;
+                        cx.notify();
+                    });
+                    if alive.is_err() {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        }
+
         let focus_handle = cx.focus_handle();
         window.defer(cx, {
             let focus_handle = focus_handle.clone();
@@ -135,6 +151,7 @@ impl IdeShell {
             search: None,
             prev_shift: false,
             last_shift_tap: None,
+            synced: true,
         };
         if let Some(path) = initial_file {
             this.open_path(path, window, cx);
@@ -336,12 +353,6 @@ impl IdeShell {
                     if matches!(event, InputEvent::Change) {
                         let text = editor.read(cx).text().to_string();
                         this.workspace.document_changed(&path, text);
-                        if let Some(file) = this.open.iter_mut().find(|file| file.path == path)
-                            && !file.dirty
-                        {
-                            file.dirty = true;
-                            cx.notify();
-                        }
                     }
                 }
             }),
@@ -379,66 +390,34 @@ impl IdeShell {
             name,
             language,
             editor,
-            dirty: false,
             _subscriptions: subscriptions,
         });
         self.active = Some(self.open.len() - 1);
         cx.notify();
     }
 
+    /// ctrl-s: auto-save persists everything anyway; this is the explicit
+    /// "flush now and tell the tools" (didSave → cargo check etc.).
     fn save_active(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.active else { return };
         let file = &self.open[ix];
-        if !file.dirty {
-            return;
-        }
-
         let text = file.editor.read(cx).text().to_string();
         let save = self.workspace.document_save(&file.path, text);
-        let path = file.path.clone();
-        cx.spawn(async move |this, cx| {
-            match save.await {
-                Ok(()) => {
-                    _ = this.update(cx, |this, cx| {
-                        if let Some(file) = this.open.iter_mut().find(|file| file.path == path) {
-                            file.dirty = false;
-                        }
-                        cx.notify();
-                    });
-                }
-                // The file stays dirty, so nothing is silently lost; surfacing
-                // save failures in the UI is a follow-up.
-                Err(err) => eprintln!("ide: save failed: {err:#}"),
+        cx.spawn(async move |_, _| {
+            if let Err(err) = save.await {
+                // Auto-save will retry on the next edit; surfacing write
+                // failures in the UI is a follow-up.
+                eprintln!("ide: save failed: {err:#}");
             }
         })
         .detach();
     }
 
+    /// Closing needs no confirmation: the workspace flushes on close, so
+    /// there is nothing to discard.
     fn close_active(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.active else { return };
-
-        if !self.open[ix].dirty {
-            self.remove_tab(ix, window, cx);
-            return;
-        }
-
-        let shell = cx.entity();
-        let name = self.open[ix].name.clone();
-        window.open_alert_dialog(cx, move |dialog, _window, _cx| {
-            dialog
-                .title(format!("Discard unsaved changes to {name}?"))
-                .on_ok({
-                    let shell = shell.clone();
-                    move |_, window, cx| {
-                        shell.update(cx, |this, cx| {
-                            if let Some(ix) = this.active {
-                                this.remove_tab(ix, window, cx);
-                            }
-                        });
-                        true
-                    }
-                })
-        });
+        self.remove_tab(ix, window, cx);
     }
 
     fn remove_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -521,13 +500,11 @@ impl IdeShell {
             .child(
                 TabBar::new("editor-tabs")
                     .underline()
-                    .children(self.open.iter().map(|file| {
-                        Tab::new().label(if file.dirty {
-                            SharedString::from(format!("● {}", file.name))
-                        } else {
-                            file.name.clone()
-                        })
-                    }))
+                    .children(
+                        self.open
+                            .iter()
+                            .map(|file| Tab::new().label(file.name.clone())),
+                    )
                     .selected_index(active.unwrap_or(0))
                     .on_click(cx.listener(|this, ix: &usize, _window, cx| {
                         this.active = Some(*ix);
@@ -567,6 +544,11 @@ impl IdeShell {
         };
 
         let mut bar = StatusBar::new();
+        // Auto-save readout (docs/remote.md §6): SYNCED when every open
+        // document is flushed. Instrumentation, not an alarm — muted either way.
+        bar = bar.right(instrument(
+            if self.synced { "synced" } else { "syncing…" }.to_string(),
+        ));
         if let Some(ix) = self.active {
             let file = &self.open[ix];
             let position = file.editor.read(cx).cursor_position();
