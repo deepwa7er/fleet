@@ -6,11 +6,40 @@ Decided 2026-08-14 (Fizzy card #51) after ruling out IntelliJ Ultimate
 project). Engines are borrowed — tree-sitter grammars, LSP servers,
 gpui-component's editor widget — the shell is ours.
 
-## Status — milestone 0 (spike)
+## Status — milestone 1 (the shell)
 
-`cargo run -- [path]` opens one window rendering a source file with
-tree-sitter highlighting, line numbers, and indent guides. Defaults to its own
-`src/main.rs`.
+`cargo run -- [path]` opens the shell: project tool window, tabbed editors,
+status bar. A directory argument becomes the workspace root (default: the
+current directory); a file argument roots at its parent with the file open.
+
+- Single-click a file in the tree to open it in a tab; `ctrl-s` saves,
+  `ctrl-f4` closes the active tab (with a confirm dialog if dirty — dirty tabs
+  show `●`).
+- The status bar shows the active file's relative path, cursor position, and
+  language in the DW-001 instrumentation voice.
+- All fs access goes through the `WorkspaceService` trait (`workspace.rs`) —
+  the UI never touches `std::fs`. `LocalWorkspace` is the only implementation
+  until milestone 5.
+- The DW-001 palette lives in `themes/deepwater.json` (light + dark; light is
+  active, following the system appearance is a follow-up). The standing
+  DW-001 exception for this app: 1px `border` lines separate panes.
+- The project tree prunes `.git`, `.worktrees`, `target`, `node_modules`,
+  `tmp` (`PRUNED_DIRS`) — the tree component loads eagerly, so build
+  artifacts must not be walked. Revisit if the component grows lazy loading.
+
+### Verifying UI changes headlessly
+
+No graphical session is needed — render under cage's headless backend and
+screenshot with grim (both installed on the desktop):
+
+```bash
+XDG_RUNTIME_DIR=/run/user/1000 WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
+  cage -- ./target/debug/ide <path> &
+sleep 10 && XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-1 grim shot.png
+```
+
+Note the stale `wayland-0` socket on the desktop: cage lands on `wayland-1` —
+point grim there, not at wayland-0.
 
 ### Spike findings
 
@@ -50,10 +79,8 @@ libxkbcommon-devel libxkbcommon-x11-devel wayland-devel vulkan-loader`.
 ## Roadmap
 
 1. ~~M0 spike~~ — this crate.
-2. M1 shell: project tree, tabs, editor pane, status bar — IntelliJ New UI
-   layout, DW-001 palette (explicit standing exception: 1px borders as
-   separators; the whitespace-only rule doesn't survive editor density). All
-   fs/search/LSP access behind a workspace-service trait from day one.
+2. ~~M1 shell~~ — tree, tabs, editor, status bar; `WorkspaceService` seam in
+   place (card #52).
 3. M2 LSP mux: rust-analyzer, ruby-lsp, gopls, basedpyright, vtsls via
    async-lsp, routed per workspace root, feeding the provider traits above.
 4. M3 search-everywhere (double-shift), backed by ripgrep.

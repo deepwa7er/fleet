@@ -15,6 +15,11 @@ publish = false
 
 [dependencies]
 anyhow = "1"
+# blocking's thread pool keeps LocalWorkspace's sync fs calls off the executor
+# threads; futures supplies the BoxFuture type the WorkspaceService trait needs
+# for dyn-compatibility. Both are already in gpui's tree via smol.
+blocking = "1"
+futures = "0.3"
 # gpui and gpui_platform are declared exactly as gpui-component declares them
 # (version + git, no rev) so cargo unifies both onto a single gpui source;
 # pinning a rev here would create a second, conflicting copy. Reproducibility
