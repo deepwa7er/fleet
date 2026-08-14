@@ -104,12 +104,31 @@ local mode** — that is its acceptance test.
   (`writeFile` + `didSave`). There is no collaborative sync problem: single
   user, single client, save-based persistence. The CRDT question from the
   original design session dissolves under these constraints.
-- **Connection drop loses nothing.** Dirty buffers are client memory; saves
-  fail visibly and the buffer stays dirty. Reconnect = new session (per-
-  session lifecycle makes this the same code path as launch): re-`initialize`,
-  re-`didOpen` every open tab, language servers re-warm. A status-bar
-  indicator shows connection state; reconnect is explicit (a click/action),
-  not a silent retry loop.
+- **Connection drop loses nothing.** Dirty buffers are client memory; the
+  wire dying doesn't touch them. Saves fail visibly and the buffer stays
+  dirty until a session exists again.
+- **Client death is the real loss risk** — an app crash or Mac reboot drops
+  unsaved buffers, same as any IDE. Mitigation (client-only, no protocol
+  impact, slice 5d): dirty buffers are periodically snapshotted to a
+  Mac-local drafts directory and offered for restore on relaunch.
+- **Reconnect = a fresh session carrying the dirty state.** Per-session
+  lifecycle makes reconnect the same code path as launch: `initialize`, then
+  re-`didOpen` for every open tab — and `didOpen` sends the client's
+  *current buffer text*, unsaved edits included, so language servers and
+  diagnostics resume against what the user is actually looking at; the next
+  save persists it. Language servers re-warm (the accepted per-session cost).
+- **Divergence guard.** The client keeps a baseline hash per document (the
+  content at last open/save). On reconnect and on every save, the server
+  reports the file's current hash; a mismatch means the file changed
+  server-side (e.g. a `git pull` on the desktop) and flags the tab —
+  "changed on disk: keep mine / reload" — instead of silently overwriting.
+  No merge machinery; just the guard and the choice. (`writeFile` grows an
+  `expected_hash` parameter; the reconnect check rides `didOpen`'s reply.)
+- **Bounded auto-reconnect.** On connection loss the client retries a few
+  times with backoff (~15s total) — this absorbs the everyday case, the
+  MacBook sleeping and waking — then surfaces a status-bar banner with an
+  explicit reconnect action. No infinite background loop: the desktop is
+  usually powered off, and hammering it silently helps nobody.
 - Desktop powered off at launch: fail within 10s with the machine's actual
   state ("desktop is unreachable — it is usually powered off; check
   `tailscale status`").
@@ -140,9 +159,11 @@ client on the Mac is the only honest path for a gpui app today.
 2. **5b — the seam refactor**: language ops fold into `WorkspaceService`;
    local mode byte-for-byte behavior-identical.
 3. **5c — remote language intelligence**: LSP hub server-side, diagnostics
-   stream over RPC, reconnect flow.
+   stream over RPC, reconnect flow (bounded auto-retry + re-`didOpen` with
+   dirty buffers), divergence guard.
 4. **5d — Mac onboarding + polish**: build docs, connection status UI,
-   fast-fail messages, protocol-version error UX.
+   fast-fail messages, protocol-version error UX, client-side draft
+   persistence for unsaved buffers.
 
 ## 10. Out of scope (recorded so they stay deliberate)
 
