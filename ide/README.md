@@ -144,5 +144,10 @@ libxkbcommon-devel libxkbcommon-x11-devel wayland-devel vulkan-loader`.
    workspace — `ide-server --stdio` (install on the host:
    `cargo install --path ide --bin ide-server`) serves a `LocalWorkspace`
    over JSON-RPC; auto-save runs server-side; the crate is now lib + two
-   bins; integration tests drive the real server binary over pipes.
-   No language intelligence over the wire until 5d (card #58).
+   bins; integration tests drive the real server binary over pipes
+   (card #58).
+   ~~5d (remote language + reconnect)~~ landed: diagnostics, completion,
+   hover, and definition cross the wire (trigger characters pushed per
+   document); a dead connection makes editors read-only with a banner,
+   auto-reconnect retries ~15s (`ctrl-shift-r` after that), and a restored
+   session re-reads every open tab from server truth (card #59).

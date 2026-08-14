@@ -48,7 +48,7 @@ fn main() {
                             .and_then(|name| name.to_str())
                             .unwrap_or(remote_path)
                     );
-                    (Arc::new(workspace), None, title)
+                    (workspace as Arc<dyn WorkspaceService>, None, title)
                 }
                 Err(err) => {
                     eprintln!(

@@ -26,6 +26,15 @@ pub mod method {
     pub const DOC_CLOSE: &str = "document/didClose";
     /// Server→client notification: the auto-save sync readout.
     pub const SYNC_STATE: &str = "document/syncState";
+
+    pub const LANG_COMPLETION: &str = "language/completion";
+    pub const LANG_HOVER: &str = "language/hover";
+    pub const LANG_DEFINITION: &str = "language/definition";
+    /// Server→client notification: publishDiagnostics, path-keyed.
+    pub const LANG_DIAGNOSTICS: &str = "language/diagnostics";
+    /// Server→client notification: a document's completion trigger
+    /// characters, pushed once its language server is up.
+    pub const LANG_TRIGGERS: &str = "language/completionTriggers";
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,6 +72,31 @@ pub struct DocTextParams {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SyncStateParams {
     pub synced: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PositionParams {
+    pub path: PathBuf,
+    pub position: lsp_types::Position,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CompletionRequestParams {
+    pub path: PathBuf,
+    pub position: lsp_types::Position,
+    pub context: lsp_types::CompletionContext,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DiagnosticsParams {
+    pub path: PathBuf,
+    pub diagnostics: Vec<lsp_types::Diagnostic>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TriggersParams {
+    pub path: PathBuf,
+    pub triggers: Vec<String>,
 }
 
 pub mod codec {

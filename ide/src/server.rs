@@ -83,12 +83,22 @@ pub async fn serve_stdio() -> Result<()> {
         let outgoing = outgoing.clone();
         smol::spawn(async move {
             while let Some(synced) = sync.next().await {
-                let frame = frame(&json!({
-                    "jsonrpc": "2.0",
-                    "method": method::SYNC_STATE,
-                    "params": rpc::SyncStateParams { synced },
-                }));
-                if outgoing.unbounded_send(frame).is_err() {
+                if notify(&outgoing, method::SYNC_STATE, &rpc::SyncStateParams { synced })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+    });
+
+    // Forward language-server diagnostics as notifications.
+    let diagnostics_task = workspace.subscribe_diagnostics().map(|mut diagnostics| {
+        let outgoing = outgoing.clone();
+        smol::spawn(async move {
+            while let Some((path, diagnostics)) = diagnostics.next().await {
+                let params = rpc::DiagnosticsParams { path, diagnostics };
+                if notify(&outgoing, method::LANG_DIAGNOSTICS, &params).is_err() {
                     break;
                 }
             }
@@ -115,6 +125,7 @@ pub async fn serve_stdio() -> Result<()> {
                 // Close the channel so the writer drains and ends, then wait
                 // for it — dropping it would cancel unsent frames.
                 drop(sync_task);
+                drop(diagnostics_task);
                 drop(outgoing);
                 writer.await;
                 return Ok(());
@@ -151,6 +162,53 @@ pub async fn serve_stdio() -> Result<()> {
                 };
                 respond(&outgoing, id, reply);
             }
+            // Language requests can be slow (a language server mid-index);
+            // they run detached so they never stall the request pipe —
+            // responses correlate by id regardless of order.
+            (Some(id), method::LANG_COMPLETION) => match parse::<rpc::CompletionRequestParams>(
+                params,
+            ) {
+                Ok(p) => {
+                    let request = workspace.completion(&p.path, p.position, p.context);
+                    let outgoing = outgoing.clone();
+                    smol::spawn(async move {
+                        let reply = request.await.map(|response| {
+                            serde_json::to_value(response).expect("completions serialize")
+                        });
+                        respond(&outgoing, id, reply);
+                    })
+                    .detach();
+                }
+                Err(err) => respond_err(&outgoing, id, format!("{err:#}")),
+            },
+            (Some(id), method::LANG_HOVER) => match parse::<rpc::PositionParams>(params) {
+                Ok(p) => {
+                    let request = workspace.hover(&p.path, p.position);
+                    let outgoing = outgoing.clone();
+                    smol::spawn(async move {
+                        let reply = request
+                            .await
+                            .map(|hover| serde_json::to_value(hover).expect("hover serializes"));
+                        respond(&outgoing, id, reply);
+                    })
+                    .detach();
+                }
+                Err(err) => respond_err(&outgoing, id, format!("{err:#}")),
+            },
+            (Some(id), method::LANG_DEFINITION) => match parse::<rpc::PositionParams>(params) {
+                Ok(p) => {
+                    let request = workspace.definition(&p.path, p.position);
+                    let outgoing = outgoing.clone();
+                    smol::spawn(async move {
+                        let reply = request
+                            .await
+                            .map(|links| serde_json::to_value(links).expect("links serialize"));
+                        respond(&outgoing, id, reply);
+                    })
+                    .detach();
+                }
+                Err(err) => respond_err(&outgoing, id, format!("{err:#}")),
+            },
             (Some(id), method::DOC_SAVE) => {
                 let reply = match parse::<rpc::DocTextParams>(params) {
                     Ok(p) => workspace
@@ -164,6 +222,22 @@ pub async fn serve_stdio() -> Result<()> {
             (None, method::DOC_OPEN) => {
                 if let Ok(p) = parse::<rpc::DocTextParams>(params) {
                     workspace.document_open(&p.path, p.text);
+                    // Push this document's completion triggers once its
+                    // language server is up; empty sets are not worth a frame.
+                    let triggers = workspace.completion_triggers_ready(&p.path);
+                    let outgoing = outgoing.clone();
+                    let path = p.path;
+                    smol::spawn(async move {
+                        let triggers = triggers.await;
+                        if !triggers.is_empty() {
+                            let _ = notify(
+                                &outgoing,
+                                method::LANG_TRIGGERS,
+                                &rpc::TriggersParams { path, triggers },
+                            );
+                        }
+                    })
+                    .detach();
                 }
             }
             (None, method::DOC_CHANGE) => {
@@ -189,9 +263,24 @@ pub async fn serve_stdio() -> Result<()> {
         eprintln!("ide-server: flush on disconnect failed: {err:#}");
     }
     drop(sync_task);
+    drop(diagnostics_task);
     drop(outgoing);
     writer.await;
     Ok(())
+}
+
+fn notify(
+    outgoing: &mpsc::UnboundedSender<Vec<u8>>,
+    method: &'static str,
+    params: &impl Serialize,
+) -> Result<()> {
+    outgoing
+        .unbounded_send(frame(&json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        })))
+        .map_err(|_| anyhow!("writer gone"))
 }
 
 fn parse_initialize(message: &Value) -> Result<rpc::InitializeParams> {

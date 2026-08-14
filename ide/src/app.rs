@@ -30,12 +30,21 @@ use gpui_component::{
 };
 
 use ide::lsp::uri_to_path;
-use ide::workspace::WorkspaceService;
+use ide::workspace::{ConnectionEvent, WorkspaceService};
 
 use crate::providers::EditorLsp;
 use crate::search::SearchDelegate;
 
-actions!(ide, [Save, CloseTab, OpenSearch]);
+actions!(ide, [Save, CloseTab, OpenSearch, Reconnect]);
+
+/// The shell's view of the remote connection; local mode never leaves
+/// `Connected` (docs/remote.md §6).
+#[derive(Clone, Copy, PartialEq)]
+enum ConnState {
+    Connected,
+    Reconnecting,
+    Down,
+}
 
 /// Two shift taps this close together open search-everywhere.
 const DOUBLE_SHIFT_WINDOW: Duration = Duration::from_millis(400);
@@ -47,6 +56,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-f4", CloseTab, Some("IdeShell")),
         // Chord fallback for search-everywhere; double-shift is the reflex.
         KeyBinding::new("ctrl-shift-f", OpenSearch, Some("IdeShell")),
+        // Manual reconnect once the automatic round gives up.
+        KeyBinding::new("ctrl-shift-r", Reconnect, Some("IdeShell")),
     ]);
 }
 
@@ -80,6 +91,7 @@ pub struct IdeShell {
     last_shift_tap: Option<Instant>,
     /// Auto-save state for the status-bar readout: true = all flushed.
     synced: bool,
+    connection: ConnState,
 }
 
 impl IdeShell {
@@ -122,6 +134,30 @@ impl IdeShell {
             .detach();
         }
 
+        if let Some(mut connection) = workspace.subscribe_connection() {
+            cx.spawn_in(window, async move |this, cx| {
+                while let Some(event) = connection.next().await {
+                    let alive = this.update_in(cx, |this, window, cx| {
+                        this.connection = match event {
+                            ConnectionEvent::Lost => ConnState::Down,
+                            ConnectionEvent::Reconnecting => ConnState::Reconnecting,
+                            ConnectionEvent::Restored => ConnState::Connected,
+                        };
+                        if event == ConnectionEvent::Restored {
+                            // Fresh session: re-read every open tab from the
+                            // server — its content is the truth (§6).
+                            this.refresh_open_documents(window, cx);
+                        }
+                        cx.notify();
+                    });
+                    if alive.is_err() {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        }
+
         if let Some(mut sync_state) = workspace.subscribe_sync_state() {
             cx.spawn(async move |this, cx| {
                 while let Some(synced) = sync_state.next().await {
@@ -153,6 +189,7 @@ impl IdeShell {
             prev_shift: false,
             last_shift_tap: None,
             synced: true,
+            connection: ConnState::Connected,
         };
         if let Some(path) = initial_file {
             this.open_path(path, window, cx);
@@ -219,6 +256,29 @@ impl IdeShell {
 
     fn on_open_search(&mut self, _: &OpenSearch, window: &mut Window, cx: &mut Context<Self>) {
         self.open_search(window, cx);
+    }
+
+    fn on_reconnect(&mut self, _: &Reconnect, _window: &mut Window, _cx: &mut Context<Self>) {
+        self.workspace.reconnect();
+    }
+
+    /// After a restored session, adopt server truth into every open editor
+    /// and re-open the documents server-side.
+    fn refresh_open_documents(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for file in &self.open {
+            let path = file.path.clone();
+            let editor = file.editor.clone();
+            let read = self.workspace.read_file(&path);
+            let workspace = self.workspace.clone();
+            cx.spawn_in(window, async move |_, cx| {
+                let Ok(text) = read.await else { return };
+                workspace.document_open(&path, text.clone());
+                _ = editor.update_in(cx, |state, window, cx| {
+                    state.set_value(text, window, cx);
+                });
+            })
+            .detach();
+        }
     }
 
     fn on_modifiers_changed(
@@ -494,10 +554,28 @@ impl IdeShell {
 
     fn render_editor_area(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.active;
+        let connected = self.connection == ConnState::Connected;
         v_flex()
             .flex_1()
             .min_w_0()
             .h_full()
+            .when(!connected, |this| {
+                // Read-only until the session is back (docs/remote.md §6).
+                this.child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(cx.theme().danger)
+                        .child(match self.connection {
+                            ConnState::Reconnecting => "DISCONNECTED — RECONNECTING…",
+                            _ => "DISCONNECTED — CTRL-SHIFT-R TO RECONNECT",
+                        }),
+                )
+            })
             .child(
                 TabBar::new("editor-tabs")
                     .underline()
@@ -514,6 +592,7 @@ impl IdeShell {
             )
             .child(match active {
                 Some(ix) => Input::from_base(&self.open[ix].editor)
+                    .readonly(!connected)
                     .bordered(false)
                     .focus_bordered(false)
                     .p_0()
@@ -611,6 +690,7 @@ impl Render for IdeShell {
             .on_action(cx.listener(Self::save_active))
             .on_action(cx.listener(Self::close_active))
             .on_action(cx.listener(Self::on_open_search))
+            .on_action(cx.listener(Self::on_reconnect))
             .on_modifiers_changed(cx.listener(|this, event, window, cx| {
                 this.on_modifiers_changed(event, window, cx);
             }))
