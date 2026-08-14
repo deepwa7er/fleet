@@ -1,4 +1,6 @@
 /target
+# ide is a separate Cargo workspace with its own build dir (see ide/README.md).
+/ide/target
 node_modules/
 .DS_Store
 
