@@ -15,10 +15,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::{mpsc, oneshot};
 use futures::io::BufReader;
-use futures::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, SinkExt as _, StreamExt as _};
+use futures::{AsyncBufReadExt as _, AsyncWriteExt as _, SinkExt as _, StreamExt as _};
 use lsp_types::notification::Notification as _;
-use serde::Serialize;
 use serde_json::{Value, json};
+
+use crate::rpc::codec::{frame, read_message};
 
 /// Diagnostics published by any server are funneled into one channel owned by
 /// the `LspStore`, tagged with the document URI.
@@ -146,13 +147,6 @@ impl Drop for LspClient {
     }
 }
 
-fn frame(message: &impl Serialize) -> Vec<u8> {
-    let body = serde_json::to_vec(message).expect("lsp messages serialize");
-    let mut frame = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
-    frame.extend(body);
-    frame
-}
-
 async fn write_loop(mut stdin: smol::process::ChildStdin, mut rx: mpsc::UnboundedReceiver<Vec<u8>>) {
     while let Some(frame) = rx.next().await {
         if stdin.write_all(&frame).await.is_err() || stdin.flush().await.is_err() {
@@ -246,27 +240,6 @@ fn respond_to_server_request(message: &Value, method: &str, id: Value) -> Value 
             "error": { "code": -32601, "message": format!("method not found: {method}") },
         }),
     }
-}
-
-async fn read_message(reader: &mut BufReader<smol::process::ChildStdout>) -> Result<Value> {
-    let mut content_length: Option<usize> = None;
-    loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line).await? == 0 {
-            anyhow::bail!("eof");
-        }
-        let line = line.trim_end();
-        if line.is_empty() {
-            break;
-        }
-        if let Some(value) = line.strip_prefix("Content-Length:") {
-            content_length = Some(value.trim().parse()?);
-        }
-    }
-    let content_length = content_length.context("missing Content-Length header")?;
-    let mut body = vec![0u8; content_length];
-    reader.read_exact(&mut body).await?;
-    Ok(serde_json::from_slice(&body)?)
 }
 
 async fn drain_stderr(stderr: smol::process::ChildStderr, server: String) {

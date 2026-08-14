@@ -16,7 +16,7 @@ use futures::stream::BoxStream;
 use crate::documents::DocumentStore;
 use crate::lsp::hub::LanguageHub;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DirEntry {
     pub path: PathBuf,
     pub name: String,
@@ -24,7 +24,7 @@ pub struct DirEntry {
 }
 
 /// One full-text search hit.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TextMatch {
     /// Relative to the workspace root.
     pub path: PathBuf,
