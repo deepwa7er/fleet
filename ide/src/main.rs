@@ -33,7 +33,11 @@ fn main() {
                 "-o".to_string(),
                 "BatchMode=yes".to_string(),
                 host.to_string(),
-                "ide-server".to_string(),
+                // Explicit path, not a PATH lookup: `ssh host cmd` runs a
+                // non-interactive shell (zsh reads only ~/.zshenv there), so
+                // PATH additions from rc files don't apply. cargo install's
+                // destination is fixed, so name it. The remote shell expands ~.
+                "~/.cargo/bin/ide-server".to_string(),
                 "--stdio".to_string(),
             ];
             let connect = RemoteWorkspace::connect("ssh", &ssh_args, remote_path);
