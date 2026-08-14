@@ -3,6 +3,10 @@
 # by deploy.toml presence there); shared library crates live under crates/.
 [workspace]
 resolver = "2"
+# ide is its own workspace on purpose: the gpui stack is huge and needs GUI
+# system libraries, and as a member it would compile inside every
+# `cargo test --workspace` gate run. Its gates run from ide/ (see ide/README.md).
+exclude = ["ide"]
 members = [
     "breakwater",
     "crates/fizzy",
