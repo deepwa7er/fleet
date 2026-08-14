@@ -36,6 +36,7 @@ Mac (deepwater-1)                      Fedora desktop (`ssh desktop`)
 | Server lifecycle | **Pure per-session** — `ide-server` lives exactly as long as the SSH connection | Simplest model; nothing left running on the desktop. Accepted cost, chosen with eyes open: every IDE launch pays rust-analyzer's fleet reindex (~30–60s; diagnostics warm up progressively). If daily use proves this painful, a linger mode (server survives disconnect ~30 min on a local socket, reattach warm) is the designed follow-up — it changes only the transport bootstrap, nothing in the protocol. |
 | Wire format | **JSON-RPC 2.0, `Content-Length` framing over stdio** | Identical framing and correlation machinery to the milestone-2 LSP client — proven code, generalized into a shared transport module used by both. Human-readable frames (debug log flag). Payloads are dominated by file text, so binary encoding buys little; the method surface is encoding-agnostic if that ever changes. |
 | Transport & auth | **`ssh <alias> ide-server` via the existing key-based alias** | No ports, no daemon, no new auth surface — rides `~/.ssh/config`. Deliberately *not* Tailscale SSH: its ACL runs in `check` mode, and a periodic browser re-auth would sever a long-lived IDE session. Probes use `-o ConnectTimeout=10 -o BatchMode=yes` so a powered-off desktop (its usual state) fails fast with a clear message, not a hang. |
+| Document authority | **Server-authoritative + auto-save, both modes; read-only on disconnect** | Joe's guiding principle: as little client-side sync machinery as possible. Replaces an earlier explicit-save draft of this design — deletes drafts, content-hash guards, dirty tracking, and the discard dialog outright. See §6. |
 
 ## 3. Invocation
 
@@ -75,9 +76,13 @@ chains):
 
 | RPC | Notes |
 |---|---|
-| `document/didOpen` / `didChange` / `didSave` / `didClose` | notifications; full-text sync, same as today |
+| `document/didOpen` / `didChange` / `didClose` | notifications; full-text, ordered per document. **`didChange` is the write path**: the server holds the document and auto-saves on idle debounce (§6) |
+| `document/save` | request; `ctrl-s` — immediate flush to disk + `didSave` to language servers (keeps save-triggered diagnostics like cargo check meaningful) |
 | `language/completion`, `language/hover`, `language/definition` | requests; `lsp_types` passthrough, same types both ends |
 | `language/diagnostics` | **server→client notification**, pushed as language servers publish |
+
+`workspace/writeFile` remains for non-document writes (future tooling);
+open-document persistence goes exclusively through the document pipeline.
 
 ## 5. The seam refactor (the load-bearing piece)
 
@@ -90,6 +95,11 @@ notifications, the three request methods, and a diagnostics stream —
 - `LocalWorkspace` grows an internal LSP hub. `LspStore` sheds its gpui
   `Entity`/`Context` skin (plain struct + channels + a `BackgroundExecutor`
   handle); its op-chain and routing logic move unchanged.
+- **The document pipeline is also where auto-save lives** (§6): each
+  workspace implementation owns its open documents and persists them on
+  idle — locally by writing directly, remotely because the pipeline *is*
+  the wire and the server does the same thing on its side. The UI never
+  knows how persistence happens.
 - `EditorLsp` (the provider bridge installed on editors) calls trait methods
   instead of reading an entity — it stops caring whether the workspace is
   local or remote. `RemoteWorkspace` implements the same methods as RPCs.
@@ -98,37 +108,44 @@ notifications, the three request methods, and a diagnostics stream —
 This refactor lands as its own PR (slice 5b) with **zero behavior change in
 local mode** — that is its acceptance test.
 
-## 6. Buffer model & failure modes
+## 6. Document model: server-authoritative, auto-save
 
-- Editing is client-local; the file is only written on explicit save
-  (`writeFile` + `didSave`). There is no collaborative sync problem: single
-  user, single client, save-based persistence. The CRDT question from the
-  original design session dissolves under these constraints.
-- **Connection drop loses nothing.** Dirty buffers are client memory; the
-  wire dying doesn't touch them. Saves fail visibly and the buffer stays
-  dirty until a session exists again.
-- **Client death is the real loss risk** — an app crash or Mac reboot drops
-  unsaved buffers, same as any IDE. Mitigation (client-only, no protocol
-  impact, slice 5d): dirty buffers are periodically snapshotted to a
-  Mac-local drafts directory and offered for restore on relaunch.
-- **Reconnect = a fresh session carrying the dirty state.** Per-session
-  lifecycle makes reconnect the same code path as launch: `initialize`, then
-  re-`didOpen` for every open tab — and `didOpen` sends the client's
-  *current buffer text*, unsaved edits included, so language servers and
-  diagnostics resume against what the user is actually looking at; the next
-  save persists it. Language servers re-warm (the accepted per-session cost).
-- **Divergence guard.** The client keeps a baseline hash per document (the
-  content at last open/save). On reconnect and on every save, the server
-  reports the file's current hash; a mismatch means the file changed
-  server-side (e.g. a `git pull` on the desktop) and flags the tab —
-  "changed on disk: keep mine / reload" — instead of silently overwriting.
-  No merge machinery; just the guard and the choice. (`writeFile` grows an
-  `expected_hash` parameter; the reconnect check rides `didOpen`'s reply.)
-- **Bounded auto-reconnect.** On connection loss the client retries a few
-  times with backoff (~15s total) — this absorbs the everyday case, the
-  MacBook sleeping and waking — then surfaces a status-bar banner with an
-  explicit reconnect action. No infinite background loop: the desktop is
-  usually powered off, and hammering it silently helps nobody.
+Decided by Joe 2026-08-17, replacing an earlier explicit-save draft of this
+section. Guiding principle: **as little client-side sync machinery as
+possible; the server is the source of truth.**
+
+- **The server owns file content.** The client buffer is a view + edit
+  surface. Every edit streams to the server as the existing ordered
+  full-text `didChange`; the server holds the document in memory and
+  **auto-saves to disk after a ~500ms idle debounce**, and on
+  `didClose`/`shutdown`. `ctrl-s` stays as `document/save` — an immediate
+  flush + `didSave`, which is also what keeps save-triggered diagnostics
+  (cargo check) meaningful.
+- **No dirty state.** The tab `●`, the discard-changes dialog, and dirty
+  tracking are deleted from the shell. The status bar gains a
+  `SYNCED / SYNCING` readout in the instrumentation voice. The only
+  per-document client state is the version counter LSP already required.
+- **Disconnect → read-only.** If the server is unreachable, editors show a
+  banner and stop accepting edits. Bounded auto-reconnect — a few backoff
+  retries over ~15s, absorbing the everyday MacBook sleep/wake — then an
+  explicit reconnect action. No infinite loop at a usually-powered-off
+  desktop.
+- **Reconnect re-reads the truth.** A fresh session (per-session lifecycle
+  makes it the launch path): `initialize`, re-open each tab from server
+  content. No baselines, no hashes, no merge — divergence cannot exist
+  because offline editing cannot happen.
+- **Loss window: sub-second.** Only edits in flight at the instant the wire
+  dies — typically none. Client death (app crash, Mac reboot) loses nothing
+  beyond the same window; no draft persistence is needed or designed.
+- **Honest costs, accepted:** intermediate states reach disk continuously —
+  `git diff` on the desktop shows in-progress edits, and file watchers see
+  churn. And an external edit to an *open* file (a server-side `git pull`)
+  can be clobbered by the next auto-save. File watching, already on the
+  backlog for both modes, is the fix, with the rule: **disk wins when the
+  document is idle, typing wins when active.**
+- **Local mode behaves identically** — auto-save through the same document
+  pipeline — so the two modes never diverge in feel. That change lands
+  first, before any remote code (slice 5b).
 - Desktop powered off at launch: fail within 10s with the machine's actual
   state ("desktop is unreachable — it is usually powered off; check
   `tailscale status`").
@@ -152,22 +169,28 @@ client on the Mac is the only honest path for a gpui app today.
 
 ## 9. Slices (one card = one branch = one PR each)
 
-1. **5a — transport + fs/search remote**: shared JSON-RPC module, `ide-server`
-   bin serving the workspace methods, `RemoteWorkspace`, `ide <alias>:<path>`
-   bootstrap, integration test. Deliverable: remote tree/open/edit/save/search
-   with no language intelligence.
-2. **5b — the seam refactor**: language ops fold into `WorkspaceService`;
-   local mode byte-for-byte behavior-identical.
-3. **5c — remote language intelligence**: LSP hub server-side, diagnostics
-   stream over RPC, reconnect flow (bounded auto-retry + re-`didOpen` with
-   dirty buffers), divergence guard.
-4. **5d — Mac onboarding + polish**: build docs, connection status UI,
-   fast-fail messages, protocol-version error UX, client-side draft
-   persistence for unsaved buffers.
+1. **5a — the seam refactor**: language + document ops fold into
+   `WorkspaceService`; `LspStore` sheds its gpui skin; local mode
+   byte-for-byte behavior-identical. Pure refactor, its own acceptance test.
+2. **5b — auto-save (local)**: server-authoritative document model behind
+   the trait — idle-debounce persistence, dirty tracking / tab `●` /
+   discard dialog deleted, `SYNCED / SYNCING` status readout. Lands before
+   any remote code so remote adds no new document semantics.
+3. **5c — transport + remote workspace**: shared JSON-RPC module,
+   `ide-server` bin, `RemoteWorkspace` covering fs, search, and the document
+   pipeline (server-side auto-save), `ide <alias>:<path>` bootstrap,
+   integration test over child-process stdio. Language requests return
+   empty until 5d. Deliverable: full remote editing, no intellisense yet.
+4. **5d — remote language intelligence + reconnect**: LSP hub server-side,
+   diagnostics stream over RPC, read-only-on-disconnect with bounded
+   auto-retry and the reconnect banner.
+5. **5e — Mac onboarding + polish**: build docs, connection status UI,
+   fast-fail messages, protocol-version error UX.
 
 ## 10. Out of scope (recorded so they stay deliberate)
 
 Incremental document sync (follow-up regardless of remote), file watching /
-tree refresh (M4 backlog), linger/warm-server mode (§2, only if reindex pain
-is real), multi-client or collaborative editing (never a goal), wake-on-LAN
-for the sleeping desktop.
+tree refresh (M4 backlog; when it lands, the auto-save conflict rule is
+"disk wins when idle, typing wins when active" — §6), linger/warm-server
+mode (§2, only if reindex pain is real), multi-client or collaborative
+editing (never a goal), wake-on-LAN for the sleeping desktop.
