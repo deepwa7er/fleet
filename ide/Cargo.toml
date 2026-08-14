@@ -20,6 +20,11 @@ anyhow = "1"
 # for dyn-compatibility. Both are already in gpui's tree via smol.
 blocking = "1"
 futures = "0.3"
+# Matches gpui-component's lsp-types exactly so provider traits are passthrough.
+lsp-types = { version = "0.97", features = ["proposed"] }
+serde = "1"
+serde_json = "1"
+smol = "2"
 # gpui and gpui_platform are declared exactly as gpui-component declares them
 # (version + git, no rev) so cargo unifies both onto a single gpui source;
 # pinning a rev here would create a second, conflicting copy. Reproducibility

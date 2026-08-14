@@ -6,6 +6,7 @@
 //! root with that file already open.
 
 mod app;
+mod lsp;
 mod workspace;
 
 use std::path::PathBuf;

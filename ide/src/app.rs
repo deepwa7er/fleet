@@ -16,8 +16,8 @@ use futures::future::LocalBoxFuture;
 use gpui::*;
 use gpui_component::{
     ActiveTheme as _, IconName, WindowExt as _, h_flex,
-    highlighter::Language,
-    input::{Input, InputBaseState, InputEvent, TabSize},
+    highlighter::{Diagnostic, DiagnosticSeverity, Language},
+    input::{Input, InputBaseState, InputEvent, Position, TabSize},
     list::ListItem,
     resizable::{h_resizable, resizable_panel},
     status_bar::StatusBar,
@@ -26,6 +26,7 @@ use gpui_component::{
     v_flex,
 };
 
+use crate::lsp::{LspEvent, LspStore, uri_to_path};
 use crate::workspace::WorkspaceService;
 
 actions!(ide, [Save, CloseTab]);
@@ -58,8 +59,10 @@ struct OpenFile {
 pub struct IdeShell {
     workspace: Arc<dyn WorkspaceService>,
     tree_state: Entity<TreeState>,
+    lsp: Entity<LspStore>,
     open: Vec<OpenFile>,
     active: Option<usize>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl IdeShell {
@@ -85,11 +88,16 @@ impl IdeShell {
         })
         .detach();
 
+        let lsp = cx.new(|cx| LspStore::new(workspace.root().to_owned(), cx));
+        let subscriptions = vec![cx.subscribe(&lsp, Self::on_lsp_event)];
+
         let mut this = Self {
             workspace,
             tree_state,
+            lsp,
             open: Vec::new(),
             active: None,
+            _subscriptions: subscriptions,
         };
         if let Some(path) = initial_file {
             this.open_path(path, window, cx);
@@ -97,15 +105,53 @@ impl IdeShell {
         this
     }
 
-    fn open_path(&mut self, path: PathBuf, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_lsp_event(&mut self, _: Entity<LspStore>, event: &LspEvent, cx: &mut Context<Self>) {
+        let LspEvent::Diagnostics { uri, diagnostics } = event;
+        let Some(path) = uri_to_path(uri) else { return };
+        let Some(file) = self.open.iter().find(|file| file.path == path) else {
+            return;
+        };
+        let converted: Vec<Diagnostic> = diagnostics.iter().map(convert_diagnostic).collect();
+        file.editor.update(cx, |state, cx| {
+            if let Some(set) = state.diagnostics_mut() {
+                set.clear();
+                set.extend(converted);
+            }
+            cx.notify();
+        });
+    }
+
+    fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_path_at(path, None, window, cx);
+    }
+
+    /// Open (or focus) `path`, optionally jumping to `goto` once it is open —
+    /// the cross-file half of go-to-definition.
+    fn open_path_at(
+        &mut self,
+        path: PathBuf,
+        goto: Option<lsp_types::Range>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(ix) = self.open.iter().position(|file| file.path == path) {
             self.active = Some(ix);
+            if let Some(range) = goto {
+                self.open[ix].editor.update(cx, |state, cx| {
+                    state.set_cursor_position(
+                        Position::new(range.start.line, range.start.character),
+                        window,
+                        cx,
+                    );
+                });
+                self.open[ix].editor.focus_handle(cx).focus(window, cx);
+            }
             cx.notify();
             return;
         }
 
         let read = self.workspace.read_file(&path);
-        cx.spawn_in(_window, async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let content = match read.await {
                 Ok(content) => content,
                 Err(err) => {
@@ -114,7 +160,7 @@ impl IdeShell {
                 }
             };
             _ = this.update_in(cx, |this, window, cx| {
-                this.finish_open(path, content, window, cx);
+                this.finish_open(path, content, goto, window, cx);
             });
         })
         .detach();
@@ -124,11 +170,16 @@ impl IdeShell {
         &mut self,
         path: PathBuf,
         content: String,
+        goto: Option<lsp_types::Range>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let language =
             Language::from_str(path.extension().and_then(|ext| ext.to_str()).unwrap_or(""));
+
+        let bridge = self
+            .lsp
+            .update(cx, |store, cx| store.attach(&path, content.clone(), cx));
 
         let editor = cx.new(|cx| {
             InputBaseState::new(window, cx)
@@ -142,16 +193,51 @@ impl IdeShell {
                 .default_value(content)
         });
 
+        let shell = cx.entity().downgrade();
+        editor.update(cx, |state, _| {
+            if let Some(bridge) = &bridge {
+                state.lsp.completion_provider = Some(bridge.clone());
+                state.lsp.hover_provider = Some(bridge.clone());
+                state.lsp.definition_provider = Some(bridge.clone());
+            }
+            // Cross-file go-to-definition: the shell opens the target tab;
+            // same-file jumps fall through to the editor's own handling.
+            let own_path = path.clone();
+            state.lsp.show_document = Some(std::rc::Rc::new(
+                move |params: &lsp_types::ShowDocumentParams, window, cx| {
+                    let Some(target) = uri_to_path(&params.uri) else {
+                        return false;
+                    };
+                    if target == own_path {
+                        return false;
+                    }
+                    let Some(shell) = shell.upgrade() else {
+                        return false;
+                    };
+                    let selection = params.selection;
+                    shell.update(cx, |this, cx| {
+                        this.open_path_at(target, selection, window, cx);
+                    });
+                    true
+                },
+            ));
+        });
+
         let subscriptions = vec![
             cx.subscribe(&editor, {
                 let path = path.clone();
-                move |this: &mut Self, _, event: &InputEvent, cx| {
-                    if matches!(event, InputEvent::Change)
-                        && let Some(file) = this.open.iter_mut().find(|file| file.path == path)
-                        && !file.dirty
-                    {
-                        file.dirty = true;
-                        cx.notify();
+                move |this: &mut Self, editor, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        let text = editor.read(cx).text().to_string();
+                        this.lsp.update(cx, |store, cx| {
+                            store.document_changed(&path, text, cx);
+                        });
+                        if let Some(file) = this.open.iter_mut().find(|file| file.path == path)
+                            && !file.dirty
+                        {
+                            file.dirty = true;
+                            cx.notify();
+                        }
                     }
                 }
             }),
@@ -174,6 +260,15 @@ impl IdeShell {
             .into();
 
         editor.focus_handle(cx).focus(window, cx);
+        if let Some(range) = goto {
+            editor.update(cx, |state, cx| {
+                state.set_cursor_position(
+                    Position::new(range.start.line, range.start.character),
+                    window,
+                    cx,
+                );
+            });
+        }
         self.open.push(OpenFile {
             path,
             rel,
@@ -195,7 +290,7 @@ impl IdeShell {
         }
 
         let text = file.editor.read(cx).text().to_string();
-        let write = self.workspace.write_file(&file.path, text);
+        let write = self.workspace.write_file(&file.path, text.clone());
         let path = file.path.clone();
         cx.spawn(async move |this, cx| {
             match write.await {
@@ -204,6 +299,9 @@ impl IdeShell {
                         if let Some(file) = this.open.iter_mut().find(|file| file.path == path) {
                             file.dirty = false;
                         }
+                        this.lsp.update(cx, |store, cx| {
+                            store.document_saved(&path, text, cx);
+                        });
                         cx.notify();
                     });
                 }
@@ -243,6 +341,9 @@ impl IdeShell {
     }
 
     fn remove_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let path = self.open[ix].path.clone();
+        self.lsp
+            .update(cx, |store, cx| store.document_closed(&path, cx));
         self.open.remove(ix);
         self.active = if self.open.is_empty() {
             None
@@ -421,6 +522,24 @@ impl Render for IdeShell {
                     .child(self.render_status_bar(window, cx)),
             )
     }
+}
+
+fn convert_diagnostic(diagnostic: &lsp_types::Diagnostic) -> Diagnostic {
+    let start = Position::new(diagnostic.range.start.line, diagnostic.range.start.character);
+    let end = Position::new(diagnostic.range.end.line, diagnostic.range.end.character);
+    let severity = match diagnostic.severity {
+        Some(lsp_types::DiagnosticSeverity::WARNING) => DiagnosticSeverity::Warning,
+        Some(lsp_types::DiagnosticSeverity::INFORMATION) => DiagnosticSeverity::Info,
+        Some(lsp_types::DiagnosticSeverity::HINT) => DiagnosticSeverity::Hint,
+        // Errors, and the spec's "client decides" case.
+        _ => DiagnosticSeverity::Error,
+    };
+    let mut converted =
+        Diagnostic::new(start..end, diagnostic.message.clone()).with_severity(severity);
+    if let Some(source) = &diagnostic.source {
+        converted = converted.with_source(source.clone());
+    }
+    converted
 }
 
 /// Recursively assemble the project tree through the workspace service. Runs

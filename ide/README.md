@@ -6,7 +6,33 @@ Decided 2026-08-14 (Fizzy card #51) after ruling out IntelliJ Ultimate
 project). Engines are borrowed — tree-sitter grammars, LSP servers,
 gpui-component's editor widget — the shell is ours.
 
-## Status — milestone 1 (the shell)
+## Status — milestone 2 (real LSP)
+
+Editors now have language intelligence: diagnostics (squiggles), hover,
+completions, and go-to-definition (ctrl-click; cross-file targets open in a
+new tab), backed by real language servers.
+
+- The LSP subsystem (`src/lsp/`) is a hand-rolled JSON-RPC-over-stdio client
+  on smol primitives — no second async runtime inside gpui. One `LspStore`
+  routes documents by extension and workspace root; per-document ops are
+  chained so didOpen/didChange/didSave/didClose stay ordered. Sync is
+  full-text per change event (correct first; incremental sync is a follow-up).
+- Server table: rust-analyzer (`.rs`), ruby-lsp (`.rb`/`.erb`), gopls
+  (`.go`), basedpyright (`.py`), vtsls (`.ts`/`.tsx`/`.js`). A missing binary
+  degrades to no-LSP with one log line. Currently only rust-analyzer is
+  installed on the desktop.
+- rust-analyzer root detection understands the fleet's nested workspaces:
+  nearest `Cargo.toml` declaring `[workspace]` wins (so `ide/` gets its own
+  server instance, service crates share the fleet root's).
+- Install gotcha: `rust-analyzer` on PATH is the rustup shim — the component
+  must be installed *per toolchain* (`rustup component add rust-analyzer`,
+  and again with `--toolchain <pinned>`), or the shim errors out.
+- Boundary note: language servers are spawned as local processes directly —
+  they must live next to the code, so in milestone 5 this subsystem moves
+  server-side behind the `WorkspaceService` seam; the editor-facing provider
+  traits are unaffected.
+
+## Previously — milestone 1 (the shell)
 
 `cargo run -- [path]` opens the shell: project tool window, tabbed editors,
 status bar. A directory argument becomes the workspace root (default: the
@@ -81,8 +107,8 @@ libxkbcommon-devel libxkbcommon-x11-devel wayland-devel vulkan-loader`.
 1. ~~M0 spike~~ — this crate.
 2. ~~M1 shell~~ — tree, tabs, editor, status bar; `WorkspaceService` seam in
    place (card #52).
-3. M2 LSP mux: rust-analyzer, ruby-lsp, gopls, basedpyright, vtsls via
-   async-lsp, routed per workspace root, feeding the provider traits above.
+3. ~~M2 LSP mux~~ — hand-rolled smol client, five-server table, diagnostics/
+   hover/completion/definition (card #53).
 4. M3 search-everywhere (double-shift), backed by ripgrep.
 5. M4 daily-drive on the desktop.
 6. M5 remote: headless `ide-server` on the desktop + native macOS client over
