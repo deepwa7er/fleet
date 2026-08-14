@@ -130,4 +130,7 @@ libxkbcommon-devel libxkbcommon-x11-devel wayland-devel vulkan-loader`.
    SSH. **Designed** — see [`docs/remote.md`](docs/remote.md) (card #55):
    per-session `ssh desktop ide-server` over stdio, JSON-RPC reusing the M2
    framing, buffers client-local, language ops folding into the
-   `WorkspaceService` seam. Implementation slices 5a–5d, one card each.
+   `WorkspaceService` seam. Implementation slices 5a–5e, one card each.
+   ~~5a (seam refactor)~~ landed: the trait now carries documents + language
+   ops, the hub (`lsp/hub.rs`) is gpui-free, and the UI reaches all language
+   intelligence through `Arc<dyn WorkspaceService>` (card #56).

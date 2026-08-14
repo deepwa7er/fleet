@@ -6,10 +6,14 @@
 //! will join this boundary in later milestones.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use futures::FutureExt as _;
 use futures::future::BoxFuture;
+use futures::stream::BoxStream;
+
+use crate::lsp::hub::LanguageHub;
 
 #[derive(Debug, Clone)]
 pub struct DirEntry {
@@ -51,10 +55,60 @@ pub trait WorkspaceService: Send + Sync {
     /// Literal full-text search (smart-case), at most `limit` hits.
     fn search_text(&self, query: String, limit: usize)
     -> BoxFuture<'static, Result<Vec<TextMatch>>>;
+
+    // ── Documents & language intelligence (docs/remote.md §4–§5) ─────────
+    //
+    // The document pipeline is the seam's second half: locally it feeds the
+    // in-process language hub; remotely the same calls become the wire. In
+    // slice 5b it also becomes the persistence path (server-side auto-save).
+
+    /// A document is now open with `text`. No-op for unconfigured languages.
+    fn document_open(&self, path: &Path, text: String);
+
+    /// The full current text after an edit (ordered per document).
+    fn document_changed(&self, path: &Path, text: String);
+
+    /// Persist and announce: write the file, then didSave to the language
+    /// server. (Slice 5b turns this into a flush of the workspace's own
+    /// document copy; the signature already fits both.)
+    fn document_save(&self, path: &Path, text: String) -> BoxFuture<'static, Result<()>>;
+
+    /// The document closed; the language server hears didClose.
+    fn document_closed(&self, path: &Path);
+
+    fn completion(
+        &self,
+        path: &Path,
+        position: lsp_types::Position,
+        context: lsp_types::CompletionContext,
+    ) -> BoxFuture<'static, Result<lsp_types::CompletionResponse>>;
+
+    fn hover(
+        &self,
+        path: &Path,
+        position: lsp_types::Position,
+    ) -> BoxFuture<'static, Result<Option<lsp_types::Hover>>>;
+
+    fn definition(
+        &self,
+        path: &Path,
+        position: lsp_types::Position,
+    ) -> BoxFuture<'static, Result<Vec<lsp_types::LocationLink>>>;
+
+    /// The completion trigger characters the server declared, empty until it
+    /// is up (or for unconfigured languages).
+    fn completion_triggers(&self, path: &Path) -> Vec<String>;
+
+    /// Diagnostics for open documents, keyed by path. Single-subscriber: the
+    /// shell takes this once at startup; later calls return `None`.
+    fn subscribe_diagnostics(
+        &self,
+    ) -> Option<BoxStream<'static, (PathBuf, Vec<lsp_types::Diagnostic>)>>;
 }
 
 pub struct LocalWorkspace {
     root: PathBuf,
+    hub: Arc<LanguageHub>,
 }
 
 impl LocalWorkspace {
@@ -63,7 +117,8 @@ impl LocalWorkspace {
             .canonicalize()
             .with_context(|| format!("cannot open workspace root {}", root.display()))?;
         anyhow::ensure!(root.is_dir(), "{} is not a directory", root.display());
-        Ok(Self { root })
+        let hub = Arc::new(LanguageHub::new(root.clone()));
+        Ok(Self { root, hub })
     }
 }
 
@@ -182,6 +237,65 @@ impl WorkspaceService for LocalWorkspace {
             Ok(matches)
         })
         .boxed()
+    }
+
+    fn document_open(&self, path: &Path, text: String) {
+        self.hub.document_open(path, text);
+    }
+
+    fn document_changed(&self, path: &Path, text: String) {
+        self.hub.document_changed(path, text);
+    }
+
+    fn document_save(&self, path: &Path, text: String) -> BoxFuture<'static, Result<()>> {
+        let write = self.write_file(path, text.clone());
+        let hub = self.hub.clone();
+        let path = path.to_owned();
+        async move {
+            write.await?;
+            hub.document_saved(&path, text);
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn document_closed(&self, path: &Path) {
+        self.hub.document_closed(path);
+    }
+
+    fn completion(
+        &self,
+        path: &Path,
+        position: lsp_types::Position,
+        context: lsp_types::CompletionContext,
+    ) -> BoxFuture<'static, Result<lsp_types::CompletionResponse>> {
+        self.hub.completion(path, position, context)
+    }
+
+    fn hover(
+        &self,
+        path: &Path,
+        position: lsp_types::Position,
+    ) -> BoxFuture<'static, Result<Option<lsp_types::Hover>>> {
+        self.hub.hover(path, position)
+    }
+
+    fn definition(
+        &self,
+        path: &Path,
+        position: lsp_types::Position,
+    ) -> BoxFuture<'static, Result<Vec<lsp_types::LocationLink>>> {
+        self.hub.definition(path, position)
+    }
+
+    fn completion_triggers(&self, path: &Path) -> Vec<String> {
+        self.hub.completion_triggers(path)
+    }
+
+    fn subscribe_diagnostics(
+        &self,
+    ) -> Option<BoxStream<'static, (PathBuf, Vec<lsp_types::Diagnostic>)>> {
+        Some(futures::StreamExt::boxed(self.hub.take_diagnostics()?))
     }
 }
 

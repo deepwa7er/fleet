@@ -2,6 +2,10 @@
 //! with `Content-Length` headers. Hand-rolled on smol primitives (zed's own
 //! approach) rather than embedding a second async runtime inside gpui's smol
 //! world. One `LspClient` is one running language-server process.
+//!
+//! Deliberately gpui-free (io tasks ride smol's global executor): this code
+//! runs identically inside the GUI and inside the headless ide-server
+//! (docs/remote.md, slice 5c), which must never link GUI code.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -12,7 +16,6 @@ use anyhow::{Context as _, Result, anyhow};
 use futures::channel::{mpsc, oneshot};
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, SinkExt as _, StreamExt as _};
-use gpui::{BackgroundExecutor, Task};
 use lsp_types::notification::Notification as _;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -27,7 +30,7 @@ pub struct LspClient {
     next_id: AtomicI64,
     capabilities: OnceLock<lsp_types::ServerCapabilities>,
     child: Mutex<smol::process::Child>,
-    _tasks: Vec<Task<()>>,
+    _tasks: Vec<smol::Task<()>>,
 }
 
 impl LspClient {
@@ -37,7 +40,6 @@ impl LspClient {
         command: &str,
         args: &[&str],
         root: &Path,
-        executor: BackgroundExecutor,
         diagnostics: DiagnosticsSender,
     ) -> Result<Self> {
         let mut child = smol::process::Command::new(command)
@@ -57,15 +59,15 @@ impl LspClient {
         let pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value>>>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
-        let writer_task = executor.spawn(write_loop(stdin, outgoing_rx));
-        let reader_task = executor.spawn(read_loop(
+        let writer_task = smol::spawn(write_loop(stdin, outgoing_rx));
+        let reader_task = smol::spawn(read_loop(
             stdout,
             pending.clone(),
             outgoing.clone(),
             diagnostics,
             command.to_string(),
         ));
-        let stderr_task = executor.spawn(drain_stderr(stderr, command.to_string()));
+        let stderr_task = smol::spawn(drain_stderr(stderr, command.to_string()));
 
         let client = Self {
             outgoing,
