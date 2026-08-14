@@ -187,7 +187,57 @@ client on the Mac is the only honest path for a gpui app today.
 5. **5e — Mac onboarding + polish**: build docs, connection status UI,
    fast-fail messages, protocol-version error UX.
 
-## 10. Out of scope (recorded so they stay deliberate)
+## 10. Onboarding
+
+### Desktop (once per protocol bump)
+
+From the fleet checkout on the desktop:
+
+```bash
+cd ~/code/fleet && git pull
+cargo install --path ide --bin ide-server
+~/.cargo/bin/ide-server --version   # prints binary + protocol version
+```
+
+The client invokes `~/.cargo/bin/ide-server` by explicit path — `ssh host
+cmd` runs a *non-interactive* shell (zsh reads only `~/.zshenv`), so PATH
+additions from `.zshrc` never apply there. `cargo install`'s destination is
+fixed, so the path is named outright.
+
+### Mac (once)
+
+1. Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+2. Xcode Command Line Tools: `xcode-select --install`. Honest uncertainty,
+   written from Linux: gpui's Metal shader build may want full Xcode — if the
+   build fails around `metal`/`xcrun`, install Xcode from the App Store and
+   run `sudo xcodebuild -license accept`, then rebuild. Update this note with
+   what actually happened.
+3. Checkout + build (first build compiles the gpui stack — expect ~10 min):
+
+```bash
+gh repo clone deepwa7er/fleet ~/code/fleet   # or git clone git@github.com:deepwa7er/fleet
+cd ~/code/fleet/ide
+cargo build --bin ide
+```
+
+4. Preflight the transport, then fly:
+
+```bash
+ssh -o BatchMode=yes desktop '~/.cargo/bin/ide-server --version'
+cargo run --bin ide -- desktop:code/fleet
+```
+
+### Troubleshooting
+
+| Symptom | Meaning |
+|---|---|
+| `cannot connect … timeout` within ~10s | The desktop is powered off (its usual state) — check `tailscale status`. |
+| `~/.cargo/bin/ide-server: No such file or directory` | The server isn't installed on the desktop — run the Desktop step. |
+| `protocol version mismatch …` | Client and server were built from different fleet revisions; the message contains the rebuild command. |
+| Repeated interactive auth prompts | You're somehow on Tailscale SSH (check-mode ACL) — the `desktop` alias in `~/.ssh/config` (key-based) is the supported path (§2). |
+| `DISCONNECTED` banner | The wire died (Mac slept, desktop rebooted). Auto-retry runs ~15s; `ctrl-shift-r` after that. Nothing was lost beyond the sub-second auto-save window (§6). |
+
+## 11. Out of scope (recorded so they stay deliberate)
 
 Incremental document sync (follow-up regardless of remote), file watching /
 tree refresh (M4 backlog; when it lands, the auto-save conflict rule is

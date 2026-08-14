@@ -51,6 +51,10 @@ new tab), backed by real language servers.
 `cargo run -- [path]` opens the shell: project tool window, tabbed editors,
 status bar. A directory argument becomes the workspace root (default: the
 current directory); a file argument roots at its parent with the file open.
+`ide <ssh-alias>:<path>` (e.g. `ide desktop:code/fleet`) opens a **remote**
+workspace — the full IDE against code on another machine, language servers
+and auto-save running next to the code. Setup and troubleshooting:
+[`docs/remote.md`](docs/remote.md) §10.
 
 - Single-click a file in the tree to open it in a tab; `ctrl-f4` closes it.
   **Auto-save** (docs/remote.md §6): the workspace persists edits ~500ms
@@ -151,3 +155,8 @@ libxkbcommon-devel libxkbcommon-x11-devel wayland-devel vulkan-loader`.
    document); a dead connection makes editors read-only with a banner,
    auto-reconnect retries ~15s (`ctrl-shift-r` after that), and a restored
    session re-reads every open tab from server truth (card #59).
+   ~~5e (onboarding + polish)~~ landed: `docs/remote.md` §10 is the install
+   guide (desktop + Mac); the client invokes `~/.cargo/bin/ide-server` by
+   explicit path (non-interactive ssh shells never read `.zshrc`, so PATH
+   lookups were a trap); `ide-server --version` prints protocol skew info.
+   **Milestone 5 complete** (card #60).

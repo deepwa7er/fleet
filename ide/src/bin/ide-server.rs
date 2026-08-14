@@ -4,10 +4,20 @@
 //! `cargo install --path ide --bin ide-server`.
 
 fn main() {
-    let stdio = std::env::args().nth(1).as_deref() == Some("--stdio");
-    if !stdio {
-        eprintln!("usage: ide-server --stdio   (spawned by the ide client over ssh)");
-        std::process::exit(2);
+    match std::env::args().nth(1).as_deref() {
+        Some("--stdio") => {}
+        Some("--version") => {
+            println!(
+                "ide-server {} (protocol {})",
+                env!("CARGO_PKG_VERSION"),
+                ide::rpc::PROTOCOL_VERSION
+            );
+            return;
+        }
+        _ => {
+            eprintln!("usage: ide-server --stdio   (spawned by the ide client over ssh)");
+            std::process::exit(2);
+        }
     }
     if let Err(err) = smol::block_on(ide::server::serve_stdio()) {
         eprintln!("ide-server: {err:#}");
