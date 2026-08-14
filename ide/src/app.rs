@@ -7,13 +7,14 @@
 //! only on interactive/selection states (rule 4), instrumentation voice for
 //! the tool-window header and status bar (rule 5).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use futures::FutureExt as _;
 use futures::future::LocalBoxFuture;
+use futures::{FutureExt as _, StreamExt as _};
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
@@ -28,7 +29,8 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::lsp::{LspEvent, LspStore, uri_to_path};
+use crate::lsp::providers::EditorLsp;
+use crate::lsp::uri_to_path;
 use crate::search::SearchDelegate;
 use crate::workspace::WorkspaceService;
 
@@ -71,13 +73,11 @@ pub struct IdeShell {
     /// double-shift is dead until the first file opens.
     focus_handle: FocusHandle,
     tree_state: Entity<TreeState>,
-    lsp: Entity<LspStore>,
     open: Vec<OpenFile>,
     active: Option<usize>,
     search: Option<Entity<ListState<SearchDelegate>>>,
     prev_shift: bool,
     last_shift_tap: Option<Instant>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl IdeShell {
@@ -103,8 +103,22 @@ impl IdeShell {
         })
         .detach();
 
-        let lsp = cx.new(|cx| LspStore::new(workspace.root().to_owned(), cx));
-        let subscriptions = vec![cx.subscribe(&lsp, Self::on_lsp_event)];
+        // Diagnostics flow from the workspace as a plain stream now that the
+        // language hub lives behind the seam; consume it for the window's
+        // lifetime.
+        if let Some(mut diagnostics) = workspace.subscribe_diagnostics() {
+            cx.spawn(async move |this, cx| {
+                while let Some((path, diagnostics)) = diagnostics.next().await {
+                    let alive = this.update(cx, |this, cx| {
+                        this.apply_diagnostics(&path, &diagnostics, cx);
+                    });
+                    if alive.is_err() {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        }
 
         let focus_handle = cx.focus_handle();
         window.defer(cx, {
@@ -116,13 +130,11 @@ impl IdeShell {
             workspace,
             focus_handle,
             tree_state,
-            lsp,
             open: Vec::new(),
             active: None,
             search: None,
             prev_shift: false,
             last_shift_tap: None,
-            _subscriptions: subscriptions,
         };
         if let Some(path) = initial_file {
             this.open_path(path, window, cx);
@@ -130,9 +142,12 @@ impl IdeShell {
         this
     }
 
-    fn on_lsp_event(&mut self, _: Entity<LspStore>, event: &LspEvent, cx: &mut Context<Self>) {
-        let LspEvent::Diagnostics { uri, diagnostics } = event;
-        let Some(path) = uri_to_path(uri) else { return };
+    fn apply_diagnostics(
+        &mut self,
+        path: &Path,
+        diagnostics: &[lsp_types::Diagnostic],
+        cx: &mut Context<Self>,
+    ) {
         let Some(file) = self.open.iter().find(|file| file.path == path) else {
             return;
         };
@@ -269,9 +284,8 @@ impl IdeShell {
         let language =
             Language::from_str(path.extension().and_then(|ext| ext.to_str()).unwrap_or(""));
 
-        let bridge = self
-            .lsp
-            .update(cx, |store, cx| store.attach(&path, content.clone(), cx));
+        self.workspace.document_open(&path, content.clone());
+        let bridge = Rc::new(EditorLsp::new(self.workspace.clone(), path.clone()));
 
         let editor = cx.new(|cx| {
             InputBaseState::new(window, cx)
@@ -287,11 +301,11 @@ impl IdeShell {
 
         let shell = cx.entity().downgrade();
         editor.update(cx, |state, _| {
-            if let Some(bridge) = &bridge {
-                state.lsp.completion_provider = Some(bridge.clone());
-                state.lsp.hover_provider = Some(bridge.clone());
-                state.lsp.definition_provider = Some(bridge.clone());
-            }
+            // Installed unconditionally: the workspace answers with empty
+            // results for languages it has no server for.
+            state.lsp.completion_provider = Some(bridge.clone());
+            state.lsp.hover_provider = Some(bridge.clone());
+            state.lsp.definition_provider = Some(bridge.clone());
             // Cross-file go-to-definition: the shell opens the target tab;
             // same-file jumps fall through to the editor's own handling.
             let own_path = path.clone();
@@ -321,9 +335,7 @@ impl IdeShell {
                 move |this: &mut Self, editor, event: &InputEvent, cx| {
                     if matches!(event, InputEvent::Change) {
                         let text = editor.read(cx).text().to_string();
-                        this.lsp.update(cx, |store, cx| {
-                            store.document_changed(&path, text, cx);
-                        });
+                        this.workspace.document_changed(&path, text);
                         if let Some(file) = this.open.iter_mut().find(|file| file.path == path)
                             && !file.dirty
                         {
@@ -382,18 +394,15 @@ impl IdeShell {
         }
 
         let text = file.editor.read(cx).text().to_string();
-        let write = self.workspace.write_file(&file.path, text.clone());
+        let save = self.workspace.document_save(&file.path, text);
         let path = file.path.clone();
         cx.spawn(async move |this, cx| {
-            match write.await {
+            match save.await {
                 Ok(()) => {
                     _ = this.update(cx, |this, cx| {
                         if let Some(file) = this.open.iter_mut().find(|file| file.path == path) {
                             file.dirty = false;
                         }
-                        this.lsp.update(cx, |store, cx| {
-                            store.document_saved(&path, text, cx);
-                        });
                         cx.notify();
                     });
                 }
@@ -433,9 +442,7 @@ impl IdeShell {
     }
 
     fn remove_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let path = self.open[ix].path.clone();
-        self.lsp
-            .update(cx, |store, cx| store.document_closed(&path, cx));
+        self.workspace.document_closed(&self.open[ix].path);
         self.open.remove(ix);
         self.active = if self.open.is_empty() {
             // Keystrokes need a home once the last editor is gone.
