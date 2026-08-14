@@ -92,7 +92,7 @@ rm -f "$out"
 # Bridge URL: the container reaches the host's bridge via host.docker.internal.
 echo "OPENCODE_SERVER_URL=http://host.docker.internal:4120" > "$out"
 # Password: first try the VPS path, then the desktop-path locations.
-for f in /opt/skiff/bridge-secrets "$HOME/.config/skiff/secrets" /home/deepwater/.config/skiff/secrets; do
+for f in /opt/skiff/bridge-secrets "${HOME:-}/.config/skiff/secrets" /home/deepwater/.config/skiff/secrets; do
   if [ -f "$f" ]; then
     while IFS= read -r line; do
       case "$line" in
@@ -131,8 +131,13 @@ RestartSec=3
 # tugboat ships a new image tar and restarts this unit; loading on every start
 # is what makes the restart pick up the new build. Loading an already-present
 # image is a fast no-op, so this costs nothing on an ordinary restart.
+# Podman on the build host prefixes short tags with `localhost/`; the tar
+# therefore loads as `localhost/skiff:deploy` on the VPS. Normalize it so the
+# unit's `docker run skiff:deploy` finds the image regardless of which runtime
+# built it.
 ExecStartPre=-/usr/bin/docker rm -f ${NAME}
 ExecStartPre=/usr/bin/docker load -i ${IMAGE_TAR}
+ExecStartPre=-/usr/bin/docker tag localhost/${NAME}:deploy ${IMAGE_TAG}
 ExecStartPre=/usr/local/bin/skiff-resolve-bridge
 EnvironmentFile=-/run/skiff-bridge.env
 

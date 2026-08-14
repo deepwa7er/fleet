@@ -86,8 +86,13 @@ RestartSec=3
 # tugboat ships a new image tar and restarts this unit; loading on every start
 # is what makes the restart pick up the new build. Loading an already-present
 # image is a fast no-op, so this costs nothing on an ordinary restart.
+# Podman on the build host prefixes short tags with `localhost/`; the tar
+# therefore loads as `localhost/blog:deploy` on the VPS. Normalize it so the
+# unit's `docker run blog:deploy` finds the image regardless of which runtime
+# built it.
 ExecStartPre=-/usr/bin/docker rm -f ${NAME}
 ExecStartPre=/usr/bin/docker load -i ${IMAGE_TAR}
+ExecStartPre=-/usr/bin/docker tag localhost/${NAME}:deploy ${IMAGE_TAG}
 
 # Binds loopback only. BOTH front doors reach it here — nginx for the public
 # hostname, breakwater for the admin one — so nothing about this app listens on
