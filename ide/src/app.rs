@@ -29,7 +29,7 @@ use gpui_component::{
 };
 
 use crate::lsp::{LspEvent, LspStore, uri_to_path};
-use crate::search::{SearchDelegate, render_search_overlay};
+use crate::search::SearchDelegate;
 use crate::workspace::WorkspaceService;
 
 actions!(ide, [Save, CloseTab, OpenSearch]);
@@ -66,6 +66,10 @@ struct OpenFile {
 
 pub struct IdeShell {
     workspace: Arc<dyn WorkspaceService>,
+    /// Focused whenever no editor is — keystrokes (and modifier events, which
+    /// travel the focus path) must always have somewhere to land, or
+    /// double-shift is dead until the first file opens.
+    focus_handle: FocusHandle,
     tree_state: Entity<TreeState>,
     lsp: Entity<LspStore>,
     open: Vec<OpenFile>,
@@ -102,8 +106,15 @@ impl IdeShell {
         let lsp = cx.new(|cx| LspStore::new(workspace.root().to_owned(), cx));
         let subscriptions = vec![cx.subscribe(&lsp, Self::on_lsp_event)];
 
+        let focus_handle = cx.focus_handle();
+        window.defer(cx, {
+            let focus_handle = focus_handle.clone();
+            move |window, cx| focus_handle.focus(window, cx)
+        });
+
         let mut this = Self {
             workspace,
+            focus_handle,
             tree_state,
             lsp,
             open: Vec::new(),
@@ -166,8 +177,9 @@ impl IdeShell {
 
     pub(crate) fn close_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.search = None;
-        if let Some(ix) = self.active {
-            self.open[ix].editor.focus_handle(cx).focus(window, cx);
+        match self.active {
+            Some(ix) => self.open[ix].editor.focus_handle(cx).focus(window, cx),
+            None => self.focus_handle.focus(window, cx),
         }
         cx.notify();
     }
@@ -397,7 +409,7 @@ impl IdeShell {
         let Some(ix) = self.active else { return };
 
         if !self.open[ix].dirty {
-            self.remove_tab(ix, cx);
+            self.remove_tab(ix, window, cx);
             return;
         }
 
@@ -408,10 +420,10 @@ impl IdeShell {
                 .title(format!("Discard unsaved changes to {name}?"))
                 .on_ok({
                     let shell = shell.clone();
-                    move |_, _window, cx| {
+                    move |_, window, cx| {
                         shell.update(cx, |this, cx| {
                             if let Some(ix) = this.active {
-                                this.remove_tab(ix, cx);
+                                this.remove_tab(ix, window, cx);
                             }
                         });
                         true
@@ -420,12 +432,14 @@ impl IdeShell {
         });
     }
 
-    fn remove_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
+    fn remove_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let path = self.open[ix].path.clone();
         self.lsp
             .update(cx, |store, cx| store.document_closed(&path, cx));
         self.open.remove(ix);
         self.active = if self.open.is_empty() {
+            // Keystrokes need a home once the last editor is gone.
+            self.focus_handle.focus(window, cx);
             None
         } else {
             Some(ix.min(self.open.len() - 1))
@@ -603,6 +617,7 @@ impl Render for IdeShell {
             .size_full()
             .relative()
             .key_context("IdeShell")
+            .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::save_active))
             .on_action(cx.listener(Self::close_active))
             .on_action(cx.listener(Self::on_open_search))
@@ -611,8 +626,51 @@ impl Render for IdeShell {
             }))
             .child(main)
             .when_some(self.search.clone(), |this, search| {
-                this.child(render_search_overlay(&search, cx))
+                this.child(self.render_search_overlay(&search, cx))
             })
+    }
+}
+
+impl IdeShell {
+    /// The search overlay. The backdrop occludes everything beneath it — so
+    /// scrolling in the results can never scroll the editor below — and a
+    /// click outside the panel dismisses it. No shadow: DW-001 reserves depth
+    /// for pressable things; the 1px border (the IDE's standing exception)
+    /// does the lifting.
+    fn render_search_overlay(
+        &self,
+        search: &Entity<ListState<SearchDelegate>>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.close_search(window, cx)),
+            )
+            .flex()
+            .items_start()
+            .justify_center()
+            .pt(px(96.))
+            .child(
+                div()
+                    .w(px(680.))
+                    .h(px(440.))
+                    .bg(cx.theme().background)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .rounded(cx.theme().radius)
+                    .overflow_hidden()
+                    .occlude()
+                    // Keep clicks inside the panel from reaching the
+                    // backdrop's close handler.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(gpui_component::list::List::new(search)),
+            )
     }
 }
 

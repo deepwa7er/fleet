@@ -215,30 +215,3 @@ impl ListDelegate for SearchDelegate {
     }
 }
 
-/// The centered overlay panel. No shadow: DW-001 reserves depth for pressable
-/// things; the 1px border (the IDE's standing exception) does the lifting.
-pub fn render_search_overlay(
-    state: &Entity<ListState<SearchDelegate>>,
-    cx: &App,
-) -> impl IntoElement {
-    div()
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .flex()
-        .items_start()
-        .justify_center()
-        .pt(px(96.))
-        .child(
-            div()
-                .w(px(680.))
-                .h(px(440.))
-                .bg(cx.theme().background)
-                .border_1()
-                .border_color(cx.theme().border)
-                .rounded(cx.theme().radius)
-                .overflow_hidden()
-                .child(gpui_component::list::List::new(state)),
-        )
-}
