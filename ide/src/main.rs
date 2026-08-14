@@ -7,6 +7,7 @@
 
 mod app;
 mod lsp;
+mod search;
 mod workspace;
 
 use std::path::PathBuf;

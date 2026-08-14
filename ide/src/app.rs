@@ -9,16 +9,18 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use futures::FutureExt as _;
 use futures::future::LocalBoxFuture;
+use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
     ActiveTheme as _, IconName, WindowExt as _, h_flex,
     highlighter::{Diagnostic, DiagnosticSeverity, Language},
     input::{Input, InputBaseState, InputEvent, Position, TabSize},
-    list::ListItem,
+    list::{ListItem, ListState},
     resizable::{h_resizable, resizable_panel},
     status_bar::StatusBar,
     tab::{Tab, TabBar},
@@ -27,15 +29,21 @@ use gpui_component::{
 };
 
 use crate::lsp::{LspEvent, LspStore, uri_to_path};
+use crate::search::{SearchDelegate, render_search_overlay};
 use crate::workspace::WorkspaceService;
 
-actions!(ide, [Save, CloseTab]);
+actions!(ide, [Save, CloseTab, OpenSearch]);
+
+/// Two shift taps this close together open search-everywhere.
+const DOUBLE_SHIFT_WINDOW: Duration = Duration::from_millis(400);
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("ctrl-s", Save, Some("IdeShell")),
         // IntelliJ's close-tab chord; ctrl-w belongs to the editor's own map.
         KeyBinding::new("ctrl-f4", CloseTab, Some("IdeShell")),
+        // Chord fallback for search-everywhere; double-shift is the reflex.
+        KeyBinding::new("ctrl-shift-f", OpenSearch, Some("IdeShell")),
     ]);
 }
 
@@ -62,6 +70,9 @@ pub struct IdeShell {
     lsp: Entity<LspStore>,
     open: Vec<OpenFile>,
     active: Option<usize>,
+    search: Option<Entity<ListState<SearchDelegate>>>,
+    prev_shift: bool,
+    last_shift_tap: Option<Instant>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -97,6 +108,9 @@ impl IdeShell {
             lsp,
             open: Vec::new(),
             active: None,
+            search: None,
+            prev_shift: false,
+            last_shift_tap: None,
             _subscriptions: subscriptions,
         };
         if let Some(path) = initial_file {
@@ -125,9 +139,75 @@ impl IdeShell {
         self.open_path_at(path, None, window, cx);
     }
 
+    fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search.is_some() {
+            self.close_search(window, cx);
+            return;
+        }
+        let delegate = SearchDelegate::new(self.workspace.clone(), cx.entity().downgrade());
+        let state = cx.new(|cx| ListState::new(delegate, window, cx).searchable(true));
+        state.update(cx, |state, cx| state.focus(window, cx));
+
+        // The file index loads freshly on every open — cheap at fleet scale.
+        let files = self.workspace.list_files();
+        let for_search = state.clone();
+        cx.spawn(async move |_, cx| {
+            let Ok(files) = files.await else { return };
+            for_search.update(cx, |state, cx| {
+                state.delegate_mut().set_files(files);
+                cx.notify();
+            });
+        })
+        .detach();
+
+        self.search = Some(state);
+        cx.notify();
+    }
+
+    pub(crate) fn close_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search = None;
+        if let Some(ix) = self.active {
+            self.open[ix].editor.focus_handle(cx).focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn on_open_search(&mut self, _: &OpenSearch, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_search(window, cx);
+    }
+
+    fn on_modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let shift_only = event.modifiers.shift
+            && !event.modifiers.control
+            && !event.modifiers.alt
+            && !event.modifiers.platform
+            && !event.modifiers.function;
+
+        if shift_only && !self.prev_shift {
+            let now = Instant::now();
+            if self
+                .last_shift_tap
+                .take()
+                .is_some_and(|tap| now.duration_since(tap) < DOUBLE_SHIFT_WINDOW)
+            {
+                if self.search.is_none() {
+                    self.open_search(window, cx);
+                }
+            } else {
+                self.last_shift_tap = Some(now);
+            }
+        }
+        self.prev_shift = event.modifiers.shift;
+    }
+
     /// Open (or focus) `path`, optionally jumping to `goto` once it is open —
     /// the cross-file half of go-to-definition.
-    fn open_path_at(
+    pub(crate) fn open_path_at(
         &mut self,
         path: PathBuf,
         goto: Option<lsp_types::Range>,
@@ -144,8 +224,8 @@ impl IdeShell {
                         cx,
                     );
                 });
-                self.open[ix].editor.focus_handle(cx).focus(window, cx);
             }
+            self.open[ix].editor.focus_handle(cx).focus(window, cx);
             cx.notify();
             return;
         }
@@ -489,11 +569,8 @@ impl IdeShell {
 
 impl Render for IdeShell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
+        let main = v_flex()
             .size_full()
-            .key_context("IdeShell")
-            .on_action(cx.listener(Self::save_active))
-            .on_action(cx.listener(Self::close_active))
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(
@@ -520,7 +597,22 @@ impl Render for IdeShell {
                     .border_t_1()
                     .border_color(cx.theme().border)
                     .child(self.render_status_bar(window, cx)),
-            )
+            );
+
+        div()
+            .size_full()
+            .relative()
+            .key_context("IdeShell")
+            .on_action(cx.listener(Self::save_active))
+            .on_action(cx.listener(Self::close_active))
+            .on_action(cx.listener(Self::on_open_search))
+            .on_modifiers_changed(cx.listener(|this, event, window, cx| {
+                this.on_modifiers_changed(event, window, cx);
+            }))
+            .child(main)
+            .when_some(self.search.clone(), |this, search| {
+                this.child(render_search_overlay(&search, cx))
+            })
     }
 }
 
