@@ -127,5 +127,7 @@ libxkbcommon-devel libxkbcommon-x11-devel wayland-devel vulkan-loader`.
    behind the workspace seam (card #54).
 5. M4 daily-drive on the desktop.
 6. M5 remote: headless `ide-server` on the desktop + native macOS client over
-   SSH. Buffer sync gets designed then — the trait boundary exists so this is
-   a second implementation, not a rewrite.
+   SSH. **Designed** — see [`docs/remote.md`](docs/remote.md) (card #55):
+   per-session `ssh desktop ide-server` over stdio, JSON-RPC reusing the M2
+   framing, buffers client-local, language ops folding into the
+   `WorkspaceService` seam. Implementation slices 5a–5d, one card each.
