@@ -221,6 +221,26 @@ impl LanguageHub {
             .unwrap_or_default()
     }
 
+    /// Like [`Self::completion_triggers`], but awaits server startup — used
+    /// by ide-server to push triggers to the remote client once known.
+    pub fn completion_triggers_ready(&self, path: &Path) -> BoxFuture<'static, Vec<String>> {
+        let Some(server) = self.server_for(path) else {
+            return futures::future::ready(Vec::new()).boxed();
+        };
+        async move {
+            let Ok(client) = server.await else {
+                return Vec::new();
+            };
+            client
+                .capabilities()
+                .completion_provider
+                .clone()
+                .and_then(|provider| provider.trigger_characters)
+                .unwrap_or_default()
+        }
+        .boxed()
+    }
+
     pub fn completion(
         &self,
         path: &Path,

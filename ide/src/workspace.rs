@@ -23,6 +23,19 @@ pub struct DirEntry {
     pub is_dir: bool,
 }
 
+/// Remote-connection lifecycle, for the shell's banner and read-only state.
+/// Local workspaces never emit these.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ConnectionEvent {
+    /// The wire died; editors should go read-only.
+    Lost,
+    /// An automatic reconnect round started.
+    Reconnecting,
+    /// A fresh session is up; the shell re-reads open documents from the
+    /// workspace (server truth) and resumes editing.
+    Restored,
+}
+
 /// One full-text search hit.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TextMatch {
@@ -109,6 +122,15 @@ pub trait WorkspaceService: Send + Sync {
     /// Single-subscriber, like diagnostics.
     fn subscribe_sync_state(&self) -> Option<BoxStream<'static, bool>>;
 
+    /// Connection lifecycle (docs/remote.md §6). Local workspaces have no
+    /// connection: the default is no stream.
+    fn subscribe_connection(&self) -> Option<BoxStream<'static, ConnectionEvent>> {
+        None
+    }
+
+    /// Manual reconnect (the banner's action). No-op locally.
+    fn reconnect(&self) {}
+
     /// Flush every dirty document — the app-quit hook.
     fn flush_all(&self) -> BoxFuture<'static, Result<()>>;
 }
@@ -128,6 +150,12 @@ impl LocalWorkspace {
         let hub = Arc::new(LanguageHub::new(root.clone()));
         let docs = DocumentStore::new();
         Ok(Self { root, hub, docs })
+    }
+
+    /// Await-until-known trigger characters — ide-server pushes these to the
+    /// remote client, whose sync `completion_triggers` reads a cache.
+    pub fn completion_triggers_ready(&self, path: &Path) -> BoxFuture<'static, Vec<String>> {
+        self.hub.completion_triggers_ready(path)
     }
 }
 

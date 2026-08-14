@@ -11,13 +11,29 @@ use futures::executor::block_on;
 use ide::remote::RemoteWorkspace;
 use ide::workspace::WorkspaceService;
 
-fn connect(root: &Path) -> RemoteWorkspace {
+fn connect(root: &Path) -> std::sync::Arc<RemoteWorkspace> {
     block_on(RemoteWorkspace::connect(
         env!("CARGO_BIN_EXE_ide-server"),
         &["--stdio".to_string()],
         root.to_str().unwrap(),
     ))
     .expect("connect to ide-server")
+}
+
+/// Await `stream.next()` with a wall-clock deadline.
+fn next_within<T>(
+    stream: &mut (impl futures::Stream<Item = T> + Unpin),
+    deadline: Duration,
+    what: &str,
+) -> T {
+    block_on(async {
+        let mut item = futures::FutureExt::fuse(stream.next());
+        let mut timeout = futures::FutureExt::fuse(smol::Timer::after(deadline));
+        futures::select! {
+            item = item => item.unwrap_or_else(|| panic!("{what}: stream ended")),
+            _ = timeout => panic!("{what}: nothing within {deadline:?}"),
+        }
+    })
 }
 
 #[test]
@@ -85,7 +101,7 @@ fn remote_documents_auto_save_server_side() {
 }
 
 #[test]
-fn language_requests_answer_empty_until_5d() {
+fn language_requests_answer_empty_for_unconfigured_languages() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("log.txt"), "x").unwrap();
     let ws = connect(dir.path());
@@ -96,5 +112,75 @@ fn language_requests_answer_empty_until_5d() {
     let defs = block_on(ws.definition(&file, lsp_types::Position::new(0, 0))).unwrap();
     assert!(defs.is_empty());
     assert!(ws.completion_triggers(&file).is_empty());
-    assert!(ws.subscribe_diagnostics().is_none());
+}
+
+#[test]
+fn diagnostics_arrive_over_the_wire() {
+    if std::process::Command::new("rust-analyzer")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipping: rust-analyzer not on PATH");
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"diag-demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    let broken = "fn main() { let x: i32 = \"not a number\"; }\n";
+    std::fs::write(dir.path().join("src/main.rs"), broken).unwrap();
+
+    let ws = connect(dir.path());
+    let mut diagnostics = ws.subscribe_diagnostics().expect("diagnostics stream");
+    let file = ws.root().join("src/main.rs");
+    ws.document_open(&file, broken.to_string());
+
+    // rust-analyzer indexes the scratch crate, then publishes. Empty interim
+    // publishes are allowed; wait for a non-empty one naming our file.
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let remaining = deadline
+            .checked_duration_since(std::time::Instant::now())
+            .expect("rust-analyzer diagnostics within 60s");
+        let (path, diags) = next_within(&mut diagnostics, remaining, "diagnostics");
+        if path == file && !diags.is_empty() {
+            assert!(
+                diags.iter().any(|d| d.message.contains("mismatched types")
+                    || d.message.contains("expected")),
+                "unexpected diagnostics: {diags:?}"
+            );
+            break;
+        }
+    }
+}
+
+#[test]
+fn killed_connection_reconnects_and_requests_recover() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("log.txt"), "still here").unwrap();
+    let ws = connect(dir.path());
+    let mut events = ws.subscribe_connection().expect("connection stream");
+
+    ws.debug_kill_connection();
+    assert_eq!(
+        next_within(&mut events, Duration::from_secs(5), "Lost"),
+        ide::workspace::ConnectionEvent::Lost
+    );
+    assert_eq!(
+        next_within(&mut events, Duration::from_secs(5), "Reconnecting"),
+        ide::workspace::ConnectionEvent::Reconnecting
+    );
+    // First automatic retry fires after ~2s.
+    assert_eq!(
+        next_within(&mut events, Duration::from_secs(10), "Restored"),
+        ide::workspace::ConnectionEvent::Restored
+    );
+
+    let text = block_on(ws.read_file(&ws.root().join("log.txt"))).unwrap();
+    assert_eq!(text, "still here");
 }
