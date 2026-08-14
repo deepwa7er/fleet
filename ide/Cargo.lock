@@ -3110,6 +3110,10 @@ dependencies = [
  "gpui-component",
  "gpui-component-assets",
  "gpui_platform",
+ "lsp-types",
+ "serde",
+ "serde_json",
+ "smol",
 ]
 
 [[package]]
