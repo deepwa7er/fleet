@@ -52,9 +52,12 @@ new tab), backed by real language servers.
 status bar. A directory argument becomes the workspace root (default: the
 current directory); a file argument roots at its parent with the file open.
 
-- Single-click a file in the tree to open it in a tab; `ctrl-s` saves,
-  `ctrl-f4` closes the active tab (with a confirm dialog if dirty — dirty tabs
-  show `●`).
+- Single-click a file in the tree to open it in a tab; `ctrl-f4` closes it.
+  **Auto-save** (docs/remote.md §6): the workspace persists edits ~500ms
+  after you stop typing, on close, and on quit — there is no dirty state,
+  no `●`, no discard dialog; the status bar reads `SYNCED / SYNCING`.
+  `ctrl-s` remains as "flush now + didSave" (triggers cargo-check-style
+  diagnostics).
 - The status bar shows the active file's relative path, cursor position, and
   language in the DW-001 instrumentation voice.
 - All fs access goes through the `WorkspaceService` trait (`workspace.rs`) —
@@ -134,3 +137,6 @@ libxkbcommon-devel libxkbcommon-x11-devel wayland-devel vulkan-loader`.
    ~~5a (seam refactor)~~ landed: the trait now carries documents + language
    ops, the hub (`lsp/hub.rs`) is gpui-free, and the UI reaches all language
    intelligence through `Arc<dyn WorkspaceService>` (card #56).
+   ~~5b (auto-save)~~ landed: `DocumentStore` behind the seam owns open
+   documents and persists on idle/close/quit; dirty-state UI deleted
+   (card #57).

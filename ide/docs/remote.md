@@ -66,7 +66,6 @@ Workspace methods — exactly the `WorkspaceService` trait, 1:1:
 |---|---|
 | `workspace/readDir` | `read_dir` |
 | `workspace/readFile` | `read_file` |
-| `workspace/writeFile` | `write_file` |
 | `workspace/listFiles` | `list_files` |
 | `workspace/searchText` | `search_text` |
 
@@ -81,8 +80,9 @@ chains):
 | `language/completion`, `language/hover`, `language/definition` | requests; `lsp_types` passthrough, same types both ends |
 | `language/diagnostics` | **server→client notification**, pushed as language servers publish |
 
-`workspace/writeFile` remains for non-document writes (future tooling);
-open-document persistence goes exclusively through the document pipeline.
+Persistence goes exclusively through the document pipeline — slice 5b
+removed `write_file` from the seam as dead code; a `workspace/writeFile` RPC
+gets re-added if and when non-document tooling needs it.
 
 ## 5. The seam refactor (the load-bearing piece)
 
