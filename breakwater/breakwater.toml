@@ -67,10 +67,6 @@ label = "blog"
 upstream = "127.0.0.1:8102"
 
 [[routes]]
-label = "clothes"
-upstream = "127.0.0.1:8099"
-
-[[routes]]
 label = "depot"
 upstream = "127.0.0.1:8100"
 

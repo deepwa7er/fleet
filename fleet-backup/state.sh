@@ -3,7 +3,7 @@
 # Adding a stateful service means declaring it there, not editing scripts.
 
 # /var/lib/<entry> SQLite databases, snapshotted via the online-backup API.
-SQLITE_DBS="clothes/clothes.db depot/depot.db lagoon/lagoon.sqlite mirror/mirror.db recipes/recipes.db regatta/regatta.db"
+SQLITE_DBS="depot/depot.db lagoon/lagoon.sqlite mirror/mirror.db recipes/recipes.db regatta/regatta.db"
 
 # /var/lib/<entry> directories whose plain files are backed up in place.
 RAW_DIRS="breakwater ferry tugboat"
