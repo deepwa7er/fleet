@@ -2198,22 +2198,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "regatta"
-version = "0.1.0"
-dependencies = [
- "axum",
- "chrono",
- "clap",
- "fleet-common",
- "rusqlite",
- "serde",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "regex"
 version = "1.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
