@@ -2733,21 +2733,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spyglass"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "fleet-api",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "toml",
-]
-
-[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

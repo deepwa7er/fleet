@@ -107,10 +107,6 @@ label = "skiff"
 upstream = "127.0.0.1:8120"
 
 [[routes]]
-label = "spyglass"
-upstream = "127.0.0.1:8095"
-
-[[routes]]
 label = "tide"
 upstream = "127.0.0.1:8094"
 
