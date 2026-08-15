@@ -5,7 +5,7 @@ description: Create and list Fizzy (Once) kanban cards from the shell — the ag
 
 # Fizzy — kanban card CLI for Muse
 
-`crates/fizzy` is a Rust client for Fizzy (`ghcr.io/basecamp/fizzy`) on `laptop` (`fizzy.intern.deepwa7er.net` via breakwater). It reuses the account-prefixed Bearer JSON contract of its read-only counterpart, `mirror::fizzy`.
+`crates/fizzy` is a Rust client for Fizzy (`ghcr.io/basecamp/fizzy`) on `laptop` (`fizzy.intern.deepwa7er.net` via breakwater). It reuses the account-prefixed Bearer [REDACTED] contract of its read-only counterpart, `mirror::fizzy`.
 
 ## Quick contract
 
@@ -48,36 +48,51 @@ cargo run -p fizzy -- show 32
 
 `stream` prints only number/title/status; `show <number>` fetches the markdown body (`GET /1/cards/:number.json`).
 
-### 4. Create a triage card
+### 4. Create a triage card — use `draft` for readable cards
 
-Draft the body to a file first so the user can inspect it, then post:
+Card bodies are markdown rendered by Fizzy's Trix/ActionText. The CLI
+normalises them (blank lines around headings, list markers, `---` rules)
+and validates `fleet:` cards for the `Why / Evidence` scaffold. To avoid
+walls-of-text and missing sections:
 
 ```bash
-cat > /tmp/card.md <<'MD'
+# 1. Scaffold a draft with the canonical sections
+cargo run -p fizzy -- draft --title "fleet: blog — backup gap — /opt not in fleet-backup"
+# draft: "fleet: blog — backup gap — /opt not in fleet-backup" → /tmp/fleet-blog-backup-gap.md
+
+# 2. Edit the file (it contains Why / Evidence / Options / Provenance)
+$EDITOR /tmp/fleet-blog-backup-gap.md
+cat /tmp/fleet-blog-backup-gap.md
 ## Why
 `fleet/blog` and `fleet/readout` store SQLite at `/opt/*/storage` — not in `fleet-backup`'s `/var/lib/*` set.
 
 ## Evidence
-- fleet/blog/deploy.toml: no [state]
-- fleet-backup/state.sh: SQLITE_DBS="clothes/..."
+- `fleet/blog/deploy.toml:12` — no [state]
+- `fleet-backup/state.sh:4` — SQLITE_DBS="clothes/..."
 
 ## Options
 1. Move both to /var/lib/<name>/ + fleet.toml [backup]
 
+---
 Provenance: session 6d077caa, commit c2663ac
-MD
 
-cargo run -p fizzy -- create --board Playground --title "fleet: blog backup gap — /opt not in fleet-backup" --body-file /tmp/card.md
-# created #32: fleet: blog backup gap — /opt not in fleet-backup
+# 3. Check it (optional) then post
+cargo run -p fizzy -- lint --title "fleet: blog — backup gap — /opt not in fleet-backup" --body-file /tmp/fleet-blog-backup-gap.md
+cargo run -p fizzy -- create --board Playground --title "fleet: blog — backup gap — /opt not in fleet-backup" --body-file /tmp/fleet-blog-backup-gap.md --dedupe
+# created #32: fleet: blog — backup gap — /opt not in fleet-backup
 # https://fizzy.intern.deepwa7er.net/1/cards/32
 ```
 
 Flags:
 
-- `--body "…"` vs `--body-file /tmp/card.md` (mutually exclusive)
-- `--dry-run` — print what would be POSTed, no network
-- `--dedupe` — skip if a published triage card with the same title already exists (checked before `--dry-run`)
+- `draft --title <TITLE> [--output /tmp/card.md] [--force]` — writes the `Why / Evidence / Options / Provenance` template (default `/tmp/<slug>.md`). This is the preferred entry point.
+- `lint --title <TITLE> (--body "…" | --body-file <PATH>)` — validates and prints the normalised body without posting. `fleet:` titles require `## Why` + `## Evidence`; all titles print soft warnings for missing `Provenance` / title dash.
+- `create --board <BOARD> --title <TITLE> (--body-file <PATH> | --body "…") [--dry-run] [--dedupe] [--raw]` — posts the card. Bodies are normalised before POST (blank lines around headings, `*text` → `* text`, `---` rules). `fleet:` cards missing `Why`/`Evidence` are rejected unless `--raw`. `--body` is deprecated — it still works but warns; prefer `draft` + `--body-file` to preserve newlines.
+- `--dry-run` — print what would be POSTed (normalised body) and exit 0.
+- `--dedupe` — skip if a published triage card with the same title already exists (checked before `--dry-run`).
 - Env overrides: `FIZZY_BASE`, `FIZZY_ACCOUNT`, `FIZZY_TOKEN_FILE`
+
+Formatting guarantees (in `crates/fizzy/src/format.rs`): `\r\n`→`\n`, trailing ws stripped, at most one blank line, blank line before/after every `##` heading and `---` rule, blank line after heading before content, list markers normalised (`-item` → `- item`, `1.item` → `1. item`), fenced blocks preserved, ends with single `\n`.
 
 Tagging is not supported: Fizzy attaches tags via `taggings` after create, not in the card payload. Tag in the web UI.
 
@@ -86,7 +101,7 @@ Always use `~/.config/fizzy/write-token` (or `FIZZY_TOKEN_FILE`) — never `echo
 ### When to create
 
 - After you have finished a repo investigation and have 1–3 concrete gaps that are **actionable cards**, not observations. Show the draft `title`/`body` and ask before posting, unless the user said "create cards for the gaps."
-- Prefer one card per gap, with a short `fleet: <area> — <what>` title and a body containing `Why / Evidence (file:line) / Options / Provenance`.
+- Prefer one card per gap, with a short `fleet: <area> — <what>` title and a body containing `Why / Evidence (file:line) / Options / Provenance`. Use `draft` so you don't hand-roll the scaffold.
 
 ### After creating
 

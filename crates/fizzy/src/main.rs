@@ -11,6 +11,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
+use fizzy::format;
 use fizzy::{Client, Standing};
 
 #[derive(Parser)]
@@ -47,6 +48,40 @@ enum Command {
         /// Card number, as it appears in the URL `/1/cards/<number>` (with or without a leading `#`).
         number: String,
     },
+    /// Scaffold a well-formatted card body to a file.
+    ///
+    /// Writes the `Why / Evidence / Options / Provenance` template that
+    /// `create --body-file` expects. Edit the file, then post it. This is
+    /// the preferred way to create cards — it guarantees blank lines around
+    /// headings and consistent sections so the card renders correctly in
+    /// Fizzy's Trix/ActionText view.
+    Draft {
+        /// Card title — used to slug the default output path.
+        #[arg(long)]
+        title: String,
+        /// Where to write the draft. Defaults to `/tmp/<slug>.md`.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Overwrite an existing file at the output path.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Validate a card body without posting.
+    ///
+    /// Checks the same `Why / Evidence` scaffold that `create` enforces for
+    /// `fleet:`-prefixed titles and prints the normalised body. Useful for
+    /// agents to lint before `create`.
+    Lint {
+        /// Card title (affects strictness — `fleet:` titles require Why/Evidence).
+        #[arg(long)]
+        title: String,
+        /// Card body (ActionText description).
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        /// Read body from a file.
+        #[arg(long, conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+    },
     /// Create a published card in a board's triage.
     Create {
         /// Board id or exact name.
@@ -55,10 +90,10 @@ enum Command {
         /// Card title. Empty titles become "Untitled" server-side, but we reject them client-side.
         #[arg(long)]
         title: String,
-        /// Card body (ActionText description). Plain markdown is fine.
+        /// Card body (ActionText description). Prefer `--body-file` with a file from `fizzy draft`.
         #[arg(long, conflicts_with = "body_file")]
         body: Option<String>,
-        /// Read body from a file (useful for multi-line markdown).
+        /// Read body from a file (preferred — preserves newlines and markdown structure).
         #[arg(long, conflicts_with = "body")]
         body_file: Option<PathBuf>,
         /// If set, don't POST — print what would be sent and exit 0.
@@ -67,6 +102,9 @@ enum Command {
         /// If a published triage card with the same title already exists, skip creation and exit 0.
         #[arg(long)]
         dedupe: bool,
+        /// Skip scaffold validation (still normalises markdown). Use for free-form idea cards.
+        #[arg(long)]
+        raw: bool,
     },
 }
 
@@ -85,13 +123,17 @@ fn read_token(path: &PathBuf) -> Result<String> {
     Ok(s)
 }
 
-fn client(args: &Cli) -> Result<Client> {
-    let token_file = args
-        .token_file
+fn client_with(base: &str, account: &str, token_file: &Option<PathBuf>) -> Result<Client> {
+    let path = token_file
         .clone()
         .unwrap_or_else(default_token_file);
-    let token = read_token(&token_file)?;
-    Client::new(&args.base, &args.account, token, Duration::from_secs(15))
+    let token = read_token(&path)?;
+    Client::new(base, account, token, Duration::from_secs(15))
+}
+
+#[allow(dead_code)]
+fn client(args: &Cli) -> Result<Client> {
+    client_with(&args.base, &args.account, &args.token_file)
 }
 
 #[tokio::main]
@@ -103,11 +145,16 @@ async fn main() {
 }
 
 async fn run() -> Result<()> {
-    let cli = Cli::parse();
-    let c = client(&cli)?;
+    let Cli {
+        base,
+        account,
+        token_file,
+        command,
+    } = Cli::parse();
 
-    match cli.command {
+    match command {
         Command::Boards => {
+            let c = client_with(&base, &account, &token_file)?;
             let boards = c.boards().await?;
             if boards.is_empty() {
                 println!("no boards visible to this token");
@@ -119,6 +166,7 @@ async fn run() -> Result<()> {
             }
         }
         Command::Stream { board } => {
+            let c = client_with(&base, &account, &token_file)?;
             let b = c.resolve_board(&board).await?;
             let cards = c.standing_cards(&b.id, Standing::Triage).await?;
             if cards.is_empty() {
@@ -130,6 +178,7 @@ async fn run() -> Result<()> {
             }
         }
         Command::Show { number } => {
+            let c = client_with(&base, &account, &token_file)?;
             let n: i64 = number
                 .trim()
                 .trim_start_matches('#')
@@ -151,6 +200,65 @@ async fn run() -> Result<()> {
                 println!("--- end body ---");
             }
         }
+        Command::Draft { title, output, force } => {
+            // Draft does not need a client or network; it just scaffolds a file.
+            format::validate_title(&title)?;
+            let template = format::card_template();
+            let slug = format::slugify(&title);
+            let path = output.unwrap_or_else(|| PathBuf::from(format!("/tmp/{slug}.md")));
+            if path.exists() && !force {
+                anyhow::bail!(
+                    "draft file {} already exists — use --force to overwrite or --output to pick another path",
+                    path.display()
+                );
+            }
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)
+                        .with_context(|| format!("creating draft dir {}", parent.display()))?;
+                }
+            }
+            std::fs::write(&path, &template)
+                .with_context(|| format!("writing draft to {}", path.display()))?;
+            println!("draft: {title:?} → {}", path.display());
+            println!("edit {} then run:", path.display());
+            println!(
+                "  cargo run -p fizzy -- create --board Playground --title {title:?} --body-file {}",
+                path.display()
+            );
+        }
+        Command::Lint {
+            title,
+            body,
+            body_file,
+        } => {
+            format::validate_title(&title)?;
+            let raw = if let Some(p) = body_file {
+                std::fs::read_to_string(&p)
+                    .with_context(|| format!("reading body from {}", p.display()))?
+            } else {
+                body.unwrap_or_default()
+            };
+            let normalised = format::normalize_body(&raw);
+            let warnings = format::validate_body(&normalised, &title);
+            if warnings.is_empty() {
+                println!("lint ok: title and body look well-formed");
+            } else {
+                eprintln!("lint warnings for {title:?}:");
+                for w in &warnings {
+                    eprintln!("  - {w}");
+                }
+            }
+            println!("--- body (normalised) ---");
+            println!("{normalised}");
+            println!("--- end body ---");
+            let is_hard_fail = warnings.iter().any(|w| w.contains("## Why") || w.contains("## Evidence"));
+            if is_hard_fail {
+                anyhow::bail!("lint failed — fix the warnings above or re-run with --raw on create");
+            } else if !warnings.is_empty() {
+                eprintln!("(soft warnings — add Provenance/title dash for best practice)");
+            }
+        }
         Command::Create {
             board,
             title,
@@ -158,14 +266,46 @@ async fn run() -> Result<()> {
             body_file,
             dry_run,
             dedupe,
+            raw,
         } => {
-            let b = c.resolve_board(&board).await?;
-            let body_text = if let Some(p) = body_file {
+            // Title is always validated; body structure is validated unless --raw.
+            format::validate_title(&title)?;
+
+            let is_body_flag = body.is_some();
+            let raw_body = if let Some(p) = body_file {
                 std::fs::read_to_string(&p)
                     .with_context(|| format!("reading body from {}", p.display()))?
             } else {
                 body.unwrap_or_default()
             };
+
+            if is_body_flag {
+                eprintln!(
+                    "warning: --body is deprecated — use `fizzy draft --title {title:?}` and --body-file for reliable formatting (preserves newlines, headings, lists)"
+                );
+            }
+
+            let body_text = format::normalize_body(&raw_body);
+            let warnings = format::validate_body(&body_text, &title);
+
+            if !raw && !warnings.is_empty() {
+                let is_hard = warnings.iter().any(|w| w.contains("## Why") || w.contains("## Evidence"));
+                if is_hard {
+                    eprintln!("validation failed for {title:?}:");
+                    for w in &warnings {
+                        eprintln!("  - {w}");
+                    }
+                    eprintln!("hint: run `cargo run -p fizzy -- draft --title {title:?}` to scaffold, or `cargo run -p fizzy -- lint --title {title:?} --body-file <path>` to check, or pass --raw to skip this check");
+                    anyhow::bail!("aborted — body missing required sections (use --raw to post anyway)");
+                } else {
+                    for w in &warnings {
+                        eprintln!("warning: {w}");
+                    }
+                }
+            }
+
+            let c = client_with(&base, &account, &token_file)?;
+            let b = c.resolve_board(&board).await?;
 
             if dedupe {
                 let existing = c.standing_cards(&b.id, Standing::Triage).await?;
@@ -182,7 +322,13 @@ async fn run() -> Result<()> {
                 println!("dry-run: would POST {}/boards/{}/cards.json", c.base(), b.id);
                 println!("board: {} ({})", b.name, b.id);
                 println!("title: {}", title);
-                println!("--- body ---");
+                if !warnings.is_empty() && raw {
+                    eprintln!("(validation skipped via --raw; would have warned:)");
+                    for w in &warnings {
+                        eprintln!("  - {w}");
+                    }
+                }
+                println!("--- body (normalised) ---");
                 println!("{}", body_text);
                 println!("--- end body ---");
                 return Ok(());
