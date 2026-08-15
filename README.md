@@ -16,8 +16,8 @@ checks, monitoring, and backups all attach automatically.
                                          │
               ┌──────────────┬───────────┼───────────┬──────────────┐
               │              │           │           │              │
-         lighthouse       drydock     tidepool     depot        …apps
-        (systemd obs)  (job queue)  (file sync) (warehouse)
+         lighthouse       drydock     tidepool                …apps
+        (systemd obs)  (job queue)  (file sync)            
 
    tugboat ──── builds, ships, swaps, health-checks, rolls back ────▶ VPS
 ```
@@ -29,7 +29,6 @@ checks, monitoring, and backups all attach automatically.
 | **breakwater** | Reverse proxy and the single entry point. Terminates TLS, routes by hostname, tunnels WebSockets. Runs the full ACME lifecycle in-process — issues and renews a wildcard certificate over DNS-01 and hot-swaps it with zero downtime. |
 | **tugboat** | Manifest-driven deployer. Builds from a clean checkout of the default branch, ships the artifact, swaps it atomically, restarts, health-checks, and **rolls back automatically** if the new build fails to come up. |
 | **lighthouse** | Observability over `systemd`/`journalctl` — service status, live log streaming, and one-click redeploy that relays to tugboat. |
-| **depot** | Data warehouse. Ingests the proxy's access log and tugboat's deploy events so facts the fleet would otherwise overwrite survive. |
 | **fleet-backup** | Encrypted offsite backup of each service's state, assembled from the same manifests. |
 
 ## Applications
@@ -93,7 +92,7 @@ and is best read as a lab service rather than a pattern to copy.
 ## Layout
 
 ```
-breakwater/  tugboat/  lighthouse/  depot/     the platform
+breakwater/  tugboat/  lighthouse/             the platform
 drydock/  tidepool/  harbor/  atlas/  …        applications
 ide/  loom/                                    native apps (own build)
 crates/fleet-common/                           shared HTTP + storage
