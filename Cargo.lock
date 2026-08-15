@@ -4825,19 +4825,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tide"
-version = "0.1.0"
-dependencies = [
- "axum",
- "clap",
- "serde",
- "serde_json",
- "tokio",
- "toml",
- "tower-http",
-]
-
-[[package]]
 name = "time"
 version = "0.3.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"

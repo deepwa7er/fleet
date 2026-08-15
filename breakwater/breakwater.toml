@@ -98,10 +98,6 @@ upstream = "127.0.0.1:8097"
 label = "skiff"
 upstream = "127.0.0.1:8120"
 
-[[routes]]
-label = "tide"
-upstream = "127.0.0.1:8094"
-
 # ── END GENERATED ROUTES ──
 
 # lagoon — capture-first notes. An EXTERNAL member (its repo isn't in the fleet

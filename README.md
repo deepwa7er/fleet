@@ -44,7 +44,6 @@ checks, monitoring, and backups all attach automatically.
 | **spyglass** | Federated search that fans one query across the other services. |
 | **harness** | A minimal coding-agent harness — durable sessions, self-compacting context, terminal REPL and web UI. |
 | **ferry** | Turns the browser address bar into a command line for tailnet services. |
-| **tide** | Fleet-wide settings. Today, the theme every UI honors. |
 | **warehouse** | Dev data warehouse — crawls `~/code`, git, and shell history into SQLite+Parquet, heuristic integrations, MCP for agents (`get_repo_context`/`search_build_knowledge`). Hourly `systemd --user` on Fedora, not VPS routed. |
 | **clothes**, **recipes**, **regatta**, **driftword** | Smaller applications riding the same platform. |
 
