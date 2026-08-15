@@ -167,13 +167,7 @@ serve_dir = "/srv/netfps-dist"
 label = "source"
 upstream = "fedora.tailcfab97.ts.net:7879"
 
-# Code map / call tracer (atlas) — dev-box upstream like source, and for the
-# same reason: it runs rust-analyzer over the working trees, which live there.
-[[routes]]
-label = "atlas"
-upstream = "fedora.tailcfab97.ts.net:7880"
-
-# Coding-agent harness (harness) — dev-box upstream like source and atlas: the
+# Coding-agent harness (harness) — dev-box upstream like source: the
 # agent loop runs commands against the working trees, which live there.
 #
 # NOTE, deliberately different from every other route here: the services above
