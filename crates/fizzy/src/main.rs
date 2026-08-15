@@ -249,9 +249,15 @@ async fn run() -> Result<()> {
                     eprintln!("  - {w}");
                 }
             }
-            println!("--- body (normalised) ---");
+            println!("--- body (normalised, markdown) ---");
             println!("{normalised}");
             println!("--- end body ---");
+            let html = format::markdown_to_html(&normalised);
+            if !html.is_empty() {
+                println!("--- html preview (what Fizzy renders) ---");
+                println!("{html}");
+                println!("--- end html ---");
+            }
             let is_hard_fail = warnings.iter().any(|w| w.contains("## Why") || w.contains("## Evidence"));
             if is_hard_fail {
                 anyhow::bail!("lint failed — fix the warnings above or re-run with --raw on create");
@@ -328,13 +334,20 @@ async fn run() -> Result<()> {
                         eprintln!("  - {w}");
                     }
                 }
-                println!("--- body (normalised) ---");
+                let html_preview = format::markdown_to_html(&body_text);
+                println!("--- body (markdown, normalised) ---");
                 println!("{}", body_text);
                 println!("--- end body ---");
+                if !html_preview.is_empty() {
+                    println!("--- html (what will be POSTed) ---");
+                    println!("{}", html_preview);
+                    println!("--- end html ---");
+                }
                 return Ok(());
             }
 
-            let card = c.create_card(&b.id, &title, &body_text).await?;
+            let html_body = format::markdown_to_html(&body_text);
+            let card = c.create_card(&b.id, &title, &html_body).await?;
             // Fizzy's canonical card URL is <origin>/<account>/cards/:number — and
             // `base` is exactly origin/account, e.g. https://fizzy.intern.deepwa7er.net/1.
             println!("created #{}: {}", card.number, card.title);

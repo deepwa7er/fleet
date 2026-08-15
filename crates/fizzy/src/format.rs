@@ -8,6 +8,7 @@
 //! the same in Fizzy's Trix/ActionText view.
 
 use anyhow::{bail, Result};
+use pulldown_cmark::{html, Options, Parser};
 
 /// Template for triage cards. Matches the `Why / Evidence / Options /
 /// Provenance` structure described in `.agents/skills/fizzy/SKILL.md`.
@@ -364,9 +365,52 @@ fn contains_heading(body: &str, name: &str) -> bool {
     })
 }
 
+/// Convert normalised markdown to HTML for Fizzy's ActionText/Trix.
+///
+/// Markdown headings (`## Why`), lists (`- item`, `1. item`), code fences,
+/// and `---` rules become `<h2>`, `<ul>/<ol><li>`, `<pre><code>`, `<hr>` etc,
+/// which is what `description_html` renders. Plain text stays `<p>`.
+/// Empty input stays empty (Fizzy treats empty as no body).
+pub fn markdown_to_html(markdown: &str) -> String {
+    if markdown.trim().is_empty() {
+        return String::new();
+    }
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TABLES);
+    let parser = Parser::new_ext(markdown, options);
+    let mut html_output = String::new();
+    html::push_html(&mut html_output, parser);
+    html_output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn markdown_to_html_renders_headings_and_lists() {
+        let md = "## Why\n\ncontent\n\n## Evidence\n\n- a\n- b\n";
+        let html = markdown_to_html(md);
+        assert!(html.contains("<h2>Why</h2>"), "{html}");
+        assert!(html.contains("<h2>Evidence</h2>"), "{html}");
+        assert!(html.contains("<ul>"), "{html}");
+        assert!(html.contains("<li>a</li>"), "{html}");
+    }
+
+    #[test]
+    fn markdown_to_html_empty() {
+        assert_eq!(markdown_to_html(""), "");
+        assert_eq!(markdown_to_html("   \n"), "");
+    }
+
+    #[test]
+    fn markdown_to_html_code_fence() {
+        let md = "```rust\nfn x() {}\n```\n";
+        let html = markdown_to_html(md);
+        assert!(html.contains("<pre><code"), "{html}");
+        assert!(html.contains("fn x()"), "{html}");
+    }
 
     #[test]
     fn template_has_required_sections() {
