@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs the fleet IDE client on this machine (macOS or Linux) and
-# preflights the remote transport. Idempotent — safe to re-run; each step
-# checks before it acts. Long-form guide: docs/remote.md §10.
+# preflights the remote transport. Idempotent - safe to re-run; each step
+# checks before it acts. Long-form guide: docs/remote.md section 10.
 #
 # Run it from inside a fleet checkout (./ide/install.sh) to use that
 # checkout, or standalone to clone into ~/code/fleet (override: FLEET_DIR).
@@ -24,9 +24,9 @@ fi
 
 # 1. Xcode Command Line Tools (macOS). The CLT installer is a GUI dialog we
 #    cannot wait on, so finish it and re-run. If the build later fails around
-#    metal/xcrun, full Xcode is the fallback — see docs/remote.md §10.
+#    metal/xcrun, full Xcode is the fallback - see docs/remote.md section 10.
 if [ "$(uname -s)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1; then
-    say "Xcode Command Line Tools are missing — starting their installer."
+    say "Xcode Command Line Tools are missing - starting their installer."
     xcode-select --install || true
     fail "Finish the Command Line Tools install, then re-run this script."
 fi
@@ -37,16 +37,16 @@ if ! command -v cargo >/dev/null 2>&1 && [ -f "$HOME/.cargo/env" ]; then
     . "$HOME/.cargo/env"
 fi
 if ! command -v cargo >/dev/null 2>&1; then
-    say "Installing Rust via rustup…"
+    say "Installing Rust via rustup..."
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     # shellcheck source=/dev/null
     . "$HOME/.cargo/env"
 fi
 
-# 3. The fleet checkout. (rev-parse, not a `.git` directory test — in a git
+# 3. The fleet checkout. (rev-parse, not a `.git` directory test - in a git
 #    worktree `.git` is a file.)
 if ! git -C "$FLEET_DIR" rev-parse --git-dir >/dev/null 2>&1; then
-    say "Cloning the fleet into $FLEET_DIR…"
+    say "Cloning the fleet into $FLEET_DIR..."
     mkdir -p "$(dirname "$FLEET_DIR")"
     if command -v gh >/dev/null 2>&1; then
         gh repo clone deepwa7er/fleet "$FLEET_DIR"
@@ -54,21 +54,21 @@ if ! git -C "$FLEET_DIR" rev-parse --git-dir >/dev/null 2>&1; then
         git clone git@github.com:deepwa7er/fleet.git "$FLEET_DIR"
     fi
 else
-    say "Updating fleet checkout at $FLEET_DIR…"
+    say "Updating fleet checkout at $FLEET_DIR..."
     git -C "$FLEET_DIR" pull --ff-only \
-        || say "warning: pull failed (diverged or dirty checkout) — building what's here"
+        || say "warning: pull failed (diverged or dirty checkout) - building what's here"
 fi
 
 # 4. Build + install the client. Release profile; the first build compiles
-#    the whole gpui stack — expect 10–20 minutes, then it's incremental.
-say "Building and installing ide (the first build is the long part)…"
+#    the whole gpui stack - expect 10-20 minutes, then it's incremental.
+say "Building and installing ide (the first build is the long part)..."
 # --locked: build the exact dependency revisions Cargo.lock pins (the tested
-# ones) — cargo install re-resolves without it.
+# ones) - cargo install re-resolves without it.
 cargo install --locked --path "$FLEET_DIR/ide" --bin ide
 
 # 5. Preflight the remote transport. 255 is ssh itself failing (host down,
 #    auth); anything else means the host answered but the server is missing.
-say "Preflight: ide-server on '$REMOTE_HOST'…"
+say "Preflight: ide-server on '$REMOTE_HOST'..."
 if out="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" \
         '~/.cargo/bin/ide-server --version' 2>&1)"; then
     say "Server answered: $out"
@@ -78,7 +78,7 @@ else
     say "Client installed, but the preflight failed (exit $status):"
     printf '%s\n' "$out" >&2
     if [ "$status" -eq 255 ]; then
-        say "ssh could not reach '$REMOTE_HOST' — it is usually powered off; check 'tailscale status'."
+        say "ssh could not reach '$REMOTE_HOST' - it is usually powered off; check 'tailscale status'."
     else
         say "The host answered but ide-server is missing there. On '$REMOTE_HOST' run:"
         say "  cd ~/code/fleet && git pull && cargo install --locked --path ide --bin ide-server"
