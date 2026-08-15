@@ -24,7 +24,6 @@ members = [
     "regatta",
     "sonar",
     "source",
-    "spyglass",
     "tide",
     "trawler",
     "tugboat",
