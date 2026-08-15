@@ -13,6 +13,7 @@ serde = { workspace = true, features = ["derive"] }
 clap = { workspace = true, features = ["derive", "env"] }
 # rustls rather than platform TLS, matching mirror/sonar/trawler — workspace disables reqwest default TLS for musl.
 reqwest = { workspace = true, features = ["rustls-tls", "json"] }
+pulldown-cmark = { workspace = true }
 
 [[bin]]
 name = "fizzy"
