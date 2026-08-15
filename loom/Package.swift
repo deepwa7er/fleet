@@ -5,11 +5,12 @@ let package = Package(
     name: "Loom",
     platforms: [.macOS(.v14)],
     dependencies: [
-        // Tracked by branch rather than pinned to a tag: Filament is being
-        // built alongside this migration, so tagging every change it needs
-        // would be pure ceremony. Package.resolved is committed, so builds stay
-        // reproducible even though the requirement is a moving one.
-        .package(url: "git@github.com:deepwa7er/filament.git", branch: "main")
+        // Filament is a sibling in this monorepo, so it is referenced by path:
+        // one checkout builds both, a change to the reconciler and its use here
+        // land in the same commit, and there is no revision to keep in sync.
+        // This restores the local-path dependency that predated the split, now
+        // that the two are versioned together rather than by branch-tracking.
+        .package(path: "../filament")
     ],
     targets: [
         .executableTarget(
