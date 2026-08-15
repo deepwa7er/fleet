@@ -21,11 +21,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 TUGBOAT_FLEET=$PWD/fleet.toml cargo run -q -p tugboat -- fleet gen --check
 ```
 
-`fleet gen --check` verifies the generated registries (`breakwater/breakwater.toml`, `fleet-backup/state.sh`) still match each service's `deploy.toml`. Also `bun run build` in `<app>/web` for any web app touched — nothing else typechecks it. Also `cargo test && cargo clippy --all-targets -- -D warnings` from `ide/` if you touched `ide/` — it is its own Cargo workspace (heavy gpui deps, see `ide/README.md`), so the workspace-wide gates above never compile it. Also, for the SwiftPM packages — `loom/` (the macOS window manager) and `filament/` (the Swift UI reconciler it renders through) — no Cargo gate reaches either, and loom depends on filament by path, so a filament change must be gated by both:
+`fleet gen --check` verifies the generated registries (`breakwater/breakwater.toml`, `fleet-backup/state.sh`) still match each service's `deploy.toml`. Also `bun run build` in `<app>/web` for any web app touched — nothing else typechecks it. Also `cargo test && cargo clippy --all-targets -- -D warnings` from `ide/` if you touched `ide/` — it is its own Cargo workspace (heavy gpui deps, see `ide/README.md`), so the workspace-wide gates above never compile it. Also, for the SwiftPM packages — `loom/` (the macOS window manager), `filament/` (the Swift UI reconciler it renders through), and `shutter/` (the macOS screenshot tool) — no Cargo gate reaches any of them. Gate whichever you touched; loom depends on filament by path, so a filament change must be gated by both:
 
 ```bash
 (cd loom && make build)
 (cd filament && swift test)
+(cd shutter && make build)
 ```
 
 macOS only. `filament`'s suite is swift-testing, whose `TestingMacros` compiler plugin ships **only with full Xcode**: if `xcode-select -p` reports `/Library/Developer/CommandLineTools`, `swift test` fails to build with `plugin for module 'TestingMacros' not found` — a toolchain gap, not a test failure. Either `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` once, or prefix the run:
@@ -34,7 +35,7 @@ macOS only. `filament`'s suite is swift-testing, whose `TestingMacros` compiler 
 (cd filament && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test)
 ```
 
-Adjust the path to the Xcode that is actually installed. `loom`'s `make build` needs no Xcode and works under CommandLineTools.
+Adjust the path to the Xcode that is actually installed. `loom` and `shutter` have no test suite; their `make build` needs no Xcode and works under CommandLineTools. Both also have a `make app` that codesigns the bundle with a named Apple Development identity — that is for running the app, not a gate.
 
 Skills live in `.agents/skills/<name>/SKILL.md`:
 
@@ -46,11 +47,11 @@ Archived, both 2026-08-13: the drydock autonomous worker (`drydock.ARCHIVED.md`,
 
 ## Imported upstreams — this repo is the only copy
 
-`loom/` and `filament/` were standalone repos until 2026-08-14, imported here with full history (`git filter-repo --to-subdirectory-filter <name>`, then a merge with `--allow-unrelated-histories`) in PRs #32 and #39. **`deepwa7er/loom` and `deepwa7er/filament` are now archived read-only on GitHub** and each carries a README pointing back here.
+`loom/` and `filament/` were standalone repos until 2026-08-14, imported here with full history (`git filter-repo --to-subdirectory-filter <name>`, then a merge with `--allow-unrelated-histories`) in PRs #32 and #39. `shutter/` followed on 2026-08-15 by the same method in PR #43. **`deepwa7er/loom`, `deepwa7er/filament`, and `deepwa7er/shutter` are now archived read-only on GitHub** and each carries a README pointing back here.
 
-Consequences for any change to either:
+Consequences for any change to any of them:
 
-- Change them in this repo. `~/code/loom` and `~/code/filament` are stale checkouts of archived remotes, not worktrees to edit — a push from either fails, and work done there is stranded outside the monorepo.
+- Change them in this repo. `~/code/loom`, `~/code/filament`, and `~/code/shutter` are stale checkouts of archived remotes, not worktrees to edit — a push from any of them fails, and work done there is stranded outside the monorepo.
 - Do not restore the URL dependency. `loom/Package.swift` references filament as `.package(path: "../filament")`; the old `git@github.com:deepwa7er/filament.git` requirement now points at a frozen snapshot. `loom/Package.resolved` is intentionally absent — loom has no remote dependencies left to pin.
 
 ## Quality — NO HACKS (authoritative)
