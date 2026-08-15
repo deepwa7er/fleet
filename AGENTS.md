@@ -21,7 +21,20 @@ cargo clippy --workspace --all-targets -- -D warnings
 TUGBOAT_FLEET=$PWD/fleet.toml cargo run -q -p tugboat -- fleet gen --check
 ```
 
-`fleet gen --check` verifies the generated registries (`breakwater/breakwater.toml`, `fleet-backup/state.sh`) still match each service's `deploy.toml`. Also `bun run build` in `<app>/web` for any web app touched — nothing else typechecks it. Also `cargo test && cargo clippy --all-targets -- -D warnings` from `ide/` if you touched `ide/` — it is its own Cargo workspace (heavy gpui deps, see `ide/README.md`), so the workspace-wide gates above never compile it. Also `make build` from `loom/` if you touched `loom/` — it is a SwiftPM package, not a Cargo crate (see `loom/README.md`), so no Cargo gate reaches it either; it needs macOS and network on the first build (its Filament dependency is fetched from git).
+`fleet gen --check` verifies the generated registries (`breakwater/breakwater.toml`, `fleet-backup/state.sh`) still match each service's `deploy.toml`. Also `bun run build` in `<app>/web` for any web app touched — nothing else typechecks it. Also `cargo test && cargo clippy --all-targets -- -D warnings` from `ide/` if you touched `ide/` — it is its own Cargo workspace (heavy gpui deps, see `ide/README.md`), so the workspace-wide gates above never compile it. Also, for the SwiftPM packages — `loom/` (the macOS window manager) and `filament/` (the Swift UI reconciler it renders through) — no Cargo gate reaches either, and loom depends on filament by path, so a filament change must be gated by both:
+
+```bash
+(cd loom && make build)
+(cd filament && swift test)
+```
+
+macOS only. `filament`'s suite is swift-testing, whose `TestingMacros` compiler plugin ships **only with full Xcode**: if `xcode-select -p` reports `/Library/Developer/CommandLineTools`, `swift test` fails to build with `plugin for module 'TestingMacros' not found` — a toolchain gap, not a test failure. Either `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` once, or prefix the run:
+
+```bash
+(cd filament && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test)
+```
+
+Adjust the path to the Xcode that is actually installed. `loom`'s `make build` needs no Xcode and works under CommandLineTools.
 
 Skills live in `.agents/skills/<name>/SKILL.md`:
 

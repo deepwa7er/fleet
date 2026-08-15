@@ -58,6 +58,12 @@ workspace, so the fleet-wide gates do not build them — each carries its own
 | **ide** | The fleet's own IDE — a native GPUI app, IntelliJ New UI layout, DW-001 palette. Its own Cargo workspace. |
 | **loom** | macOS window manager: one window at a time filling the screen, `⌘1`–`⌘9` to switch. Swift/SwiftPM, built with `make app`. |
 
+**filament** is the Swift half of the shared layer — a React-style reconciler
+(elements, hooks, fragments, keyed reordering) plus an AppKit host that drives
+real `NSView`s. It is a library, not an app: loom renders its command-panel chip
+rows through it, and depends on it by path (`../filament`), so one checkout
+builds both and a reconciler change lands in the same commit as its use.
+
 ## How it fits together
 
 **Deployability is discovered, not declared.** A directory is a deployable
@@ -98,6 +104,7 @@ ide/  loom/                                    native apps (own build)
 crates/fleet-common/                           shared HTTP + storage
 crates/fleet-api/                              shared API types
 web/                                           shared React components
+filament/                                      shared Swift UI reconciler
 fleet.toml                                     git working set + docs config
 ```
 
