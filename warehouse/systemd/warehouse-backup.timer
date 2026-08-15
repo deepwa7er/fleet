@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly warehouse backup to R2 (after ingest)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

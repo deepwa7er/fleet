@@ -25,6 +25,7 @@ members = [
     "tide",
     "trawler",
     "tugboat",
+    "warehouse",
 ]
 
 # Dependencies shared by two or more members. Versions live here; each member

@@ -1,0 +1,15 @@
+[Unit]
+Description=Dev Warehouse disaster-recovery backup to R2 (SQLite + Parquet)
+Wants=network-online.target
+After=network-online.target warehouse-ingest.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/code/fleet/warehouse/.env
+ExecStart=%h/code/fleet/warehouse/target/release/warehouse-backup
+WorkingDirectory=%h/code/fleet/warehouse
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
