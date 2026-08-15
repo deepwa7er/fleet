@@ -4601,21 +4601,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "source"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "fleet-api",
- "serde",
- "serde_json",
- "tokio",
- "toml",
- "tower-http",
-]
-
-[[package]]
 name = "spin"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -21,7 +21,6 @@ members = [
     "mirror",
     "recipes",
     "sonar",
-    "source",
     "trawler",
     "tugboat",
     "warehouse",

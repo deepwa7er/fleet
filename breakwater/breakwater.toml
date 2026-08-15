@@ -133,21 +133,7 @@ serve_dir = "/opt/pilot/web"
 label = "netfps"
 serve_dir = "/srv/netfps-dist"
 
-# Source-code viewer (source) — a dev-box upstream. The fleet's working trees
-# live on the dev box — since 2026-08-12 the Fedora desktop (fedora), before
-# that the Mac (deepwater-1) — so `source` runs there (a systemd user unit) and
-# breakwater proxies to it over the tailnet. The page is reachable only while
-# the dev box is up, which is inherent: that's where the source is.
-#
-# Addressed by its MagicDNS name, not a raw 100.x address: a node's tailnet
-# IP is not a constant. It changed when a duplicate Tailscale node was retired
-# (2026-07-26) and the hardcoded address here silently pointed at a dead node.
-# The name follows the node.
-[[routes]]
-label = "source"
-upstream = "fedora.tailcfab97.ts.net:7879"
-
-# Coding-agent harness (harness) — dev-box upstream like source: the
+# Coding-agent harness (harness) — dev-box upstream: the
 # agent loop runs commands against the working trees, which live there.
 #
 # NOTE, deliberately different from every other route here: the services above
@@ -176,7 +162,7 @@ upstream = "fedora.tailcfab97.ts.net:8098"
 # cert for it. breakwater terminates TLS here instead, under the wildcard.
 #
 # Addressed by MagicDNS name rather than a raw 100.x address, for the same reason
-# as `source` above: a node's tailnet IP is not a constant.
+# as `harness` above: a node's tailnet IP is not a constant.
 [[routes]]
 label = "fizzy"
 upstream = "fedora-1.tailcfab97.ts.net:80"
@@ -207,7 +193,7 @@ label = "mail"
 upstream = "fedora-1.tailcfab97.ts.net:8025"
 
 # agent — skiff, the phone web UI over a headless opencode server. The FIRST
-# service on the fedora DESKTOP behind breakwater: like `source` (the dev box)
+# service on the fedora DESKTOP behind breakwater: like `harness` (the dev box)
 # and `fizzy`/`mail` (the laptop), the upstream is the host's MagicDNS name
 # over the tailnet, never a raw 100.x IP (a node's tailnet IP is not a
 # constant). skiff binds the desktop's tailnet IP on 8120 — breakwater cannot
