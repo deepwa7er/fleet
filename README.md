@@ -57,6 +57,7 @@ workspace, so the fleet-wide gates do not build them — each carries its own
 |---|---|
 | **ide** | The fleet's own IDE — a native GPUI app, IntelliJ New UI layout, DW-001 palette. Its own Cargo workspace. |
 | **loom** | macOS window manager: one window at a time filling the screen, `⌘1`–`⌘9` to switch. Swift/SwiftPM, built with `make app`. |
+| **shutter** | macOS screenshot tool: answers the system's own ⌘⇧3/4/5, captures the screen *before* the overlay draws, annotates, copies, saves. Swift/SwiftPM, built with `make app`. |
 
 **filament** is the Swift half of the shared layer — a React-style reconciler
 (elements, hooks, fragments, keyed reordering) plus an AppKit host that drives
@@ -100,7 +101,7 @@ and is best read as a lab service rather than a pattern to copy.
 ```
 breakwater/  tugboat/  lighthouse/             the platform
 drydock/  tidepool/  harbor/  atlas/  warehouse/ …  applications
-ide/  loom/                                    native apps (own build)
+ide/  loom/  shutter/                          native apps (own build)
 crates/fleet-common/                           shared HTTP + storage
 crates/fleet-api/                              shared API types
 web/                                           shared React components
@@ -121,6 +122,6 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-Each top-level directory was its own repository until 2026-07-01; history was
-imported with `git filter-repo --to-subdirectory-filter` and the old repos are
-archived.
+Each top-level directory was its own repository until 2026-07-01 — loom,
+filament, and shutter followed in August 2026. History was imported with
+`git filter-repo --to-subdirectory-filter` and the old repos are archived.
