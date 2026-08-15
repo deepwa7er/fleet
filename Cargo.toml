@@ -21,7 +21,6 @@ members = [
     "lighthouse",
     "mirror",
     "recipes",
-    "regatta",
     "sonar",
     "source",
     "tide",
