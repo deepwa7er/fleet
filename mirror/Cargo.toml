@@ -11,7 +11,7 @@ axum = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
 tower-http = { workspace = true, features = ["trace"] }
 # "bundled": compile SQLite from source so the static-musl cross-build carries
-# its own copy, exactly as clothes/recipes/depot do.
+# its own copy, exactly as recipes does.
 rusqlite = { workspace = true, features = ["bundled"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
