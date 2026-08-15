@@ -22,7 +22,6 @@ members = [
     "recipes",
     "sonar",
     "source",
-    "tide",
     "trawler",
     "tugboat",
     "warehouse",
