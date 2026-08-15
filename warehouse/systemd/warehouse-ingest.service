@@ -1,0 +1,15 @@
+[Unit]
+Description=Dev Warehouse ingest (all of ~/code + shell/git -> SQLite+Parquet)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/code/fleet/warehouse/.env
+ExecStart=%h/code/fleet/warehouse/target/release/warehouse-ingest
+WorkingDirectory=%h/code/fleet/warehouse
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

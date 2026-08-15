@@ -1,0 +1,45 @@
+[package]
+name = "warehouse"
+version = "0.1.0"
+edition = "2021"
+description = "Local data warehouse for dev data (all of ~/code + shell/git), embedded SQLite + Parquet, R2 durability, agent query via MCP"
+license = "MIT"
+
+[[bin]]
+name = "warehouse-ingest"
+path = "src/bin/ingest.rs"
+
+[[bin]]
+name = "warehouse-backup"
+path = "src/bin/backup.rs"
+
+[[bin]]
+name = "warehouse-mcp"
+path = "src/bin/mcp.rs"
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.38", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+walkdir = "2.5"
+ignore = "0.4"
+git2 = "0.19"
+blake3 = "1.5"
+rusqlite = { version = "0.32", features = ["bundled"] }
+arrow = { version = "53", features = ["prettyprint"] }
+parquet = { version = "53", features = ["arrow"] }
+aws-config = "1.6"
+aws-sdk-s3 = "1.66"
+dotenvy = "0.15"
+sha2 = "0.10"
+hex = "0.4"
+rmcp = { version = "0.4", features = ["server", "transport-io"] }
+schemars = "1.0"
+
+[dev-dependencies]
+tempfile = "3.12"
