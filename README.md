@@ -40,7 +40,6 @@ checks, monitoring, and backups all attach automatically.
 | **tidepool** | Cross-device file and clipboard sync (Go). Joins the tailnet as its own node via `tsnet`, propagates clipboard changes over SSE, and serves a PWA for iOS. |
 | **harbor** | Chrome new-tab dashboard over the project portfolio, backed by a Rust API. Self-hosts its own signed auto-update channel. |
 | **atlas** | Code map and call-flow tracer for the fleet's Rust, derived from rust-analyzer's SCIP index. |
-| **source** | Browse and search every repo in the fleet from one page. |
 | **spyglass** | Federated search that fans one query across the other services. |
 | **harness** | A minimal coding-agent harness — durable sessions, self-compacting context, terminal REPL and web UI. |
 | **ferry** | Turns the browser address bar into a command line for tailnet services. |
