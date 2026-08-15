@@ -8,6 +8,8 @@
 //! contract (`Accept: application/json` is required — Bearer only honored
 //! for JSON).
 
+pub mod format;
+
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};

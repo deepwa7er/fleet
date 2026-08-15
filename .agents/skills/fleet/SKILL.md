@@ -15,14 +15,19 @@ Use when making **any** change to `fleet` (code, docs, style, config). One card 
 
 ## 1. Discover → Card
 
-- Search and read first. If you find a gap, bug, or follow-up, draft a card to `/tmp/card.md` with `Why / Evidence (file:line) / Options / Provenance`, then create it:
+- Search and read first. If you find a gap, bug, or follow-up, scaffold a draft with `draft` (it writes the `Why / Evidence / Options / Provenance` template and normalises markdown), edit it, then create it:
 
 ```bash
-cargo run -p fizzy -- create --board Playground --title "fleet: <area> — <what>" --body-file /tmp/card.md --dedupe
+cargo run -p fizzy -- draft --title "fleet: <area> — <what>"
+# → /tmp/fleet-area-what.md
+$EDITOR /tmp/fleet-area-what.md
+cargo run -p fizzy -- lint --title "fleet: <area> — <what>" --body-file /tmp/fleet-area-what.md  # optional check
+cargo run -p fizzy -- create --board Playground --title "fleet: <area> — <what>" --body-file /tmp/fleet-area-what.md --dedupe
 # prints https://fizzy.intern.deepwa7er.net/1/cards/<n> — echo it back
+# create normalises (blank lines around headings, list markers) and validates fleet: cards need ## Why + ## Evidence (use --raw to skip)
 ```
 
-- Ask before posting unless the user said "create cards". Use `--dedupe` to avoid duplicates. `~/.config/fizzy/write-token` (0600) is the write token; never `echo $TOKEN`.
+- Ask before posting unless the user said "create cards". Use `--dedupe` to avoid duplicates. Prefer `--body-file` from `draft` — `--body "…"` is deprecated (shell escaping collapses formatting). `~/.config/fizzy/write-token` (0600) is the write token; never `echo $TOKEN`.
 
 ## 2. Prepare — isolate
 
