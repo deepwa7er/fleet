@@ -44,6 +44,15 @@ Skills live in `.agents/skills/<name>/SKILL.md`:
 
 Archived, both 2026-08-13: the drydock autonomous worker (`drydock.ARCHIVED.md`, tag `archive/drydock-2026-08-13`) and CI (`ci.ARCHIVED.md`, tag `archive/ci-2026-08-13`). Nothing in this workflow writes to `~/code/.drydock`.
 
+## Imported upstreams — this repo is the only copy
+
+`loom/` and `filament/` were standalone repos until 2026-08-14, imported here with full history (`git filter-repo --to-subdirectory-filter <name>`, then a merge with `--allow-unrelated-histories`) in PRs #32 and #39. **`deepwa7er/loom` and `deepwa7er/filament` are now archived read-only on GitHub** and each carries a README pointing back here.
+
+Consequences for any change to either:
+
+- Change them in this repo. `~/code/loom` and `~/code/filament` are stale checkouts of archived remotes, not worktrees to edit — a push from either fails, and work done there is stranded outside the monorepo.
+- Do not restore the URL dependency. `loom/Package.swift` references filament as `.package(path: "../filament")`; the old `git@github.com:deepwa7er/filament.git` requirement now points at a frozen snapshot. `loom/Package.resolved` is intentionally absent — loom has no remote dependencies left to pin.
+
 ## Quality — NO HACKS (authoritative)
 
 Read `~/.claude/CLAUDE.md` — ABSOLUTE code quality, no hacks/workarounds/monkey-patches/partial fixes; if blocked, fix the root cause properly or report honestly. Back-compat not required.
