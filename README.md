@@ -47,6 +47,18 @@ checks, monitoring, and backups all attach automatically.
 | **tide** | Fleet-wide settings. Today, the theme every UI honors. |
 | **clothes**, **recipes**, **regatta**, **driftword** | Smaller applications riding the same platform. |
 
+## Native apps
+
+These run on the desktop rather than on the tailnet, so they have no
+`deploy.toml` and tugboat never ships them. They also sit outside the Cargo
+workspace, so the fleet-wide gates do not build them — each carries its own
+(`AGENTS.md` records the command).
+
+| App | What it does |
+|---|---|
+| **ide** | The fleet's own IDE — a native GPUI app, IntelliJ New UI layout, DW-001 palette. Its own Cargo workspace. |
+| **loom** | macOS window manager: one window at a time filling the screen, `⌘1`–`⌘9` to switch. Swift/SwiftPM, built with `make app`. |
+
 ## How it fits together
 
 **Deployability is discovered, not declared.** A directory is a deployable
@@ -83,6 +95,7 @@ and is best read as a lab service rather than a pattern to copy.
 ```
 breakwater/  tugboat/  lighthouse/  depot/     the platform
 drydock/  tidepool/  harbor/  atlas/  …        applications
+ide/  loom/                                    native apps (own build)
 crates/fleet-common/                           shared HTTP + storage
 crates/fleet-api/                              shared API types
 web/                                           shared React components
@@ -93,8 +106,8 @@ Each service directory has its own README covering its design in more detail.
 
 ## Stack
 
-Rust (Tokio, Axum, rusqlite, Clap, tracing) · Go · React + TypeScript (Vite,
-Tailwind) · SQLite · systemd · Tailscale
+Rust (Tokio, Axum, rusqlite, Clap, tracing) · Go · Swift (AppKit) · React +
+TypeScript (Vite, Tailwind) · SQLite · systemd · Tailscale
 
 ## License
 
