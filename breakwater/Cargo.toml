@@ -32,6 +32,10 @@ toml = { workspace = true }
 # build, so it cross-compiles to static musl like the rest of the tree.
 if-addrs = "0.13"
 
+# Public IP via DigitalOcean metadata (http://169.254.169.254) — uses reqwest
+# (plain http, no TLS needed for the metadata endpoint).
+reqwest = { workspace = true }
+
 # TLS + ACME. Every crypto-bearing dependency is pinned to the ring provider
 # (not the default aws-lc-rs) so the whole tree cross-compiles cleanly to musl
 # with no C/cmake toolchain, keeping the build-locally-ship-a-static-binary model.
