@@ -20,6 +20,7 @@ members = [
     "lighthouse",
     "mirror",
     "recipes",
+    "shutter-relay",
     "sonar",
     "trawler",
     "tugboat",
