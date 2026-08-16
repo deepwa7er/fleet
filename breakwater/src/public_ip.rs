@@ -47,7 +47,7 @@ fn is_public_candidate(ip: Ipv4Addr) -> bool {
         && !ip.is_broadcast()
 }
 
-fn find_once() -> anyhow::Result<Option<Ipv4Addr>> {
+async fn find_once() -> anyhow::Result<Option<Ipv4Addr>> {
     // Env override for dev machines and tests: `BREAKWATER_PUBLIC_IP=127.0.0.1` etc.
     if let Ok(val) = std::env::var("BREAKWATER_PUBLIC_IP") {
         let trimmed = val.trim();
@@ -61,9 +61,7 @@ fn find_once() -> anyhow::Result<Option<Ipv4Addr>> {
     // Try DigitalOcean metadata service first — it knows the droplet's public IP
     // even when the interface enumeration is ambiguous in some virtualization modes.
     // Best-effort: if it fails we fall through to interface scan.
-    // Note: we do a short blocking fetch via `std::net::TcpStream` so this
-    // function stays sync and testable; the async `resolve()` wrapper adds retries.
-    if let Some(ip) = try_do_metadata() {
+    if let Some(ip) = try_do_metadata().await {
         return Ok(Some(ip));
     }
     let interfaces = if_addrs::get_if_addrs().context("failed to enumerate network interfaces")?;
@@ -76,29 +74,22 @@ fn find_once() -> anyhow::Result<Option<Ipv4Addr>> {
         .find(|&v4| is_public_candidate(v4)))
 }
 
-fn try_do_metadata() -> Option<Ipv4Addr> {
+async fn try_do_metadata() -> Option<Ipv4Addr> {
     // DigitalOcean metadata: http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address
-    // Short timeout, no TLS, no deps — raw TCP + minimal HTTP.
-    use std::io::{Read, Write};
-    use std::net::TcpStream;
-    use std::time::Duration;
-    let addr = "169.254.169.254:80";
-    let mut stream = TcpStream::connect_timeout(
-        &addr.parse().ok()?,
-        Duration::from_millis(300),
-    )
-    .ok()?;
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(300)));
-    let req = b"GET /metadata/v1/interfaces/public/0/ipv4/address HTTP/1.0\r\nHost: 169.254.169.254\r\nConnection: close\r\n\r\n";
-    stream.write_all(req).ok()?;
-    let mut resp = String::new();
-    stream.read_to_string(&mut resp).ok()?;
-    // Response is like "HTTP/1.0 200 OK\r\n...\r\n\r\n147.182.250.13\n"
-    let body = resp.split("\r\n\r\n").last()?.trim();
-    // Body should be a single IP, possibly with newline.
-    let ip_str = body.lines().next()?.trim();
-    ip_str.parse::<Ipv4Addr>().ok()
+    let resp = reqwest::Client::builder()
+        .timeout(Duration::from_millis(400))
+        .build()
+        .ok()?
+        .get("http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address")
+        .timeout(Duration::from_millis(400))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let text = resp.text().await.ok()?;
+    text.trim().parse::<Ipv4Addr>().ok()
 }
 
 /// Resolve the host's public IPv4, retrying until it appears or `timeout` elapses.
@@ -106,7 +97,7 @@ pub async fn resolve(timeout: Duration) -> anyhow::Result<Ipv4Addr> {
     const POLL: Duration = Duration::from_millis(500);
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        if let Some(ip) = find_once()? {
+        if let Some(ip) = find_once().await? {
             return Ok(ip);
         }
         if tokio::time::Instant::now() >= deadline {
@@ -137,15 +128,15 @@ mod tests {
         assert!(!is_public_candidate(Ipv4Addr::new(169, 254, 10, 20)));
     }
 
-    #[test]
-    fn env_override_is_honored() {
+    #[tokio::test]
+    async fn env_override_is_honored() {
         // Safety: set env var, test, then remove. Tests run in parallel so use a
         // unique value and restore.
         let prev = std::env::var("BREAKWATER_PUBLIC_IP").ok();
         unsafe {
             std::env::set_var("BREAKWATER_PUBLIC_IP", "203.0.113.7");
         }
-        let ip = find_once().unwrap().unwrap();
+        let ip = find_once().await.unwrap().unwrap();
         assert_eq!(ip, Ipv4Addr::new(203, 0, 113, 7));
         unsafe {
             match prev {

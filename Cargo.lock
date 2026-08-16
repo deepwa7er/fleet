@@ -1163,6 +1163,7 @@ dependencies = [
  "if-addrs",
  "instant-acme",
  "rcgen",
+ "reqwest",
  "rustls-pemfile",
  "serde",
  "serde_json",
