@@ -16,7 +16,8 @@ dest = "/usr/local/bin/shutter-relay"
 # Viewer SPA (static files) — served by the relay itself at GET /watch/:id, but
 # also handy to have on disk for breakwater serve_dir if desired.
 [[artifacts]]
-src = "shutter-relay/web"
+kind = "dir"
+src = "web"
 dest = "/opt/shutter-relay/web"
 
 [health]
