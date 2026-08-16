@@ -62,6 +62,36 @@ pub struct Config {
 
     #[serde(default)]
     pub routes: Vec<Route>,
+
+    /// Optional public-facing listener (for `live.deepwa7er.com`). When set,
+    /// breakwater additionally binds `public_ip:public_https_port` with its own
+    /// TLS material and routes `live.deepwa7er.com` to `shutter-relay`. The
+    /// tailnet listener (`https_port` on the Tailscale IP) stays isolated — the
+    /// two listeners have disjoint `Router`s and `TlsAcceptor`s and never share
+    /// a routing table.
+    #[serde(default)]
+    pub public_https_port: Option<u16>,
+
+    /// Optional plain-HTTP redirect on the public IP (308 → https). Omit to not
+    /// listen on public `:80`.
+    #[serde(default)]
+    pub public_http_redirect_port: Option<u16>,
+
+    /// The public base domain, e.g. `deepwa7er.com` so `label = "live"` → `live.deepwa7er.com`.
+    /// Required when any `[[public_routes]]` are defined.
+    #[serde(default)]
+    pub public_base_domain: Option<String>,
+
+    /// Static cert for the public listener. Mutually exclusive with `[public_acme]`.
+    #[serde(default)]
+    pub public_tls: Option<TlsConfig>,
+
+    /// ACME (DNS-01) for the public listener. Separate zone/token from the tailnet `[acme]`.
+    #[serde(default)]
+    pub public_acme: Option<AcmeConfig>,
+
+    #[serde(default)]
+    pub public_routes: Vec<Route>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -162,6 +192,14 @@ impl Config {
         {
             acme.domains = vec![format!("*.{base}")];
         }
+        if let Some(public_acme) = self.public_acme.as_mut()
+            && let Some(public_base) = self.public_base_domain.as_ref()
+        {
+            let public_base = public_base.trim().to_string();
+            if public_acme.domains.is_empty() && !public_base.is_empty() {
+                public_acme.domains = vec![format!("*.{public_base}")];
+            }
+        }
     }
 
     fn validate(&self) -> anyhow::Result<()> {
@@ -223,6 +261,82 @@ impl Config {
                 }
             }
         }
+        // Public listener is optional; when present it must be self-consistent and
+        // must not overlap the tailnet routing table (separate listeners, separate
+        // hosts).
+        let has_public_routes = !self.public_routes.is_empty();
+        let has_public_tls = self.public_tls.is_some();
+        let has_public_acme = self.public_acme.is_some();
+        let has_public_port = self.public_https_port.is_some();
+        let has_public_base = self.public_base_domain.as_ref().is_some_and(|s| !s.trim().is_empty());
+        let public_configured = has_public_routes || has_public_tls || has_public_acme || has_public_port || has_public_base;
+        if public_configured {
+            if !has_public_routes {
+                bail!("public listener configured but no [[public_routes]] defined");
+            }
+            if !has_public_base {
+                bail!("[[public_routes]] requires `public_base_domain`");
+            }
+            if !has_public_port {
+                bail!("[[public_routes]] requires `public_https_port`");
+            }
+            match (&self.public_tls, &self.public_acme) {
+                (Some(_), Some(_)) => bail!("set either [public_tls] or [public_acme], not both"),
+                (None, None) => bail!("public listener requires exactly one of [public_tls] or [public_acme]"),
+                (Some(_), None) => {}
+                (None, Some(acme)) => {
+                    if acme.domains.is_empty() {
+                        bail!("[public_acme] needs at least one domain");
+                    }
+                }
+            }
+            let public_base = self.public_base_domain.as_deref().unwrap().trim();
+            let mut seen_public = HashMap::new();
+            for route in &self.public_routes {
+                if route.label.trim().is_empty() {
+                    bail!("a public route has an empty `label`");
+                }
+                let host = route.host(public_base);
+                let host = host.as_str();
+                let key = host.to_ascii_lowercase();
+                if let Some(prev) = seen_public.insert(key, host.to_string()) {
+                    bail!("duplicate public route host {host:?} (also {prev:?})");
+                }
+                // Also ensure no public host collides with a tailnet host (different
+                // base domains make this rare, but an operator could set both to
+                // the same domain and create an ambiguous intent).
+                let tailnet_key = host.to_ascii_lowercase();
+                if seen.contains_key(&tailnet_key) {
+                    bail!("public route host {host:?} collides with a tailnet route");
+                }
+                match (&route.upstream, &route.serve_dir) {
+                    (Some(_), Some(_)) => {
+                        bail!("public route {host:?} sets both `upstream` and `serve_dir`; set exactly one")
+                    }
+                    (None, None) => {
+                        bail!("public route {host:?} sets neither `upstream` nor `serve_dir`; set exactly one")
+                    }
+                    (Some(upstream), None) => {
+                        let authority: Authority = upstream.parse().with_context(|| {
+                            format!("public route {host:?} has an invalid upstream {upstream:?}")
+                        })?;
+                        if authority.port_u16().is_none() {
+                            bail!("public route {host:?} upstream {upstream:?} is missing a port");
+                        }
+                    }
+                    (None, Some(dir)) => {
+                        if !dir.is_absolute() {
+                            bail!("public route {host:?} serve_dir {dir:?} must be an absolute path");
+                        }
+                    }
+                }
+            }
+            if self.public_http_redirect_port.is_some() && self.public_https_port.is_none() {
+                bail!("`public_http_redirect_port` requires `public_https_port`");
+            }
+        } else if self.public_http_redirect_port.is_some() {
+            bail!("`public_http_redirect_port` requires `public_https_port`");
+        }
         Ok(())
     }
 
@@ -241,6 +355,29 @@ impl Config {
                 (r.host(&self.base_domain).to_ascii_lowercase(), target)
             })
             .collect()
+    }
+
+    /// Public routing table (`live.deepwa7er.com` etc.), separate from the tailnet
+    /// table. Returns empty when no public listener is configured.
+    pub fn public_routing_table(&self) -> HashMap<String, RouteTarget> {
+        let Some(base) = self.public_base_domain.as_deref() else {
+            return HashMap::new();
+        };
+        self.public_routes
+            .iter()
+            .map(|r| {
+                let target = match (&r.upstream, &r.serve_dir) {
+                    (Some(upstream), None) => RouteTarget::Proxy(upstream.clone()),
+                    (None, Some(dir)) => RouteTarget::Static(dir.clone()),
+                    _ => unreachable!("validate() guarantees exactly one target per public route"),
+                };
+                (r.host(base).to_ascii_lowercase(), target)
+            })
+            .collect()
+    }
+
+    pub fn has_public_listener(&self) -> bool {
+        self.public_https_port.is_some()
     }
 }
 
@@ -509,5 +646,127 @@ mod tests {
             serve_dir = "opt/site"
         "#;
         assert!(Config::from_toml(toml).is_err());
+    }
+
+    #[test]
+    fn public_routes_require_public_base_and_port() {
+        let toml = r#"
+            https_port = 443
+            base_domain = "example.com"
+            [tls]
+            cert = "/x/cert.pem"
+            key = "/x/key.pem"
+            [[routes]]
+            label = "a"
+            upstream = "127.0.0.1:8080"
+            [[public_routes]]
+            label = "live"
+            upstream = "127.0.0.1:8125"
+        "#;
+        assert!(Config::from_toml(toml).is_err());
+    }
+
+    #[test]
+    fn public_listener_needs_tls_or_acme() {
+        let toml = r#"
+            https_port = 443
+            base_domain = "example.com"
+            [tls]
+            cert = "/x/cert.pem"
+            key = "/x/key.pem"
+            public_https_port = 443
+            public_base_domain = "public.example.com"
+            [[routes]]
+            label = "a"
+            upstream = "127.0.0.1:8080"
+            [[public_routes]]
+            label = "live"
+            upstream = "127.0.0.1:8125"
+        "#;
+        assert!(Config::from_toml(toml).is_err());
+    }
+
+    #[test]
+    fn accepts_public_listener_with_acme() {
+        let toml = r#"
+            https_port = 443
+            base_domain = "intern.example.com"
+            public_https_port = 443
+            public_base_domain = "example.com"
+            [acme]
+            contact = "mailto:a@b.com"
+            cloudflare_zone = "example.net"
+            cloudflare_token_file = "/etc/breakwater/cloudflare-token"
+            cache_dir = "/etc/breakwater/acme"
+            [public_acme]
+            contact = "mailto:a@b.com"
+            cloudflare_zone = "example.com"
+            cloudflare_token_file = "/etc/breakwater/cloudflare-token-public"
+            cache_dir = "/etc/breakwater/acme-public"
+            [[routes]]
+            label = "lighthouse"
+            upstream = "127.0.0.1:8080"
+            [[public_routes]]
+            label = "live"
+            upstream = "127.0.0.1:8125"
+        "#;
+        let config = Config::from_toml(toml).unwrap();
+        assert!(config.has_public_listener());
+        assert!(config.public_routing_table().contains_key("live.example.com"));
+        assert!(config.routing_table().contains_key("lighthouse.intern.example.com"));
+    }
+
+    #[test]
+    fn rejects_public_host_colliding_with_tailnet() {
+        let toml = r#"
+            https_port = 443
+            base_domain = "example.com"
+            [tls]
+            cert = "/x/cert.pem"
+            key = "/x/key.pem"
+            public_https_port = 443
+            public_base_domain = "example.com"
+            [public_tls]
+            cert = "/x/cert.pem"
+            key = "/x/key.pem"
+            [[routes]]
+            label = "live"
+            upstream = "127.0.0.1:8080"
+            [[public_routes]]
+            label = "live"
+            upstream = "127.0.0.1:8125"
+        "#;
+        assert!(Config::from_toml(toml).is_err());
+    }
+
+    #[test]
+    fn public_acme_domains_default_to_wildcard() {
+        let toml = r#"
+            https_port = 443
+            base_domain = "intern.example.com"
+            public_https_port = 443
+            public_base_domain = "example.com"
+            [acme]
+            contact = "mailto:a@b.com"
+            cloudflare_zone = "intern.example.com"
+            cloudflare_token_file = "/etc/breakwater/cloudflare-token"
+            cache_dir = "/etc/breakwater/acme"
+            [public_acme]
+            contact = "mailto:a@b.com"
+            cloudflare_zone = "example.com"
+            cloudflare_token_file = "/etc/breakwater/cloudflare-token-public"
+            cache_dir = "/etc/breakwater/acme-public"
+            [[routes]]
+            label = "a"
+            upstream = "127.0.0.1:8080"
+            [[public_routes]]
+            label = "live"
+            upstream = "127.0.0.1:8125"
+        "#;
+        let config = Config::from_toml(toml).unwrap();
+        assert_eq!(
+            config.public_acme.unwrap().domains,
+            vec!["*.example.com"]
+        );
     }
 }

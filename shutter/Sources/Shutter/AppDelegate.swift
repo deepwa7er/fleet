@@ -44,6 +44,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         manager.register(CaptureShortcut.all)
         hotkeys = manager
 
+        // Live: ⇧⌘9 — region livestream to live.deepwa7er.com (video-only, no audio).
+        // Not a symbolic hot key, so no takeover is needed. Registers alongside the
+        // screenshot keys via Carbon.
+        LiveManager.shared.registerHotKey()
+
         updateStateItem()
         Log.info("running")
     }
@@ -151,6 +156,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Capture…", action: #selector(startCapture),
                                 keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Live Stream Region (\(LiveShortcut.label))…",
+                                action: #selector(startLiveCapture), keyEquivalent: ""))
 
         let saveLocation = NSMenuItem(title: "Save Location…",
                                       action: #selector(chooseSaveLocation), keyEquivalent: "")
@@ -195,6 +202,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func startCapture() {
         capture?.arm()
+    }
+
+    @objc private func startLiveCapture() {
+        LiveManager.shared.startOrStop()
     }
 
     @objc private func toggleTakeover() {

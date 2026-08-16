@@ -1,0 +1,28 @@
+# tugboat deploy manifest — github.com/deepwa7er/tugboat
+name = "shutter-relay"
+host = "deepwa7er"
+
+[state]
+files = false
+
+[build]
+# Native Linux build — dev is Fedora (linux), target is the Linux VPS. No musl cross-compile.
+cmd = "cargo build --release -p shutter-relay"
+
+[[artifacts]]
+src = "{workspace}/target/release/shutter-relay"
+dest = "/usr/local/bin/shutter-relay"
+
+# Viewer SPA (static files) — served by the relay itself at GET /watch/:id, but
+# also handy to have on disk for breakwater serve_dir if desired.
+[[artifacts]]
+src = "shutter-relay/web"
+dest = "/opt/shutter-relay/web"
+
+[health]
+url = "http://127.0.0.1:8125/healthz"
+retries = 30
+interval_ms = 1000
+
+[lighthouse]
+enroll = true

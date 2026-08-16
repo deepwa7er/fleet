@@ -25,6 +25,7 @@ use breakwater::access::{self, Recorder};
 use breakwater::cert::{self, CertMaterial};
 use breakwater::config::Config;
 use breakwater::proxy::{self, Router};
+use breakwater::public_ip;
 use breakwater::tailscale;
 use breakwater::tls::{self, CertResolver};
 
@@ -33,6 +34,7 @@ const DEFAULT_CONFIG_PATH: &str = "/etc/breakwater/breakwater.toml";
 /// How long to wait for tailscaled to assign the node's tailnet address before
 /// giving up at startup (systemd then restarts us via `Restart=on-failure`).
 const TAILSCALE_RESOLVE_TIMEOUT: Duration = Duration::from_secs(30);
+const PUBLIC_IP_RESOLVE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -68,6 +70,24 @@ async fn main() -> anyhow::Result<()> {
     let acceptor = tls::acceptor(resolver);
     let router = Arc::new(Router::new(config.routing_table()));
 
+    // Optional public listener gets its own TLS material and routing table —
+    // completely disjoint from the tailnet ones.
+    let (public_acceptor, public_router) = if config.has_public_listener() {
+        let resolver = match (config.public_tls.as_ref(), config.public_acme.as_ref()) {
+            (Some(tls), None) => {
+                let material = CertMaterial::from_files(&tls.cert, &tls.key)?;
+                Arc::new(CertResolver::new(&material)?)
+            }
+            (None, Some(acme)) => cert::start_acme(acme.clone()).await?,
+            _ => unreachable!("public config validation guarantees exactly one cert mode"),
+        };
+        let acceptor = tls::acceptor(resolver);
+        let router = Arc::new(Router::new(config.public_routing_table()));
+        (Some(acceptor), Some(router))
+    } else {
+        (None, None)
+    };
+
     // The tailnet-facing listeners bind the host's Tailscale IP, discovered at
     // startup so the config holds no host-specific address. tailscaled may still
     // be assigning that address as we come up, so allow a short grace period.
@@ -78,18 +98,38 @@ async fn main() -> anyhow::Result<()> {
         .map(|port| SocketAddr::new(IpAddr::V4(tailnet_ip), port));
     println!("breakwater: tailnet address {tailnet_ip}");
 
+    // Public IP discovery only when the public listener is configured.
+    let (public_https_addr, public_redirect_addr) = if let Some(port) = config.public_https_port {
+        let public_ip = public_ip::resolve(PUBLIC_IP_RESOLVE_TIMEOUT).await?;
+        let https = SocketAddr::new(IpAddr::V4(public_ip), port);
+        let redirect = config
+            .public_http_redirect_port
+            .map(|p| SocketAddr::new(IpAddr::V4(public_ip), p));
+        println!("breakwater: public address {public_ip}");
+        (Some(https), redirect)
+    } else {
+        (None, None)
+    };
+
     // One access-log writer task for the whole process; every connection records
     // through a clone of the returned handle.
     let recorder = access::spawn();
 
-    // The TLS proxy is mandatory; the redirect and health listeners are optional
-    // and degrade to a never-resolving future when not configured. Any bind
-    // failure surfaces immediately and stops the process.
-    let https = serve_https(https_addr, acceptor, router, recorder);
+    // The TLS proxies are mandatory where configured; the redirects and health
+    // are optional and degrade to never-resolving futures when not configured.
+    let https = serve_https(https_addr, acceptor, router, recorder.clone());
+    let public_https = match (public_https_addr, public_acceptor, public_router) {
+        (Some(addr), Some(acc), Some(rtr)) => {
+            // Box to unify the future type with the pending case.
+            Box::pin(serve_https(addr, acc, rtr, recorder.clone())) as std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>>
+        }
+        _ => Box::pin(std::future::pending()) as _,
+    };
     let redirect = optional(redirect_addr, serve_redirect);
+    let public_redirect = optional(public_redirect_addr, serve_redirect);
     let health = optional(config.health_addr, serve_health);
 
-    tokio::try_join!(https, redirect, health)?;
+    tokio::try_join!(https, public_https, redirect, public_redirect, health)?;
     Ok(())
 }
 

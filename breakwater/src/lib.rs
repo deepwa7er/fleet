@@ -9,6 +9,7 @@ pub mod cert;
 pub mod cloudflare;
 pub mod config;
 pub mod proxy;
+pub mod public_ip;
 pub mod static_files;
 pub mod tailscale;
 pub mod tls;
