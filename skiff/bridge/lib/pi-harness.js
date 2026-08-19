@@ -18,6 +18,7 @@
 //      the session object is served from the registered process).
 
 import path from "node:path";
+import { execFile } from "node:child_process";
 import {
   defaultSessionDir,
   resolveSessionFile,
@@ -36,6 +37,12 @@ import { resolveBinary } from "./resolve-binary.js";
 
 const CREATE_READY_TIMEOUT_MS = 15000;
 const CREATE_READY_POLL_MS = 100;
+// `pi --list-models` is authoritative (it resolves auth, custom providers,
+// and the built-in catalog exactly as pi will at prompt time) but costs a
+// process spawn, so the parsed list is cached briefly. Models change rarely;
+// a stale minute is invisible and self-heals.
+const LIST_MODELS_CACHE_MS = 60_000;
+const LIST_MODELS_TIMEOUT_MS = 15_000;
 // After agent_settled, a still-unresolved overlay gets one last deferred
 // file scan before being removed: pi emits message_end and persists the
 // entry concurrently, so the synchronous scan at settled can race the write
@@ -151,10 +158,57 @@ export function createPiHarness(config, { registry, defaultCwd }) {
     }
   }
 
+  const binary = pool.binary;
+  let modelsCache = null; // { at, models }
+
   return {
     name: "pi",
-    capabilities: { rename: true, orchestrator: true },
+    capabilities: { rename: true, orchestrator: true, model: true },
     pool, // exposed for tests (process introspection) and shutdown wiring
+
+    // The models a session can switch to, from `pi --list-models`: a header
+    // line then one whitespace-padded row per model, first two columns
+    // provider and model id (neither can contain spaces). pi only lists
+    // models whose provider actually resolves credentials, so everything
+    // returned here is usable.
+    async listModels() {
+      if (modelsCache && Date.now() - modelsCache.at < LIST_MODELS_CACHE_MS) return modelsCache.models;
+      const stdout = await new Promise((resolve, reject) => {
+        execFile(binary, ["--list-models"], { timeout: LIST_MODELS_TIMEOUT_MS }, (err, out) => {
+          if (err) reject(new HttpError(502, `pi --list-models failed: ${err.message}`));
+          else resolve(out);
+        });
+      });
+      const models = [];
+      for (const line of stdout.split("\n").slice(1)) {
+        const [provider, id] = line.trim().split(/\s+/);
+        if (provider && id) models.push({ provider, id });
+      }
+      if (models.length === 0) throw new HttpError(502, "pi --list-models returned no models");
+      modelsCache = { at: Date.now(), models };
+      return models;
+    },
+
+    // Switch the session's model. pi appends a model_change entry to the
+    // session file (the session object reflects it immediately) and — pi's
+    // own semantics — persists the choice as the new default for future
+    // sessions. An unknown model is the client's mistake (a stale picker),
+    // not a pi failure.
+    async setModel(localId, { provider, id }) {
+      const target = await resolveTarget(localId);
+      if (!target) throw new HttpError(404, `session pi:${localId} not found`);
+      const proc = await ensureProcess(target);
+      let response;
+      try {
+        response = await proc.sendCommand("set_model", { provider, modelId: id });
+      } catch (err) {
+        throw new HttpError(502, `model switch failed: ${err.message}`);
+      }
+      if (!response.success) {
+        const error = response.error ?? "pi rejected the model switch";
+        throw new HttpError(error.startsWith("Model not found") ? 400 : 502, `model switch failed: ${error}`);
+      }
+    },
 
     async listSessions() {
       const sessions = await listSessions(sessionDir);

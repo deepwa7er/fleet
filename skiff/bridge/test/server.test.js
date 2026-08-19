@@ -113,7 +113,7 @@ describe("bridge HTTP", () => {
     assert.equal(multi.title, "Multi-turn fixture");
     assert.equal(multi.directory, "/home/deepwater/code/skiff");
     assert.deepEqual(multi.model, { id: "deepseek-v4-flash" });
-    assert.deepEqual(multi.capabilities, { rename: true, orchestrator: true });
+    assert.deepEqual(multi.capabilities, { rename: true, orchestrator: true, model: true });
     // No opencode serve is running in this suite; the list says so instead
     // of silently omitting the harness.
     assert.match(errors.opencode, /unreachable/);
@@ -537,6 +537,54 @@ describe("bridge HTTP", () => {
       parts: [{ type: "image", data: "AAAA" }],
     });
     assert.equal(image.status, 400);
+  });
+
+  it("lists pi's switchable models from pi --list-models", async () => {
+    const response = await get("/harness/pi/models");
+    assert.equal(response.status, 200);
+    const models = await response.json();
+    assert.deepEqual(models, [
+      { provider: "deepseek", id: "deepseek-v4-flash" },
+      { provider: "deepseek", id: "deepseek-v4-pro" },
+      { provider: "muse-glimmer", id: "muse-glimmer-30B" },
+    ]);
+
+    const muse = await get("/harness/muse/models");
+    assert.equal(muse.status, 400);
+    const unknown = await get("/harness/clippy/models");
+    assert.equal(unknown.status, 404);
+  });
+
+  it("switches a session's model and serves the change back", async () => {
+    const id = fixtures.multiTurn;
+    const before = await (await get(`/session/${id}`)).json();
+    assert.deepEqual(before.model, { id: "deepseek-v4-flash" });
+
+    const response = await post(`/session/${id}/model`, { provider: "deepseek", id: "deepseek-v4-pro" });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true });
+
+    // The fake mirrors real pi: the switch appends a model_change entry, so
+    // the session object reflects it on the next fetch.
+    assert.ok(
+      await until(async () => {
+        const session = await (await get(`/session/${id}`)).json();
+        return session.model?.id === "deepseek-v4-pro";
+      }),
+      "session model never updated after the switch"
+    );
+  });
+
+  it("rejects bad model switches loudly", async () => {
+    const unknownModel = await post(`/session/${fixtures.branched}/model`, { provider: "deepseek", id: "nope" });
+    assert.equal(unknownModel.status, 400);
+    assert.match((await unknownModel.json()).error, /Model not found/);
+
+    const missingFields = await post(`/session/${fixtures.branched}/model`, { provider: "deepseek" });
+    assert.equal(missingFields.status, 400);
+
+    const missingSession = await post("/session/pi:does-not-exist/model", { provider: "deepseek", id: "deepseek-v4-pro" });
+    assert.equal(missingSession.status, 404);
   });
 
   it("rejects malformed JSON bodies", async () => {

@@ -38,6 +38,26 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 
+// `pi --list-models` mode: the whitespace-padded table real pi prints —
+// header line, then provider and model id as the first two columns. The
+// bridge's listModels parses exactly this.
+if (process.argv.includes("--list-models")) {
+  if (process.env.FAKE_PI_LIST_MODELS_ERROR === "1") {
+    process.stderr.write("fake: list-models refused (FAKE_PI_LIST_MODELS_ERROR)\n");
+    process.exit(1);
+  }
+  process.stdout.write(
+    [
+      "provider      model              context  max-out  thinking  images",
+      "deepseek      deepseek-v4-flash  1M       384K     yes       no",
+      "deepseek      deepseek-v4-pro    1M       384K     yes       no",
+      "muse-glimmer  muse-glimmer-30B   32.8K    8.2K     yes       yes",
+      "",
+    ].join("\n")
+  );
+  process.exit(0);
+}
+
 // Executed by the test runner without RPC args -> do nothing, exit clean.
 if (!process.argv.includes("--mode")) process.exit(0);
 
@@ -324,6 +344,28 @@ function handleLine(line) {
       });
       respond(cmd.id, "set_session_name", true);
       break;
+    case "set_model": {
+      const known = {
+        "deepseek/deepseek-v4-flash": true,
+        "deepseek/deepseek-v4-pro": true,
+        "muse-glimmer/muse-glimmer-30B": true,
+      };
+      if (!known[`${cmd.provider}/${cmd.modelId}`]) {
+        return respond(cmd.id, "set_model", false, undefined, `Model not found: ${cmd.provider}/${cmd.modelId}`);
+      }
+      // Mirror real pi: the switch appends a model_change entry (file or
+      // pre-file buffer), so the session object reflects it immediately.
+      appendEntry({
+        type: "model_change",
+        id: hex8(),
+        parentId: lastEntryId,
+        timestamp: nowIso(),
+        provider: cmd.provider,
+        modelId: cmd.modelId,
+      });
+      respond(cmd.id, "set_model", true, { id: cmd.modelId, provider: cmd.provider });
+      break;
+    }
     case "prompt":
       handlePrompt(cmd); // async; intentionally not awaited
       break;

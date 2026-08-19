@@ -197,7 +197,7 @@ describe("opencode harness HTTP", () => {
     const mine = listed.find((s) => s.id === `opencode:${seeded.id}`);
     assert.equal(mine.title, "Seeded session");
     assert.equal(mine.directory, "/home/deepwater/code/blog");
-    assert.deepEqual(mine.capabilities, { rename: true, orchestrator: false });
+    assert.deepEqual(mine.capabilities, { rename: true, orchestrator: false, model: false });
   });
 
   it("falls back to the slug when a session has no title", async () => {

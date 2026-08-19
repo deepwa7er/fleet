@@ -94,7 +94,7 @@ export function createOpencodeHarness(config) {
 
   return {
     name: "opencode",
-    capabilities: { rename: true, orchestrator: false },
+    capabilities: { rename: true, orchestrator: false, model: false },
 
     async listSessions() {
       const sessions = await api.sessions();

@@ -32,5 +32,8 @@ Rails.application.routes.draw do
   # orchestrator toggle.
   post "sessions/:id/name" => "sessions#rename", as: :rename_session
 
+  # The model picker POSTs the chosen model to its own member route.
+  post "sessions/:id/model" => "sessions#model", as: :session_model
+
   root "sessions#index"
 end

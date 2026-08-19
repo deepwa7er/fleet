@@ -162,7 +162,7 @@ describe("muse harness HTTP", () => {
     assert.ok(fixture, "the muse fixture session must be listed");
     assert.equal(fixture.harness, "muse");
     assert.equal(fixture.title, "lemon-aurora");
-    assert.deepEqual(fixture.capabilities, { rename: false, orchestrator: false });
+    assert.deepEqual(fixture.capabilities, { rename: false, orchestrator: false, model: false });
   });
 
   it("serves the fixture transcript with folded tool results", async () => {
@@ -181,6 +181,10 @@ describe("muse harness HTTP", () => {
     const orch = await post(`/session/${FIXTURE_ID}/orchestrator`, { on: true });
     assert.equal(orch.status, 400);
     assert.match((await orch.json()).error, /no orchestrator/);
+
+    const model = await post(`/session/${FIXTURE_ID}/model`, { provider: "meta", id: "muse-spark-1.2" });
+    assert.equal(model.status, 400);
+    assert.match((await model.json()).error, /no model switch/);
   });
 
   it("creates a newborn session, keeps it visible, and persists it on first prompt", async () => {

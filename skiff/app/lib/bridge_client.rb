@@ -68,6 +68,19 @@ class BridgeClient
       post("/session/#{id}/abort", nil)
     end
 
+    # The models sessions of this harness can switch to (pi only today —
+    # capabilities.model). Each entry is { provider:, id: }.
+    def models(harness)
+      get("/harness/#{harness}/models")
+    end
+
+    # Switch one session's model. pi appends a model_change entry (the next
+    # session fetch serves the new model) and keeps the choice as its
+    # default for future sessions.
+    def set_model(id, provider:, model:)
+      post("/session/#{id}/model", { provider: provider, id: model })
+    end
+
     def create_session(harness:, title: nil)
       post("/session", { harness: harness, title: title }.compact)
     end
