@@ -397,6 +397,82 @@ class SessionsTest < ActionDispatch::IntegrationTest
     assert_select "form.composer", count: 0
   end
 
+  test "show renders the model picker for a harness with the capability" do
+    session = {
+      id: "pi:ses_123", harness: "pi",
+      capabilities: { rename: true, orchestrator: true, model: true },
+      title: "Test session", directory: nil,
+      model: { id: "deepseek-v4-flash" }, time: nil
+    }
+    messages = [ { info: { id: "msg_1", role: "user", agent: nil, time: { created: 1 } }, parts: [] } ]
+    models = [
+      { provider: "deepseek", id: "deepseek-v4-flash" },
+      { provider: "deepseek", id: "deepseek-v4-pro" }
+    ]
+
+    BridgeClient.stub(:session, session) do
+      BridgeClient.stub(:messages, messages) do
+        BridgeClient.stub(:models, models) do
+          get session_path("pi:ses_123")
+        end
+      end
+    end
+
+    assert_response :success
+    # The current model is a readout, not a key; the other is pressable.
+    assert_select ".model-picker .instrumentation", text: "deepseek/deepseek-v4-flash · current"
+    assert_select "form[action='/sessions/pi:ses_123/model'] input[name='model'][value='deepseek-v4-pro']"
+    assert_select "form[action='/sessions/pi:ses_123/model'] button", text: "deepseek/deepseek-v4-pro"
+  end
+
+  test "show hides the model picker when the options cannot be fetched" do
+    session = {
+      id: "pi:ses_123", harness: "pi",
+      capabilities: { rename: true, orchestrator: true, model: true },
+      title: "Test session", directory: nil, model: nil, time: nil
+    }
+    messages = [ { info: { id: "msg_1", role: "user", agent: nil, time: { created: 1 } }, parts: [] } ]
+
+    BridgeClient.stub(:session, session) do
+      BridgeClient.stub(:messages, messages) do
+        BridgeClient.stub(:models, ->(*) { raise BridgeClient::Error, "boom" }) do
+          get session_path("pi:ses_123")
+        end
+      end
+    end
+
+    assert_response :success
+    assert_select ".model-picker", count: 0
+    assert_select "#transcript"
+  end
+
+  test "model posts the chosen model and redirects back" do
+    calls = []
+    BridgeClient.stub(:set_model, ->(id, provider:, model:) { calls << [ id, provider, model ] }) do
+      post session_model_path("pi:ses_123"), params: { provider: "deepseek", model: "deepseek-v4-pro" }
+    end
+
+    assert_equal [ [ "pi:ses_123", "deepseek", "deepseek-v4-pro" ] ], calls
+    assert_redirected_to session_path("pi:ses_123")
+  end
+
+  test "model ignores blank params without calling the client" do
+    BridgeClient.stub(:set_model, ->(*) { flunk "set_model must not be called" }) do
+      post session_model_path("pi:ses_123"), params: { provider: "", model: "x" }
+    end
+
+    assert_redirected_to session_path("pi:ses_123")
+  end
+
+  test "model redirects with a danger flash when the client fails" do
+    BridgeClient.stub(:set_model, ->(*) { raise BridgeClient::Error, "boom" }) do
+      post session_model_path("pi:ses_123"), params: { provider: "deepseek", model: "deepseek-v4-pro" }
+    end
+
+    assert_redirected_to session_path("pi:ses_123")
+    assert_equal "Could not switch model — skiff bridge unreachable", flash[:alert]
+  end
+
   test "show hides rename and orchestrator for a harness without the capabilities" do
     session = {
       id: "muse:2c0ffee0-0000-4000-8000-000000000001",
@@ -421,6 +497,7 @@ class SessionsTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_select "details.rename", count: 0
     assert_select "div#orchestrator-readout", count: 0
+    assert_select ".model-picker", count: 0
     # The author label is the session's harness, and the composer names it.
     assert_select ".message-role", text: "muse · muse-spark-1.2"
     assert_select "form.composer textarea[placeholder='Message muse…']"

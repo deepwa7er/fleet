@@ -19,6 +19,30 @@
         save key. It lives outside the stream wrapper so a stream event can
         never clobber it. Rendered only where the session's harness has a
         rename surface (muse names its own sessions). %>
+    <%# Model disclosure: same native-details pattern as Rename. One key per
+        model (rule 2 — depth marks the pressable), the current one shown as
+        instrumentation, not a key: it is a fact, not an action. Rendered
+        only where the harness switches models (capabilities.model) and the
+        options could actually be fetched. %>
+    <% if @models.present? %>
+      <details class="rename">
+        <summary class="button button--small button--secondary">Model</summary>
+        <div class="rename-form model-picker">
+          <% current = @session.dig(:model, :id) %>
+          <% @models.each do |option| %>
+            <% if option[:id] == current %>
+              <p class="instrumentation"><%= option[:provider] %>/<%= option[:id] %> · current</p>
+            <% else %>
+              <%= button_to "#{option[:provider]}/#{option[:id]}",
+                    session_model_path(@session[:id]),
+                    params: { provider: option[:provider], model: option[:id] },
+                    class: "button button--small button--secondary" %>
+            <% end %>
+          <% end %>
+        </div>
+      </details>
+    <% end %>
+
     <% if @session.dig(:capabilities, :rename) %>
       <details class="rename">
         <summary class="button button--small button--secondary">Rename</summary>

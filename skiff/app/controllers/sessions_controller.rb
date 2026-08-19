@@ -50,6 +50,10 @@ class SessionsController < ApplicationController
     orchestrator = @session[:orchestrator] || {}
     @orchestrator_active = orchestrator[:active] || false
     @orchestrator_widget = orchestrator[:widget]
+    # The model picker's options, only where the harness can switch models.
+    # A failed fetch hides the picker rather than failing the page — the
+    # transcript is the page's job; the picker is an extra.
+    @models = models_for(@session)
   rescue BridgeClient::Error
     @error = "skiff bridge unreachable — start it and reload"
   end
@@ -110,6 +114,21 @@ class SessionsController < ApplicationController
     redirect_to session_path(params[:id])
   rescue BridgeClient::Error
     redirect_to session_path(params[:id]), alert: "Could not toggle orchestrator — skiff bridge unreachable"
+  end
+
+  # DW-001 §8 discipline: switching the model is another client call that can
+  # fail. The failure path redirects back with a danger flash, like abort;
+  # the bridge validates the model itself (a stale picker posts a model pi no
+  # longer knows and gets a loud 400).
+  def model
+    provider = params[:provider].to_s.strip
+    model_id = params[:model].to_s.strip
+    return redirect_to session_path(params[:id]) if provider.blank? || model_id.blank?
+
+    BridgeClient.set_model(params[:id], provider: provider, model: model_id)
+    redirect_to session_path(params[:id])
+  rescue BridgeClient::Error
+    redirect_to session_path(params[:id]), alert: "Could not switch model — skiff bridge unreachable"
   end
 
   # DW-001 §8 discipline: renaming is another client call that can fail — the
@@ -246,6 +265,16 @@ class SessionsController < ApplicationController
     html = render_to_string(turbo_stream: actions.reduce(:+))
     html.lines.each { |line| response.stream.write("data: #{line.chomp}\n") }
     response.stream.write("\n")
+  end
+
+  # The picker's options for a session whose harness switches models; nil
+  # (picker hidden) for other harnesses or when the list cannot be fetched.
+  def models_for(session)
+    return nil unless session.dig(:capabilities, :model)
+
+    BridgeClient.models(session[:harness])
+  rescue BridgeClient::Error
+    nil
   end
 
   # Sort key: last activity is time.updated, falling back to time.created,

@@ -86,7 +86,7 @@ export function createMuseHarness(config, { defaultCwd }) {
 
   return {
     name: "muse",
-    capabilities: { rename: false, orchestrator: false },
+    capabilities: { rename: false, orchestrator: false, model: false },
     runner, // exposed for tests (run introspection) and shutdown wiring
 
     async listSessions() {

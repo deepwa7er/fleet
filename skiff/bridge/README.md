@@ -114,6 +114,8 @@ Prompt text and the password are never logged.
 | `GET /session/{id}/stream` | SSE: snapshot + append/replace/remove/working/orchestrator events (see lib/stream-registry.js) |
 | `POST /session/{id}/prompt_async` | one text part → the harness's prompt surface; 200 accepted, 404 unknown, 409 a muse run already active, 502 harness failure |
 | `POST /session/{id}/name` | rename, where `capabilities.rename` (pi, opencode); 400 for muse |
+| `GET /harness/{name}/models` | the models the harness's sessions can switch to (`capabilities.model` — pi only: `pi --list-models`, parsed and briefly cached); 400 elsewhere |
+| `POST /session/{id}/model` | `{"provider":…,"id":…}` → pi's `set_model` (appends a model_change entry; pi also keeps the choice as its default); 400 for unknown models and modelless harnesses |
 | `POST /session/{id}/orchestrator` | pi's extension toggle; 400 for every other harness |
 | `POST /session/{id}/abort` | 204; pi sends `abort`, muse SIGINTs the run's child, opencode POSTs its abort |
 | `GET /session/status` | `{"<harness>:<id>":{"type":"busy"}}` for runs the bridge itself drives (pi, muse); opencode's working state surfaces through the stream |

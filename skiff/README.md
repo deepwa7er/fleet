@@ -31,8 +31,10 @@ phone (Tailscale) ──https──> breakwater (TLS) ──http──> Rails on
 
 Session ids on the wire are harness-qualified — `pi:…`, `muse:…`,
 `opencode:…` — and every session carries its `harness` and a `capabilities`
-object, so the UI renders exactly the controls each harness supports (rename
-and the orchestrator toggle are not universal). Sessions are the same ones
+object, so the UI renders exactly the controls each harness supports (rename,
+the orchestrator toggle, and the model picker are not universal; pi sessions
+can switch models from the phone via pi's `set_model`, which also keeps the
+choice as pi's default). Sessions are the same ones
 the respective CLIs drive: a session started at a terminal shows up on the
 phone, and vice versa.
 

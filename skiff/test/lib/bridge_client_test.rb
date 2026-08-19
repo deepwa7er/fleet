@@ -97,6 +97,22 @@ class BridgeClientTest < ActiveSupport::TestCase
     assert_equal "pi:ses_new", BridgeClient.create_session(harness: "pi")[:id]
   end
 
+  test "models hits /harness/:name/models and returns the list" do
+    stub_request(:get, "#{BASE_URL}/harness/pi/models")
+      .with(basic_auth: [ "skiff", PASSWORD ])
+      .to_return(status: 200, body: '[{"provider":"deepseek","id":"deepseek-v4-flash"}]')
+
+    assert_equal [ { provider: "deepseek", id: "deepseek-v4-flash" } ], BridgeClient.models("pi")
+  end
+
+  test "set_model posts the provider and model id" do
+    stub_request(:post, "#{BASE_URL}/session/#{SESSION_ID}/model")
+      .with(basic_auth: [ "skiff", PASSWORD ], body: '{"provider":"deepseek","id":"deepseek-v4-pro"}')
+      .to_return(status: 200, body: '{"ok":true}')
+
+    assert_equal({ ok: true }, BridgeClient.set_model(SESSION_ID, provider: "deepseek", model: "deepseek-v4-pro"))
+  end
+
   test "stream_session yields the body chunks of the SSE stream" do
     stub_request(:get, "#{BASE_URL}/session/pi:s1/stream")
       .with(basic_auth: [ "skiff", PASSWORD ])

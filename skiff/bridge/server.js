@@ -106,7 +106,7 @@ function createUnavailableHarness(name, message) {
   };
   return {
     name,
-    capabilities: { rename: false, orchestrator: false },
+    capabilities: { rename: false, orchestrator: false, model: false },
     async listSessions() {
       throw new Error(message);
     },
@@ -225,6 +225,9 @@ async function handle(req, res, ctx) {
   if (req.method === "GET" && parts.join("/") === "global/health") {
     return sendJson(res, 200, { status: "ok" });
   }
+  if (req.method === "GET" && parts.length === 3 && parts[0] === "harness" && parts[2] === "models") {
+    return handleHarnessModels(res, ctx, parts[1]);
+  }
   if (req.method === "GET" && parts.length === 1 && parts[0] === "session") {
     return handleSessionList(res, ctx);
   }
@@ -253,6 +256,9 @@ async function handle(req, res, ctx) {
   }
   if (req.method === "POST" && parts.length === 3 && parts[0] === "session" && parts[2] === "name") {
     return handleSessionRename(req, res, ctx, parts[1]);
+  }
+  if (req.method === "POST" && parts.length === 3 && parts[0] === "session" && parts[2] === "model") {
+    return handleSessionModel(req, res, ctx, parts[1]);
   }
   if (req.method === "POST" && parts.length === 3 && parts[0] === "session" && parts[2] === "abort") {
     return handleAbort(res, ctx, parts[1]);
@@ -367,6 +373,34 @@ async function handleSessionRename(req, res, ctx, id) {
   if (name === "") return sendJson(res, 400, { error: 'rename requires a non-empty "name" field' });
 
   await harness.rename(localId, name);
+  return sendJson(res, 200, { ok: true });
+}
+
+// GET /harness/{name}/models — the models sessions of this harness can
+// switch to. Only harnesses with the model capability (pi) have a list.
+async function handleHarnessModels(res, ctx, name) {
+  const harness = ctx.harnesses.get(name);
+  if (!harness) return sendJson(res, 404, { error: `unknown harness ${name}` });
+  if (!harness.capabilities.model) {
+    return sendJson(res, 400, { error: `${name} sessions have no model switch` });
+  }
+  return sendJson(res, 200, await harness.listModels());
+}
+
+// POST /session/{id}/model — switch the session's model, where the harness
+// supports it (pi's set_model; pi also persists the choice as its default).
+async function handleSessionModel(req, res, ctx, id) {
+  const { harness, localId } = resolveHarness(ctx, id);
+  if (!harness.capabilities.model) {
+    return sendJson(res, 400, { error: `${harness.name} sessions have no model switch` });
+  }
+  const body = await readJsonBody(req);
+  const provider = typeof body?.provider === "string" ? body.provider.trim() : "";
+  const modelId = typeof body?.id === "string" ? body.id.trim() : "";
+  if (provider === "" || modelId === "") {
+    return sendJson(res, 400, { error: 'model switch requires "provider" and "id" fields' });
+  }
+  await harness.setModel(localId, { provider, id: modelId });
   return sendJson(res, 200, { ok: true });
 }
 
