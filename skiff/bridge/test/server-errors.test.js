@@ -17,6 +17,7 @@ import { createBridge } from "../server.js";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(HERE, "fixtures");
 const FAKE_PI = path.join(FIXTURES, "fake-pi.mjs");
+const FAKE_MUSE = path.join(FIXTURES, "fake-muse.mjs");
 const PASSWORD = "test-password";
 
 let bridge;
@@ -30,10 +31,10 @@ before(async () => {
     password: PASSWORD,
     host: "127.0.0.1",
     port: 0,
-    sessionDir: tmp,
-    binary: FAKE_PI,
     defaultCwd: tmp,
-    maxProcesses: 8,
+    pi: { sessionDir: tmp, binary: FAKE_PI, maxProcesses: 8 },
+    muse: { sessionDir: path.join(tmp, "muse", "sessions"), binary: FAKE_MUSE },
+    opencode: { url: "http://127.0.0.1:1" },
   });
   await bridge.listen();
   base = `http://127.0.0.1:${bridge.port()}`;
@@ -44,7 +45,7 @@ after(async () => {
   await fs.rm(tmp, { recursive: true, force: true });
 });
 
-const AUTH = "Basic " + Buffer.from(`opencode:${PASSWORD}`).toString("base64");
+const AUTH = "Basic " + Buffer.from(`skiff:${PASSWORD}`).toString("base64");
 
 function post(p, body = undefined) {
   return fetch(base + p, {
@@ -56,14 +57,14 @@ function post(p, body = undefined) {
 
 describe("bridge failure paths", () => {
   it("surfaces a rejected prompt as 502 with the pi error", async () => {
-    const response = await post("/session/multi-turn/prompt_async", { parts: [{ type: "text", text: "boom" }] });
+    const response = await post("/session/pi:multi-turn/prompt_async", { parts: [{ type: "text", text: "boom" }] });
     assert.equal(response.status, 502);
     const body = await response.json();
     assert.match(body.error, /prompt refused/);
   });
 
   it("surfaces a failed create as 502 and kills the child", async () => {
-    const response = await post("/session", { title: "will fail" });
+    const response = await post("/session", { harness: "pi", title: "will fail" });
     assert.equal(response.status, 502);
     const body = await response.json();
     assert.match(body.error, /create session failed/);

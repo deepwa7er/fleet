@@ -1,0 +1,154 @@
+require "test_helper"
+
+# DW-001 §8 discipline: the client is the only code that touches the wire, so
+# its tests stub every HTTP call with WebMock and assert the URL path, the
+# basic-auth header, and the JSON body. Never a live server.
+class BridgeClientTest < ActiveSupport::TestCase
+  BASE_URL = "http://127.0.0.1:4120"
+  PASSWORD = "test-password"
+  SESSION_ID = "pi:ses_test"
+
+  setup do
+    @original_url = ENV["SKIFF_BRIDGE_URL"]
+    @original_password = ENV["SKIFF_BRIDGE_PASSWORD"]
+    ENV["SKIFF_BRIDGE_URL"] = BASE_URL
+    ENV["SKIFF_BRIDGE_PASSWORD"] = PASSWORD
+  end
+
+  teardown do
+    ENV["SKIFF_BRIDGE_URL"] = @original_url
+    ENV["SKIFF_BRIDGE_PASSWORD"] = @original_password
+  end
+
+  test "health hits /global/health with basic auth and parses deep symbols" do
+    stub_request(:get, "#{BASE_URL}/global/health")
+      .with(basic_auth: [ "skiff", PASSWORD ])
+      .to_return(status: 200, body: '{"status":"ok"}')
+
+    assert_equal({ status: "ok" }, BridgeClient.health)
+  end
+
+  test "sessions hits /session and returns the sessions-and-errors object" do
+    body = '{"sessions":[{"id":"pi:s1","harness":"pi","time":{"created":1780000000000,"updated":1780000001000}}],' \
+           '"errors":{"opencode":"opencode serve unreachable: ECONNREFUSED"}}'
+    stub_request(:get, "#{BASE_URL}/session")
+      .with(basic_auth: [ "skiff", PASSWORD ])
+      .to_return(status: 200, body: body)
+
+    payload = BridgeClient.sessions
+    assert_equal 1, payload[:sessions].length
+    assert_equal "pi:s1", payload[:sessions].first[:id]
+    assert_equal 1780000001000, payload[:sessions].first[:time][:updated]
+    assert_match(/unreachable/, payload[:errors][:opencode])
+  end
+
+  test "session(id) hits /session/:id with the harness-qualified id" do
+    stub_request(:get, "#{BASE_URL}/session/#{SESSION_ID}")
+      .with(basic_auth: [ "skiff", PASSWORD ])
+      .to_return(status: 200, body: '{"id":"pi:ses_test","harness":"pi"}')
+
+    assert_equal({ id: "pi:ses_test", harness: "pi" }, BridgeClient.session(SESSION_ID))
+  end
+
+  test "messages(id) hits /session/:id/message and returns {info, parts} entries" do
+    body = '[{"info":{"id":"msg_1"},"parts":[{"type":"text","text":"hello"}]}]'
+    stub_request(:get, "#{BASE_URL}/session/#{SESSION_ID}/message")
+      .with(basic_auth: [ "skiff", PASSWORD ])
+      .to_return(status: 200, body: body)
+
+    messages = BridgeClient.messages(SESSION_ID)
+    assert_equal "msg_1", messages.first[:info][:id]
+    assert_equal "hello", messages.first[:parts].first[:text]
+  end
+
+  test "prompt_async posts the text part and returns nil on 204" do
+    stub_request(:post, "#{BASE_URL}/session/#{SESSION_ID}/prompt_async")
+      .with(
+        basic_auth: [ "skiff", PASSWORD ],
+        body: '{"parts":[{"type":"text","text":"hello"}]}'
+      )
+      .to_return(status: 204, body: "")
+
+    assert_nil BridgeClient.prompt_async(SESSION_ID, "hello")
+  end
+
+  test "abort posts to /session/:id/abort and returns nil on 204" do
+    stub_request(:post, "#{BASE_URL}/session/#{SESSION_ID}/abort")
+      .with(basic_auth: [ "skiff", PASSWORD ])
+      .to_return(status: 204, body: "")
+
+    assert_nil BridgeClient.abort(SESSION_ID)
+  end
+
+  test "create_session posts the harness and title and returns the created id" do
+    stub_request(:post, "#{BASE_URL}/session")
+      .with(basic_auth: [ "skiff", PASSWORD ], body: '{"harness":"muse","title":"New session"}')
+      .to_return(status: 201, body: '{"id":"muse:2c0ffee0-0000-4000-8000-000000000001"}')
+
+    session = BridgeClient.create_session(harness: "muse", title: "New session")
+    assert_equal "muse:2c0ffee0-0000-4000-8000-000000000001", session[:id]
+  end
+
+  test "create_session with no title posts the harness alone" do
+    stub_request(:post, "#{BASE_URL}/session")
+      .with(basic_auth: [ "skiff", PASSWORD ], body: '{"harness":"pi"}')
+      .to_return(status: 201, body: '{"id":"pi:ses_new"}')
+
+    assert_equal "pi:ses_new", BridgeClient.create_session(harness: "pi")[:id]
+  end
+
+  test "stream_session yields the body chunks of the SSE stream" do
+    stub_request(:get, "#{BASE_URL}/session/pi:s1/stream")
+      .with(basic_auth: [ "skiff", PASSWORD ])
+      .to_return(status: 200, body: "event: snapshot\ndata: {\"messages\":[]}\n\n")
+
+    chunks = []
+    BridgeClient.stream_session("pi:s1") { |chunk| chunks << chunk }
+    assert chunks.any? { |chunk| chunk.include?("snapshot") }
+  end
+
+  test "stream_session maps an upstream failure to BridgeClient::Error" do
+    stub_request(:get, "#{BASE_URL}/session/pi:s1/stream").to_raise(Errno::ECONNREFUSED)
+
+    error = assert_raises(BridgeClient::Error) { BridgeClient.stream_session("pi:s1") { |_chunk| } }
+    assert_match(/skiff bridge unreachable/, error.message)
+  end
+
+  test "reads the password from ENV at call time" do
+    ENV["SKIFF_BRIDGE_PASSWORD"] = "changed-password"
+    stub_request(:get, "#{BASE_URL}/session")
+      .with(basic_auth: [ "skiff", "changed-password" ])
+      .to_return(status: 200, body: '{"sessions":[],"errors":{}}')
+
+    assert_equal({ sessions: [], errors: {} }, BridgeClient.sessions)
+  end
+
+  test "a refused connection maps to BridgeClient::Error" do
+    stub_request(:get, "#{BASE_URL}/session").to_raise(Errno::ECONNREFUSED)
+
+    error = assert_raises(BridgeClient::Error) { BridgeClient.sessions }
+    assert_match(/skiff bridge unreachable/, error.message)
+  end
+
+  test "a 401 maps to BridgeClient::Error with the status" do
+    stub_request(:get, "#{BASE_URL}/session").to_return(status: 401, body: "")
+
+    error = assert_raises(BridgeClient::Error) { BridgeClient.sessions }
+    assert_match(/skiff bridge unreachable: HTTP 401/, error.message)
+  end
+
+  test "a 500 maps to BridgeClient::Error with a body snippet" do
+    stub_request(:get, "#{BASE_URL}/session").to_return(status: 500, body: "Internal Server Error")
+
+    error = assert_raises(BridgeClient::Error) { BridgeClient.sessions }
+    assert_match(/HTTP 500/, error.message)
+    assert_match(/Internal Server Error/, error.message)
+  end
+
+  test "an unparseable body maps to BridgeClient::Error" do
+    stub_request(:get, "#{BASE_URL}/session").to_return(status: 200, body: "<html>not json</html>")
+
+    error = assert_raises(BridgeClient::Error) { BridgeClient.sessions }
+    assert_match(/skiff bridge unreachable/, error.message)
+  end
+end

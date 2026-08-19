@@ -23,6 +23,7 @@ import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import path from "node:path";
 import { mapMessageEntry } from "./session-store.js";
+import { createJsonlReader } from "./jsonl.js";
 
 // The overlay entry id for the in-flight assistant message. It is a fixed
 // placeholder because the real entry id is only assigned when pi persists the
@@ -33,35 +34,6 @@ import { mapMessageEntry } from "./session-store.js";
 const PENDING_MESSAGE_ID = "<pending>";
 
 const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
-
-// Read a stream as JSONL records: split on "\n" only, strip one trailing "\r",
-// emit each line as a string. Chunks are decoded with StringDecoder so a
-// multi-byte UTF-8 sequence split across chunks cannot corrupt a record.
-export function createJsonlReader(stream, onLine, onEnd = () => {}, onError = () => {}) {
-  const decoder = new StringDecoder("utf8");
-  let buffer = "";
-  stream.on("data", (chunk) => {
-    buffer += decoder.write(chunk);
-    let nl;
-    while ((nl = buffer.indexOf("\n")) !== -1) {
-      let line = buffer.slice(0, nl);
-      buffer = buffer.slice(nl + 1);
-      if (line.endsWith("\r")) line = line.slice(0, -1);
-      onLine(line);
-    }
-  });
-  stream.on("end", () => {
-    buffer += decoder.end();
-    if (buffer.length > 0) onLine(buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer);
-    onEnd();
-  });
-  stream.on("error", onError);
-  return stream;
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export class PiError extends Error {}
 

@@ -2,7 +2,7 @@ class SessionsController < ApplicationController
   include ActionController::Live
 
   # DW-001 §8 discipline: the sessions list is the app's first data page, and
-  # every client call can fail — the headless opencode server is a separate
+  # every client call can fail — the skiff bridge is a separate
   # process. The error paths are therefore first-class: index renders the
   # chrome with a danger instrumentation line (status 200 so the page stays
   # usable), create redirects to root with a danger flash, show renders the
@@ -17,16 +17,26 @@ class SessionsController < ApplicationController
   # the bridge decides what changed, so nothing here diffs or fingerprints —
   # and the view's rendering code (partials, controllers) is unchanged.
 
+  # The wire session ids are harness-qualified ("pi:…", "muse:…",
+  # "opencode:…"); the bridge names the valid harnesses and create validates
+  # against this list before calling out.
+  HARNESSES = %w[pi muse opencode].freeze
+
   def index
-    @sessions = OpencodeClient.sessions.sort_by { |session| last_activity(session) }.reverse
-  rescue OpencodeClient::Error
+    payload = BridgeClient.sessions
+    @sessions = payload[:sessions].sort_by { |session| last_activity(session) }.reverse
+    # Per-harness failures (opencode serve down, say): the rest of the list
+    # still renders, with the gap named instead of silently missing.
+    @harness_errors = payload[:errors] || {}
+  rescue BridgeClient::Error
     @sessions = []
-    @error = "opencode server unreachable — start it and reload"
+    @harness_errors = {}
+    @error = "skiff bridge unreachable — start it and reload"
   end
 
   def show
-    @session = OpencodeClient.session(params[:id])
-    @messages = OpencodeClient.messages(params[:id])
+    @session = BridgeClient.session(params[:id])
+    @messages = BridgeClient.messages(params[:id])
     # First-paint working state, from the messages alone: a turn in flight
     # leaves the newest assistant message without time.completed. The stream
     # takes over the moment it connects — its snapshot and working events
@@ -40,15 +50,20 @@ class SessionsController < ApplicationController
     orchestrator = @session[:orchestrator] || {}
     @orchestrator_active = orchestrator[:active] || false
     @orchestrator_widget = orchestrator[:widget]
-  rescue OpencodeClient::Error
-    @error = "opencode server unreachable — start it and reload"
+  rescue BridgeClient::Error
+    @error = "skiff bridge unreachable — start it and reload"
   end
 
   def create
-    session = OpencodeClient.create_session(title: "New session")
+    harness = params[:harness].to_s
+    unless HARNESSES.include?(harness)
+      return redirect_to root_path, alert: "Unknown harness — pick pi, muse, or opencode"
+    end
+
+    session = BridgeClient.create_session(harness: harness, title: "New session")
     redirect_to session_path(session[:id])
-  rescue OpencodeClient::Error
-    redirect_to root_path, alert: "Could not create a session — opencode server unreachable"
+  rescue BridgeClient::Error
+    redirect_to root_path, alert: "Could not create a session — skiff bridge unreachable"
   end
 
   # The streaming proxy. Each bridge SSE frame is translated into turbo-stream
@@ -61,7 +76,7 @@ class SessionsController < ApplicationController
     response.headers["Cache-Control"] = "no-cache"
     response.headers["X-Accel-Buffering"] = "no"
     buffer = +""
-    OpencodeClient.stream_session(params[:id]) do |chunk|
+    BridgeClient.stream_session(params[:id]) do |chunk|
       buffer << chunk
       while (frame = extract_frame!(buffer))
         actions = translate_stream_event(frame)
@@ -70,7 +85,7 @@ class SessionsController < ApplicationController
         write_stream_events(actions)
       end
     end
-  rescue OpencodeClient::Error
+  rescue BridgeClient::Error
     # Upstream unreachable or dropped: end the stream quietly; the browser's
     # EventSource retries and the bridge answers with a snapshot on success.
   rescue ActionController::Live::ClientDisconnected
@@ -80,10 +95,10 @@ class SessionsController < ApplicationController
   end
 
   def abort
-    OpencodeClient.abort(params[:id])
+    BridgeClient.abort(params[:id])
     redirect_to session_path(params[:id])
-  rescue OpencodeClient::Error
-    redirect_to session_path(params[:id]), alert: "Could not abort — opencode server unreachable"
+  rescue BridgeClient::Error
+    redirect_to session_path(params[:id]), alert: "Could not abort — skiff bridge unreachable"
   end
 
   # DW-001 §8 discipline: toggling orchestrator mode is another client call
@@ -91,10 +106,10 @@ class SessionsController < ApplicationController
   # failure path redirects back with a danger flash, like abort.
   def orchestrator
     on = params[:on] == "1"
-    OpencodeClient.orchestrator(params[:id], on)
+    BridgeClient.orchestrator(params[:id], on)
     redirect_to session_path(params[:id])
-  rescue OpencodeClient::Error
-    redirect_to session_path(params[:id]), alert: "Could not toggle orchestrator — opencode server unreachable"
+  rescue BridgeClient::Error
+    redirect_to session_path(params[:id]), alert: "Could not toggle orchestrator — skiff bridge unreachable"
   end
 
   # DW-001 §8 discipline: renaming is another client call that can fail — the
@@ -105,10 +120,10 @@ class SessionsController < ApplicationController
     name = params[:name].to_s.strip
     return redirect_to session_path(params[:id]) if name.blank?
 
-    OpencodeClient.rename_session(params[:id], name)
+    BridgeClient.rename_session(params[:id], name)
     redirect_to session_path(params[:id])
-  rescue OpencodeClient::Error
-    redirect_to session_path(params[:id]), alert: "Could not rename — opencode server unreachable"
+  rescue BridgeClient::Error
+    redirect_to session_path(params[:id]), alert: "Could not rename — skiff bridge unreachable"
   end
 
   private
@@ -148,6 +163,11 @@ class SessionsController < ApplicationController
     end
   end
 
+  # The author label names the session's harness; the wire id carries it.
+  def stream_harness
+    params[:id].to_s.split(":").first
+  end
+
   def snapshot_actions(payload)
     entries = Array(payload[:messages])
     # The pending overlay is the in-flight assistant message, always the last
@@ -157,7 +177,8 @@ class SessionsController < ApplicationController
       entries = entries + [ pending[:entry] ]
     end
     [
-      turbo_stream.replace("transcript", partial: "sessions/transcript", locals: { messages: entries }),
+      turbo_stream.replace("transcript", partial: "sessions/transcript",
+                                         locals: { messages: entries, harness: stream_harness }),
       status_action(payload[:working]),
       orchestrator_action(payload[:orchestrator])
     ]
@@ -169,14 +190,14 @@ class SessionsController < ApplicationController
     turbo_stream.append("transcript",
                         partial: "sessions/message",
                         locals: { message: payload[:entry][:info], parts: payload[:entry][:parts],
-                                  message_index: payload[:index] })
+                                  message_index: payload[:index], harness: stream_harness })
   end
 
   def replace_action(payload)
     turbo_stream.replace("message-#{payload[:index]}",
                          partial: "sessions/message",
                          locals: { message: payload[:entry][:info], parts: payload[:entry][:parts],
-                                   message_index: payload[:index] })
+                                   message_index: payload[:index], harness: stream_harness })
   end
 
   def status_action(working)

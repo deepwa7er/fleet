@@ -1,4 +1,4 @@
-# systemd user unit for skiff — the phone web UI for the pi bridge.
+# systemd user unit for skiff — the phone web UI for the skiff bridge.
 #
 # Template: deploy/install-desktop.sh substitutes the placeholders and installs
 # this to ~/.config/systemd/user/skiff.service. The wrapper script is installed

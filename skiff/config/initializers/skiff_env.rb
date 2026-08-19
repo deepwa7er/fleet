@@ -1,8 +1,8 @@
 # Loads the skiff secrets file into ENV.
 #
-# DW-001 §8 discipline: this initializer serves one consumer — the opencode
-# server password (OPENCODE_SERVER_PASSWORD) that the Rails client sends to
-# the headless server on 127.0.0.1:4120. The app must not hard-code
+# DW-001 §8 discipline: this initializer serves one consumer — the skiff
+# bridge password (SKIFF_BRIDGE_PASSWORD) that the Rails client sends to
+# the bridge on 127.0.0.1:4120. The app must not hard-code
 # credentials, and tests/CI must be able to boot without the real secrets file
 # present. So the file is optional: if it is missing we simply leave ENV
 # untouched (tests set ENV directly).

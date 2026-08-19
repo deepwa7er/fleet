@@ -13,6 +13,7 @@ import { createBridge } from "../server.js";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(HERE, "fixtures");
 const FAKE_PI = path.join(FIXTURES, "fake-pi.mjs");
+const FAKE_MUSE = path.join(FIXTURES, "fake-muse.mjs");
 const PASSWORD = "test-password";
 
 // Slower per-delta streaming makes the "text grew" and busy assertions
@@ -39,18 +40,18 @@ before(async () => {
     password: PASSWORD,
     host: "127.0.0.1",
     port: 0,
-    sessionDir: tmp,
-    binary: FAKE_PI,
     defaultCwd: tmp,
-    maxProcesses: 8,
+    pi: { sessionDir: tmp, binary: FAKE_PI, maxProcesses: 8 },
+    muse: { sessionDir: path.join(tmp, "muse", "sessions"), binary: FAKE_MUSE },
+    opencode: { url: "http://127.0.0.1:1" }, // no serve here; the list reports it in errors
   });
   await bridge.listen();
   base = `http://127.0.0.1:${bridge.port()}`;
   fixtures = {
-    multiTurn: "multi-turn",
-    branched: "branched",
-    trailingPartial: "trailing-partial",
-    empty: "empty",
+    multiTurn: "pi:multi-turn",
+    branched: "pi:branched",
+    trailingPartial: "pi:trailing-partial",
+    empty: "pi:empty",
   };
 });
 
@@ -60,7 +61,7 @@ after(async () => {
   await fs.rm(tmp, { recursive: true, force: true });
 });
 
-const AUTH = "Basic " + Buffer.from(`opencode:${PASSWORD}`).toString("base64");
+const AUTH = "Basic " + Buffer.from(`skiff:${PASSWORD}`).toString("base64");
 
 function get(p, { auth = true } = {}) {
   return fetch(base + p, { headers: auth ? { Authorization: AUTH } : {} });
@@ -103,25 +104,33 @@ describe("bridge HTTP", () => {
     assert.deepEqual(await response.json(), { status: "ok" });
   });
 
-  it("lists sessions", async () => {
+  it("lists sessions across harnesses, tagged, with per-harness errors", async () => {
     const response = await get("/session");
     assert.equal(response.status, 200);
-    const sessions = await response.json();
-    assert.equal(sessions.length, 4);
-    const multi = sessions.find((s) => s.id === "multi-turn");
+    const { sessions, errors } = await response.json();
+    assert.equal(sessions.filter((s) => s.harness === "pi").length, 4);
+    const multi = sessions.find((s) => s.id === "pi:multi-turn");
     assert.equal(multi.title, "Multi-turn fixture");
     assert.equal(multi.directory, "/home/deepwater/code/skiff");
     assert.deepEqual(multi.model, { id: "deepseek-v4-flash" });
+    assert.deepEqual(multi.capabilities, { rename: true, orchestrator: true });
+    // No opencode serve is running in this suite; the list says so instead
+    // of silently omitting the harness.
+    assert.match(errors.opencode, /unreachable/);
   });
 
   it("shows one session and 404s for unknown ids", async () => {
     const response = await get(`/session/${fixtures.multiTurn}`);
     assert.equal(response.status, 200);
     const session = await response.json();
-    assert.equal(session.id, "multi-turn");
+    assert.equal(session.id, "pi:multi-turn");
+    assert.equal(session.harness, "pi");
 
-    const missing = await get("/session/does-not-exist");
+    const missing = await get("/session/pi:does-not-exist");
     assert.equal(missing.status, 404);
+    // An unprefixed (or unknown-harness) id is not a session id at all.
+    const unprefixed = await get("/session/does-not-exist");
+    assert.equal(unprefixed.status, 404);
   });
 
   it("serves messages with tool pairing", async () => {
@@ -144,11 +153,17 @@ describe("bridge HTTP", () => {
     assert.equal(response.status, 404);
   });
 
+  it("rejects a create without a harness", async () => {
+    const response = await post("/session", { title: "no harness" });
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /harness/);
+  });
+
   it("creates a session (newborn: served from process state until its file appears)", async () => {
-    const response = await post("/session", { title: "Created by test" });
+    const response = await post("/session", { harness: "pi", title: "Created by test" });
     assert.equal(response.status, 201);
     const { id } = await response.json();
-    assert.match(id, /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_[0-9a-f-]{36}$/);
+    assert.match(id, /^pi:\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_[0-9a-f-]{36}$/);
 
     // the file does not exist yet (real pi only persists on the first
     // message), so the show/message routes must serve the newborn session
@@ -171,7 +186,7 @@ describe("bridge HTTP", () => {
     assert.ok(done, "the created session's first message never completed");
 
     const listing = await get("/session");
-    const sessions = await listing.json();
+    const { sessions } = await listing.json();
     assert.ok(sessions.some((s) => s.id === id), "created session is listed once its file exists");
   });
 
@@ -234,11 +249,10 @@ describe("bridge HTTP", () => {
         password: PASSWORD,
         host: "127.0.0.1",
         port: 0,
-        sessionDir: tmp,
-        sessionDirExplicit: true,
-        binary: FAKE_PI,
         defaultCwd: tmp,
-        maxProcesses: 2,
+        pi: { sessionDir: tmp, sessionDirExplicit: true, binary: FAKE_PI, maxProcesses: 2 },
+        muse: { sessionDir: path.join(tmp, "muse", "sessions"), binary: FAKE_MUSE },
+        opencode: { url: "http://127.0.0.1:1" },
       });
       try {
         await explicit.listen();
@@ -285,7 +299,7 @@ describe("bridge HTTP", () => {
   });
 
   it("toggles orchestrator mode through the live process and serves it back", async () => {
-    const created = await post("/session", { title: "orch toggle" });
+    const created = await post("/session", { harness: "pi", title: "orch toggle" });
     assert.equal(created.status, 201);
     const id = (await created.json()).id;
 
@@ -335,12 +349,12 @@ describe("bridge HTTP", () => {
     const messages = await (await get(`/session/${id}/message`)).json();
     assert.equal(messages.filter((m) => m.info.role === "user").length, 1);
     assert.equal(messages.filter((m) => m.info.role === "assistant").length, 1);
-    const sessions = await (await get("/session")).json();
+    const { sessions } = await (await get("/session")).json();
     assert.equal(sessions.find((s) => s.id === id).orchestrator.active, true);
   });
 
   it("serves the orchestrator extension's live widget and status with the session", async () => {
-    const created = await post("/session", { title: "orch widget" });
+    const created = await post("/session", { harness: "pi", title: "orch widget" });
     assert.equal(created.status, 201);
     const id = (await created.json()).id;
 
@@ -402,7 +416,7 @@ describe("bridge HTTP", () => {
       // Create a fresh session while the failure env is set, so its live
       // process inherits it (pooled processes keep their spawn-time env;
       // no other test touches this session).
-      const created = await post("/session", { title: "rejected toggle" });
+      const created = await post("/session", { harness: "pi", title: "rejected toggle" });
       const id = (await created.json()).id;
       const response = await post(`/session/${id}/orchestrator`, { on: true });
       assert.equal(response.status, 502);
@@ -437,7 +451,7 @@ describe("bridge HTTP", () => {
   });
 
   it("renames a newborn session and keeps the title across its first message", async () => {
-    const created = await post("/session", { title: "before rename" });
+    const created = await post("/session", { harness: "pi", title: "before rename" });
     assert.equal(created.status, 201);
     const id = (await created.json()).id;
 
@@ -478,7 +492,7 @@ describe("bridge HTTP", () => {
       // name-conditional — the create flow's own set_session_name (with the
       // session title) must still succeed, so the title avoids the marker
       // and only the rename trips the rejection.
-      const created = await post("/session", { title: "rename failure" });
+      const created = await post("/session", { harness: "pi", title: "rename failure" });
       assert.equal(created.status, 201);
       const id = (await created.json()).id;
       const response = await post(`/session/${id}/name`, { name: "rejected name" });

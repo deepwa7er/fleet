@@ -21,7 +21,7 @@
 #     non-zero, and launchd retries (KeepAlive).
 #   - Secrets are deliberately NOT read here: the Rails initializer
 #     config/initializers/skiff_env.rb loads ~/.config/skiff/secrets into ENV
-#     (the pi bridge's basic-auth password), so the secrets never leave that one file.
+#     (the skiff bridge's basic-auth password), so the secrets never leave that one file.
 #   - The Ruby toolchain is resolved via mise rather than the login shell's
 #     PATH: the PATH a launchd-spawned `fish -l` gets is the user's universal
 #     PATH, not the interactive one, and there the mise ruby bin sits after

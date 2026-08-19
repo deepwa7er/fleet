@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  launchd agent for skiff — the phone web UI for the pi bridge.
+  launchd agent for skiff — the phone web UI for the skiff bridge.
 
   Template: deploy/install-agent.sh substitutes the placeholders and installs
   this to ~/Library/LaunchAgents/com.deepwa7er.skiff.plist. The wrapper script

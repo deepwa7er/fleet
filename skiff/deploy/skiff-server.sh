@@ -16,7 +16,7 @@
 #     non-zero, and systemd retries (Restart=on-failure).
 #   - Secrets are deliberately NOT read here: the Rails initializer
 #     config/initializers/skiff_env.rb loads ~/.config/skiff/secrets into ENV
-#     (the pi bridge's basic-auth password), so the secrets never leave that one file.
+#     (the skiff bridge's basic-auth password), so the secrets never leave that one file.
 #   - No mise logic, unlike the macOS launchd wrapper: on the desktop the repo's
 #     ruby is the system Ruby 4.0.6, resolved through PATH, so `bin/rails` just
 #     works. (The Mac wrapper needed `mise env` because launchd's login-shell

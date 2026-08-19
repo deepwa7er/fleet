@@ -17,7 +17,7 @@ class SkiffEnvTest < ActionDispatch::IntegrationTest
       [ key, value ] if key && value
     end.to_h
 
-    assert loaded.key?("OPENCODE_SERVER_PASSWORD"), "secrets file lacks OPENCODE_SERVER_PASSWORD"
+    assert loaded.key?("SKIFF_BRIDGE_PASSWORD"), "secrets file lacks SKIFF_BRIDGE_PASSWORD"
     loaded.each do |key, value|
       assert_equal value, ENV[key], "ENV[#{key}] should be loaded from secrets"
     end

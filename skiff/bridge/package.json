@@ -1,8 +1,8 @@
 {
-  "name": "skiff-pi-bridge",
+  "name": "skiff-bridge",
   "private": true,
   "type": "module",
-  "description": "HTTP bridge speaking opencode's API to skiff, backed by pi (--mode rpc)",
+  "description": "Multi-harness HTTP bridge for skiff: pi, Muse Code, and opencode sessions behind one API",
   "engines": {
     "node": ">=22"
   }

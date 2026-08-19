@@ -2,12 +2,13 @@
     the divider (rule 1) — no border anywhere. The wrapper carries a stable id
     for M4's stream and the mine marker the user-jump widget hops between
     (present only on the reader's own messages); the role label is the persona
-    readout (you / opencode), never the raw role literal. Locals: message (the
-    info hash), parts (the parts array), message_index (0-based,
-    chronological). %>
+    readout (you / the session's harness), never the raw role literal.
+    Locals: message (the info hash), parts (the parts array), message_index
+    (0-based, chronological), harness (the session's harness name — the
+    agent-side persona). %>
 <% mine = message[:role] == "user" %>
 <section <%= tag.attributes(class: "message", id: "message-#{message_index}", data: { mine: mine || nil }) %>>
-  <% role = mine ? "you" : "opencode" %>
+  <% role = mine ? "you" : harness %>
   <% agent = message[:role] == "user" ? nil : message[:agent] %>
   <% label = [ role, agent ].compact.join(" · ") %>
   <p class="instrumentation message-role"><%= label %></p>

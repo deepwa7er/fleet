@@ -9,13 +9,14 @@ set -euo pipefail
 UNIT_INSTALL_DIR="${HOME}/.config/systemd/user"
 WRAPPER_INSTALL_DIR="${HOME}/.config/skiff"
 
-systemctl --user disable --now skiff.service com.deepwa7er.pi-bridge.service
+systemctl --user disable --now skiff.service skiff-bridge.service opencode-serve.service
 
 rm -f \
   "${UNIT_INSTALL_DIR}/skiff.service" \
-  "${UNIT_INSTALL_DIR}/com.deepwa7er.pi-bridge.service" \
+  "${UNIT_INSTALL_DIR}/skiff-bridge.service" \
+  "${UNIT_INSTALL_DIR}/opencode-serve.service" \
   "${WRAPPER_INSTALL_DIR}/skiff-server.sh" \
-  "${WRAPPER_INSTALL_DIR}/pi-bridge.sh"
+  "${WRAPPER_INSTALL_DIR}/skiff-bridge.sh"
 
 systemctl --user daemon-reload
 

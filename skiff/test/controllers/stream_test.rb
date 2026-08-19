@@ -1,7 +1,7 @@
 require "test_helper"
 
 # DW-001 §8 discipline: the stream action is a pure function of the bridge's
-# SSE frames, so these tests stub OpencodeClient.stream_session to yield
+# SSE frames, so these tests stub BridgeClient.stream_session to yield
 # canned frames and assert on the re-framed turbo-stream markup. Never a
 # live server. The frame shapes mirror bridge/lib/stream-registry.js: each
 # event carries the already-mapped { info:, parts: } entry, so the action's
@@ -34,7 +34,7 @@ class StreamTest < ActionDispatch::IntegrationTest
   end
 
   def stub_stream(frames, &block)
-    OpencodeClient.stub(:stream_session, ->(_id, &yield_chunks) { frames.each { |f| yield_chunks.call(f) } }, &block)
+    BridgeClient.stub(:stream_session, ->(_id, &yield_chunks) { frames.each { |f| yield_chunks.call(f) } }, &block)
   end
 
   def data_lines(body)
@@ -53,7 +53,7 @@ class StreamTest < ActionDispatch::IntegrationTest
       orchestrator: { active: true, widget: nil, status: nil }
     }
     stub_stream([ frame("snapshot", payload) ]) do
-      get session_stream_path("ses_123")
+      get session_stream_path("pi:ses_123")
     end
 
     assert_response :success
@@ -80,7 +80,7 @@ class StreamTest < ActionDispatch::IntegrationTest
       frame("replace", { index: 1, entry: assistant_message("msg_2b", "revised answer") })
     ]
     stub_stream(frames) do
-      get session_stream_path("ses_123")
+      get session_stream_path("pi:ses_123")
     end
 
     assert_response :success
@@ -99,7 +99,7 @@ class StreamTest < ActionDispatch::IntegrationTest
       frame("orchestrator", { orchestrator: { active: false, widget: nil, status: nil } })
     ]
     stub_stream(frames) do
-      get session_stream_path("ses_123")
+      get session_stream_path("pi:ses_123")
     end
 
     assert_response :success
@@ -108,25 +108,25 @@ class StreamTest < ActionDispatch::IntegrationTest
     assert_includes html, '<turbo-stream action="replace" target="session-status">'
     # Idle: no working tag, no abort key.
     refute_includes html, "status-tag"
-    refute_includes html, 'action="/sessions/ses_123/abort"'
+    refute_includes html, 'action="/sessions/pi:ses_123/abort"'
     assert_includes html, '<turbo-stream action="replace" target="orchestrator-readout">'
     assert_includes html, "orchestrator off"
   end
 
   test "the working event renders the tag and the abort key" do
     stub_stream([ frame("working", { working: true }) ]) do
-      get session_stream_path("ses_123")
+      get session_stream_path("pi:ses_123")
     end
 
     html = data_lines(response.body).join
     assert_includes html, 'class="instrumentation status-tag">working'
-    assert_includes html, 'action="/sessions/ses_123/abort"'
+    assert_includes html, 'action="/sessions/pi:ses_123/abort"'
   end
 
   test "preserves the turbo-stream markup across the SSE framing" do
     message = user_message("msg_1", "line one\nline two")
     stub_stream([ frame("append", { index: 0, entry: message }) ]) do
-      get session_stream_path("ses_123")
+      get session_stream_path("pi:ses_123")
     end
 
     assert_response :success
@@ -141,13 +141,13 @@ class StreamTest < ActionDispatch::IntegrationTest
 
   test "ignores unknown events and ends quietly when the upstream fails" do
     stub_stream([ frame("something_new", {}) ]) do
-      get session_stream_path("ses_123")
+      get session_stream_path("pi:ses_123")
     end
     assert_response :success
     assert_equal "", response.body
 
-    OpencodeClient.stub(:stream_session, ->(*) { raise OpencodeClient::Error, "bridge down" }) do
-      get session_stream_path("ses_123")
+    BridgeClient.stub(:stream_session, ->(*) { raise BridgeClient::Error, "bridge down" }) do
+      get session_stream_path("pi:ses_123")
     end
     assert_response :success
     assert_equal "", response.body

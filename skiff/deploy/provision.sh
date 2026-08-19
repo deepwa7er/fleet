@@ -14,15 +14,17 @@
 # restarts and health-checks, so the deploy transaction and rollback behave
 # exactly like every other service.
 #
-# The pi bridge (opencode-compatible API) is skiff's only data source. It
-# speaks HTTP to Rails over loopback on 127.0.0.1:4120. When skiff runs as a
-# container, the bridge stays on the host (not inside the container) — the
-# container reaches it via host.docker.internal (added via --add-host). The
-# bridge must be running and reachable or the UI renders the "opencode server
-# unreachable" state; the app boots cleanly either way (health is /up, which
-# does not require the bridge).
+# The skiff bridge (multi-harness: pi / muse / opencode) is skiff's only
+# data source. It speaks HTTP to Rails over loopback on 127.0.0.1:4120. When
+# skiff runs as a container, the bridge stays on the host (not inside the
+# container) — the container reaches it via host.docker.internal (added via
+# --add-host). The bridge must be running and reachable or the UI renders
+# the "skiff bridge unreachable" state; the app boots cleanly either way
+# (health is /up, which does not require the bridge). A harness binary the
+# host lacks degrades to a named error in the session list, never a dead
+# bridge.
 #
-# Secrets: the bridge password (OPENCODE_SERVER_PASSWORD) lives in
+# Secrets: the bridge password (SKIFF_BRIDGE_PASSWORD) lives in
 # ~/.config/skiff/secrets on the desktop and at /opt/skiff/bridge-secrets on
 # the VPS. The provision script does not require it — the unit starts without
 # it and the UI simply shows the unreachable state until it is placed. When
@@ -90,7 +92,7 @@ set -eu
 out="/run/skiff-bridge.env"
 rm -f "$out"
 # Bridge URL: the container reaches the host's bridge via host.docker.internal.
-echo "OPENCODE_SERVER_URL=http://host.docker.internal:4120" > "$out"
+echo "SKIFF_BRIDGE_URL=http://host.docker.internal:4120" > "$out"
 # Password: first try the VPS path, then the desktop-path locations.
 for f in /opt/skiff/bridge-secrets "${HOME:-}/.config/skiff/secrets" /home/deepwater/.config/skiff/secrets; do
   if [ -f "$f" ]; then
@@ -100,8 +102,8 @@ for f in /opt/skiff/bridge-secrets "${HOME:-}/.config/skiff/secrets" /home/deepw
       esac
       key="${line%%=*}"
       val="${line#*=}"
-      if [ "$key" = "OPENCODE_SERVER_PASSWORD" ] && [ -n "$val" ]; then
-        echo "OPENCODE_SERVER_PASSWORD=$val" >> "$out"
+      if [ "$key" = "SKIFF_BRIDGE_PASSWORD" ] && [ -n "$val" ]; then
+        echo "SKIFF_BRIDGE_PASSWORD=$val" >> "$out"
         break
       fi
     done < "$f"
@@ -118,7 +120,7 @@ chmod 0755 /usr/local/bin/skiff-resolve-bridge
 echo "==> writing systemd unit"
 cat > /etc/systemd/system/${NAME}.service <<UNIT
 [Unit]
-Description=Skiff — phone web UI for the pi bridge (tailnet-only)
+Description=Skiff — phone web UI for the skiff bridge (tailnet-only)
 Documentation=https://github.com/deepwa7er/fleet
 After=network-online.target docker.service
 Requires=docker.service
@@ -146,11 +148,11 @@ EnvironmentFile=-/run/skiff-bridge.env
 # pass through unbuffered — breakwater's proxy is configured to preserve
 # X-Accel-Buffering: no-cache and to not buffer upstream SSE frames.
 #
-# The container reaches the host's pi bridge via host.docker.internal (added
-# below). Rails reads OPENCODE_SERVER_URL and OPENCODE_SERVER_PASSWORD from the
-# environment (see app/lib/opencode_client.rb); the initializer also reads
-# ~/.config/skiff/secrets when running outside Docker, but inside the container
-# the env vars are authoritative.
+# The container reaches the host's skiff bridge via host.docker.internal
+# (added below). Rails reads SKIFF_BRIDGE_URL and SKIFF_BRIDGE_PASSWORD from
+# the environment (see app/lib/bridge_client.rb); the initializer also reads
+# ~/.config/skiff/secrets when running outside Docker, but inside the
+# container the env vars are authoritative.
 #
 # Memory is the binding constraint on this box (2GB total, shared with the rest
 # of the fleet), so Puma runs a single worker and the container is capped. Left
@@ -167,8 +169,8 @@ ExecStart=/usr/bin/docker run --rm --name ${NAME} \\
   -e RAILS_ENV=production \\
   -e WEB_CONCURRENCY=1 \\
   -e RAILS_MAX_THREADS=5 \\
-  -e OPENCODE_SERVER_URL=\${OPENCODE_SERVER_URL} \\
-  -e OPENCODE_SERVER_PASSWORD=\${OPENCODE_SERVER_PASSWORD} \\
+  -e SKIFF_BRIDGE_URL=\${SKIFF_BRIDGE_URL} \\
+  -e SKIFF_BRIDGE_PASSWORD=\${SKIFF_BRIDGE_PASSWORD} \\
   -v ${APP_DIR}/master.key:/rails/config/master.key:ro \\
   --memory=350m \\
   --memory-swap=350m \\
@@ -191,6 +193,6 @@ echo "  2. breakwater route is generated via 'cargo run -p tugboat -- fleet gen'
 echo "  3. deploy breakwater   (ships the new route)"
 echo
 echo "The service will not start until an image tar exists at ${IMAGE_TAR}."
-echo "If the pi bridge is not yet on this host, the UI will boot but show"
-echo "“opencode server unreachable” until the bridge is installed and"
+echo "If the skiff bridge is not yet on this host, the UI will boot but show"
+echo "“skiff bridge unreachable” until the bridge is installed and"
 echo "reachable at 127.0.0.1:4120 on the host."

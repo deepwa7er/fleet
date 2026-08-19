@@ -8,7 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { createJsonlReader, PiProcess, PiPool } from "../lib/pi-rpc.js";
+import { PiProcess, PiPool } from "../lib/pi-rpc.js";
+import { createJsonlReader } from "../lib/jsonl.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FAKE_PI = path.join(HERE, "fixtures", "fake-pi.mjs");

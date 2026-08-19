@@ -1,0 +1,28 @@
+# systemd user unit for the headless opencode server the skiff bridge's
+# opencode harness talks to (bridge/lib/opencode-harness.js).
+#
+# opencode is itself a session server, so unlike pi and muse it runs as its
+# own long-lived process rather than being spawned per session by the bridge.
+# It binds loopback only — the bridge is its sole consumer — on port 4130,
+# the bridge's OPENCODE_SERVE_URL default. The working directory is the
+# projects directory (~/code, the same convention as the bridge's default
+# cwd): opencode roots new sessions at its own cwd.
+#
+# Installed by deploy/install-desktop.sh alongside skiff-bridge.service. If
+# opencode is not installed on a host, simply don't enable this unit — the
+# bridge reports the opencode harness unreachable in the session list and the
+# other harnesses are unaffected.
+[Unit]
+Description=opencode serve (skiff's opencode harness, 127.0.0.1:4130)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=%h/code
+ExecStart=%h/.opencode/bin/opencode serve --hostname 127.0.0.1 --port 4130
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
