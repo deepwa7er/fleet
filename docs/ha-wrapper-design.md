@@ -208,6 +208,78 @@ Consequence: the fleet's own Rust services are immediately eligible; Once apps
 - **Quarantine retention.** Keep the last N=5 quarantined snapshots per
   service, surfaced in lighthouse; manual cleanup.
 
+## Migration plan
+
+How the fleet moves from today's single-instance deployments onto the wrapper,
+decided in a second interview on 2026-08-18.
+
+### No clone environment — the migration is the wrapper's own phased rollout
+
+A parallel staging environment was considered and rejected for two reasons.
+First, a clone on the same four machines cannot test the failure that matters
+— killing a box to drill staging failover kills the production services
+sharing that box. Second, the wrapper already contains the thing a clone is
+for: **shadow mode**. Step 2's replication-without-failover means a live
+service can be enrolled observation-only — standbys replicate real production
+state on other machines while the serving path stays byte-for-byte what it is
+today — and nothing changes until failover is armed per service.
+
+Each service therefore migrates **in place**: enroll in shadow mode → soak →
+arm. There is no second instance, no test hostname, no state copy beyond the
+wrapper's own snapshot bootstrap, and no re-migration at a flip.
+
+### Graduation — the go/no-go gate per service
+
+Automatic failover is armed on a service only after three gates pass, read
+off recorded data rather than memory:
+
+1. **Replica fidelity** — periodic checksum of the standby database against a
+   primary snapshot matches throughout the soak window.
+2. **Drills** — N forced-failover drills for this service class have passed in
+   the proving ground (see *tabled* below).
+3. **Soak** — a soak period (default: one week) with replication lag staying
+   inside the RPO budget.
+
+### Rollback — disarm, forever
+
+With in-place migration there is no "old instance" to keep or phase out: the
+existing deployment *becomes* the primary. Rollback is disarming failover,
+returning the service to exactly today's behavior, and it remains a
+one-command escape hatch permanently. Consequently there is no retention
+window to manage — and once the last service migrates, the legacy code paths
+(singular `host`, hardcoded loopback routes in `fleet gen`) are **deleted**,
+not kept for compatibility, per fleet doctrine.
+
+### Enrollment order — lowest stakes first
+
+Services enroll in ascending order of how much their loss would hurt. The
+enrollment friction gets shaken out on services that cannot hurt; the most
+valuable service enrolls last, against the wrapper's longest track record.
+
+### Drills after arming — opportunistic + periodic
+
+The desktop and Mac go down naturally all the time; every such event gets a
+post-mortem glance in lighthouse (did promotion fire? lag at failover? any
+quarantine?). Because the always-on VPS↔laptop pair rarely fails naturally,
+one deliberate planned failover of one service runs on a slow cadence
+(quarterly) so that path cannot rot silently.
+
+### Tracking — lighthouse surfaces it
+
+The wrapper reports per-service migration state (shadow / soaking / armed),
+replication lag, fidelity-check results, and drill outcomes into lighthouse,
+the fleet's existing observation pane. Graduation decisions read this
+recorded history. Build-order consequence: **step 2 includes the
+wrapper→lighthouse reporting path**, since soak evidence must exist before
+the first service can graduate.
+
+### Tabled — the proving ground
+
+Where the machinery itself gets drilled before any real service touches it
+(simulated fleet in containers, toy service on real machines, or straight to
+a low-stakes service) is **deliberately undecided**. It must be settled
+before step 2 lands, and nothing earlier depends on it.
+
 ## Build order
 
 Each step lands as its own card + PR per the fleet workflow and is useful on
@@ -217,6 +289,8 @@ its own. **None of these are started.**
    to end, proven on a stateless service. No harbormaster yet.
 2. **wake: WAL shipping + warm standby** — replication without failover;
    verify replica fidelity at leisure; cross-machine durability for free.
+   Includes the wrapper→lighthouse reporting path (lag, fidelity, state),
+   which the migration plan's graduation gates depend on.
 3. **harbormaster + automatic failover** — leases, promotion, watch stream,
    fencing, quarantine/rejoin. The wrapper is real at the end of this step.
 
