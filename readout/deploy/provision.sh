@@ -176,13 +176,14 @@ RestartSec=3
 # tugboat ships a new image tar and restarts this unit; loading on every start
 # is what makes the restart pick up the new build. Loading an already-present
 # image is a fast no-op, so this costs nothing on an ordinary restart.
-# Podman on the build host prefixes short tags with `localhost/`; the tar
-# therefore loads as `localhost/readout:deploy` on the VPS. Normalize it so the
-# unit's `docker run readout:deploy` finds the image regardless of which runtime
-# built it.
+# tugboat normalizes podman archives before shipping (RepoTags lose their
+# `localhost/` prefix — see tugboat/src/deploy.rs), so the tar always loads
+# as `readout:deploy` directly. The unit must NOT re-tag from
+# `localhost/readout:deploy`: a stale localhost tag left by a pre-normalization
+# deploy would clobber the freshly loaded image on every start (this silently
+# pinned skiff to an old image on 2026-08-19).
 ExecStartPre=-/usr/bin/docker rm -f ${NAME}
 ExecStartPre=/usr/bin/docker load -i ${IMAGE_TAR}
-ExecStartPre=-/usr/bin/docker tag localhost/${NAME}:deploy ${IMAGE_TAG}
 ExecStartPre=/bin/sh -c '/usr/local/bin/readout-resolve-runners > /run/readout-runners.env'
 EnvironmentFile=-/run/readout-runners.env
 
