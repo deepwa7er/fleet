@@ -18,6 +18,7 @@ import { createBridge } from "../server.js";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(HERE, "fixtures");
 const FAKE_PI = path.join(FIXTURES, "fake-pi.mjs");
+const FAKE_MUSE = path.join(FIXTURES, "fake-muse.mjs");
 const PASSWORD = "test-password";
 const PROMPT_TEXT = "hello stream hello stream hello stream hello stream";
 
@@ -37,10 +38,10 @@ before(async () => {
     password: PASSWORD,
     host: "127.0.0.1",
     port: 0,
-    sessionDir: tmp,
-    binary: FAKE_PI,
     defaultCwd: tmp,
-    maxProcesses: 8,
+    pi: { sessionDir: tmp, binary: FAKE_PI, maxProcesses: 8 },
+    muse: { sessionDir: path.join(tmp, "muse", "sessions"), binary: FAKE_MUSE },
+    opencode: { url: "http://127.0.0.1:1" },
   });
   await bridge.listen();
   base = `http://127.0.0.1:${bridge.port()}`;
@@ -52,7 +53,7 @@ after(async () => {
   await fs.rm(tmp, { recursive: true, force: true });
 });
 
-const AUTH = "Basic " + Buffer.from(`opencode:${PASSWORD}`).toString("base64");
+const AUTH = "Basic " + Buffer.from(`skiff:${PASSWORD}`).toString("base64");
 
 function get(p, { auth = true } = {}) {
   return fetch(base + p, { headers: auth ? { Authorization: AUTH } : {} });
@@ -147,12 +148,21 @@ function snapshot(frame) {
 // A fresh session via the create flow: the process is registered with a
 // session file path that does not exist until the first message persists it.
 async function createSession(title = "stream test") {
-  const response = await post("/session", { title });
+  const response = await post("/session", { harness: "pi", title });
   assert.equal(response.status, 201);
   const { id } = await response.json();
-  const proc = bridge.pool.getById(id);
+  const proc = piPool().getById(id.slice("pi:".length));
   assert.ok(proc, "created session must have a registered process");
   return { id, file: proc.sessionFile };
+}
+
+function piPool() {
+  return bridge.harnesses.get("pi").pool;
+}
+
+// The registry is keyed by wire session ids.
+function streamKey(file) {
+  return "pi:" + path.basename(file, ".jsonl");
 }
 
 // --- tests ------------------------------------------------------------------
@@ -167,7 +177,7 @@ describe("stream endpoint", () => {
   });
 
   it("sends a snapshot of the file transcript on connect", async () => {
-    const stream = await openStream("branched");
+    const stream = await openStream("pi:branched");
     const first = await stream.next((f) => f.event === "snapshot");
     const payload = snapshot(first);
 
@@ -205,9 +215,12 @@ describe("stream endpoint", () => {
     const workingOn = await stream.next((f) => f.event === "working" && f.data.working === true);
     assert.equal(workingOn.data.working, true);
 
-    // The in-flight overlay: coalesced replaces at the pending index,
-    // streaming under the <pending> id with no completion time.
-    const firstGrow = await stream.next((f) => f.event === "replace" && f.data.entry.info.id === "<pending>");
+    // The in-flight overlay streams under the <pending> id with no
+    // completion time: the first render is an append (the view holds no
+    // bubble yet), later coalesced flushes replace it in place.
+    const firstGrow = await stream.next(
+      (f) => (f.event === "append" || f.event === "replace") && f.data.entry.info.id === "<pending>"
+    );
     assert.equal(firstGrow.data.entry.info.time.completed, undefined);
 
     // Resolution: the persisted entry replaces the overlay in place (same
@@ -243,7 +256,9 @@ describe("stream endpoint", () => {
 
     // Wait until the overlay is visibly streaming (a delta flush landed),
     // remember its index, then abort.
-    const streaming = await stream.next((f) => f.event === "replace" && f.data.entry.info.id === "<pending>");
+    const streaming = await stream.next(
+      (f) => (f.event === "append" || f.event === "replace") && f.data.entry.info.id === "<pending>"
+    );
     const pendingIndex = streaming.data.index;
 
     const abort = await post(`/session/${id}/abort`);
@@ -297,7 +312,7 @@ describe("stream endpoint", () => {
   });
 
   it("rebroadcasts a snapshot after a compaction rewrite", async () => {
-    const stream = await openStream("multi-turn");
+    const stream = await openStream("pi:multi-turn");
     await stream.next((f) => f.event === "snapshot");
 
     // Simulate compaction: the file is rewritten with a summary. A shrink
@@ -345,7 +360,7 @@ describe("stream endpoint", () => {
   it("re-pins the overlay where the snapshot renders it when the pipe beats the watcher", async () => {
     const { id } = await createSession();
     const stream = await openStream(id);
-    const proc = bridge.pool.getById(id);
+    const proc = piPool().getById(id.slice("pi:".length));
 
     // The pipe wins the race: the assistant message starts before the file
     // watcher delivers the unborn file, so the overlay's index is stale (0)
@@ -413,9 +428,9 @@ describe("stream endpoint", () => {
         f.data.entry.info.id !== "<pending>"
     );
 
-    assert.equal(bridge.registry.hasSubscribers(file), true);
+    assert.equal(bridge.registry.hasSubscribers(streamKey(file)), true);
     await stream.close();
-    assert.equal(bridge.registry.hasSubscribers(file), false);
+    assert.equal(bridge.registry.hasSubscribers(streamKey(file)), false);
 
     // A new subscriber starts fresh with a full snapshot.
     const again = await openStream(id);

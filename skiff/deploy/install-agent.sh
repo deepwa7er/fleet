@@ -10,7 +10,7 @@
 # this installer must never pick up the Linux wrapper, which omits the mise
 # resolution the macOS launchd PATH needs.
 #
-# The wrapper is installed to ~/.config/skiff/ — same home as the pi bridge
+# The wrapper is installed to ~/.config/skiff/ — same home as the skiff bridge
 # wrapper and the shared secrets file — and the plist references that
 # INSTALLED wrapper path, not the repo's deploy/ copy, so the agent keeps
 # working however the repo moves around.

@@ -1,22 +1,25 @@
 require "json"
 require "net/http"
 
-# Thin, stateless HTTP client for the headless opencode server.
+# Thin, stateless HTTP client for the skiff bridge (bridge/server.js) — the
+# multi-harness backend that serves pi, muse, and opencode sessions behind
+# one API. Session ids on the wire are harness-qualified ("pi:…", "muse:…",
+# "opencode:…"); this client passes them through verbatim.
 #
-# DW-001 §8 discipline: this client exists so the rest of the app never touches
-# Net::HTTP or the server's JSON shapes directly, and so every failure — a bad
-# status, a dropped connection, unparseable JSON — surfaces as the single
-# OpencodeClient::Error. It is stateless: every call opens its own connection,
-# which is why configuration is read from ENV at call time rather than frozen
-# at class load (tests override OPENCODE_SERVER_PASSWORD directly). It never
-# retries and never logs the password or request bodies.
-class OpencodeClient
+# DW-001 §8 discipline: this client exists so the rest of the app never
+# touches Net::HTTP or the bridge's JSON shapes directly, and so every
+# failure — a bad status, a dropped connection, unparseable JSON — surfaces
+# as the single BridgeClient::Error. It is stateless: every call opens its
+# own connection, which is why configuration is read from ENV at call time
+# rather than frozen at class load (tests override SKIFF_BRIDGE_PASSWORD
+# directly). It never retries and never logs the password or request bodies.
+class BridgeClient
   # Raised for every client failure. The message always starts
-  # "opencode server unreachable: <cause>" so logs and pages can treat all
+  # "skiff bridge unreachable: <cause>" so logs and pages can treat all
   # failures uniformly.
   class Error < StandardError; end
 
-  USERNAME = "opencode"
+  USERNAME = "skiff"
   DEFAULT_BASE_URL = "http://127.0.0.1:4120"
   OPEN_TIMEOUT = 5
   READ_TIMEOUT = 15
@@ -26,6 +29,10 @@ class OpencodeClient
       get("/global/health")
     end
 
+    # Returns { sessions: [...], errors: { harness => message } }: the merged
+    # list across every harness, plus per-harness failures (an unreachable
+    # opencode serve, say) so the page can show the gap instead of silently
+    # dropping those sessions.
     def sessions
       get("/session")
     end
@@ -43,18 +50,16 @@ class OpencodeClient
       post("/session/#{id}/prompt_async", { parts: [ { type: "text", text: text } ] })
     end
 
-    # Toggle the orchestrator extension's mode for one session. This endpoint
-    # is bridge-specific (not part of the opencode contract): the bridge
-    # drives the session's live pi process through its /orchestrator command,
-    # and the extension persists the mode into the session file.
+    # Toggle the orchestrator extension's mode for one session. pi-only: the
+    # bridge rejects the toggle for any other harness, and the view never
+    # renders the control without the capability.
     def orchestrator(id, on)
       post("/session/#{id}/orchestrator", { on: on })
     end
 
-    # Set the session display name. Bridge-specific (like orchestrator): the
-    # bridge drives the session's live pi process through its set_session_name
-    # command, and pi persists the name as a session_info entry in the
-    # session file, so the next session fetch serves the new title.
+    # Set the session display name. Available where the session's harness has
+    # a rename surface (capabilities.rename): pi persists a session_info
+    # entry, opencode PATCHes the session; muse names its own sessions.
     def rename_session(id, name)
       post("/session/#{id}/name", { name: name })
     end
@@ -63,8 +68,8 @@ class OpencodeClient
       post("/session/#{id}/abort", nil)
     end
 
-    def create_session(title: nil)
-      post("/session", { title: title }.compact)
+    def create_session(harness:, title: nil)
+      post("/session", { harness: harness, title: title }.compact)
     end
 
     # Open the session's SSE stream and yield each body chunk as it arrives.
@@ -83,10 +88,10 @@ class OpencodeClient
         response.read_body { |chunk| yield chunk }
       end
     rescue JSON::ParserError => e
-      raise Error, "opencode server unreachable: invalid JSON response: #{e.message}"
+      raise Error, "skiff bridge unreachable: invalid JSON response: #{e.message}"
     rescue Net::OpenTimeout, Net::ReadTimeout, Errno::ECONNREFUSED, Errno::ECONNRESET,
            SocketError, EOFError => e
-      raise Error, "opencode server unreachable: #{e.message}"
+      raise Error, "skiff bridge unreachable: #{e.message}"
     end
 
     private
@@ -110,10 +115,10 @@ class OpencodeClient
       raise_for_status(response)
       parse_body(response.body)
     rescue JSON::ParserError => e
-      raise Error, "opencode server unreachable: invalid JSON response: #{e.message}"
+      raise Error, "skiff bridge unreachable: invalid JSON response: #{e.message}"
     rescue Net::OpenTimeout, Net::ReadTimeout, Errno::ECONNREFUSED, Errno::ECONNRESET,
            SocketError, EOFError => e
-      raise Error, "opencode server unreachable: #{e.message}"
+      raise Error, "skiff bridge unreachable: #{e.message}"
     end
 
     def build_request(method, uri, body)
@@ -134,7 +139,7 @@ class OpencodeClient
       snippet = response.body.to_s.strip[0, 120]
       detail = "HTTP #{response.code}"
       detail += ": #{snippet}" unless snippet.empty?
-      raise Error, "opencode server unreachable: #{detail}"
+      raise Error, "skiff bridge unreachable: #{detail}"
     end
 
     # Deep-symbolized JSON; nil for empty bodies (e.g. a 204).
@@ -145,11 +150,11 @@ class OpencodeClient
     end
 
     def base_url
-      ENV["OPENCODE_SERVER_URL"] || DEFAULT_BASE_URL
+      ENV["SKIFF_BRIDGE_URL"] || DEFAULT_BASE_URL
     end
 
     def password
-      ENV["OPENCODE_SERVER_PASSWORD"].to_s
+      ENV["SKIFF_BRIDGE_PASSWORD"].to_s
     end
   end
 end

@@ -17,15 +17,18 @@
         toggle, no custom affordance), the summary reads as a small secondary
         key, and the form inside is a recess holding the name field and the
         save key. It lives outside the stream wrapper so a stream event can
-        never clobber it. %>
-    <details class="rename">
-      <summary class="button button--small button--secondary">Rename</summary>
-      <%= form_with url: rename_session_path(@session[:id]), class: "rename-form" do |form| %>
-        <%= form.label :name, "Session name" %>
-        <%= form.text_field :name, value: @session[:title], autocomplete: "off" %>
-        <button type="submit" class="button">Save name</button>
-      <% end %>
-    </details>
+        never clobber it. Rendered only where the session's harness has a
+        rename surface (muse names its own sessions). %>
+    <% if @session.dig(:capabilities, :rename) %>
+      <details class="rename">
+        <summary class="button button--small button--secondary">Rename</summary>
+        <%= form_with url: rename_session_path(@session[:id]), class: "rename-form" do |form| %>
+          <%= form.label :name, "Session name" %>
+          <%= form.text_field :name, value: @session[:title], autocomplete: "off" %>
+          <button type="submit" class="button">Save name</button>
+        <% end %>
+      </details>
+    <% end %>
 
     <%# M4: status, orchestrator readout, and transcript under one stable
         wrapper that carries the stream wiring. Only #session-status,
@@ -41,11 +44,16 @@
     <div data-controller="stream chat-scroll user-jump" data-stream-url="<%= session_stream_path(@session[:id]) %>">
       <%= render "sessions/status", working: @working, session_id: @session[:id] %>
 
-      <%= render "sessions/orchestrator_readout", orchestrator_active: @orchestrator_active,
-                                                  orchestrator_widget: @orchestrator_widget,
-                                                  session_id: @session[:id] %>
+      <%# The orchestrator is a pi extension; other harnesses have no mode to
+          read out, so the element (and its stream target) only exists where
+          the capability does. %>
+      <% if @session.dig(:capabilities, :orchestrator) %>
+        <%= render "sessions/orchestrator_readout", orchestrator_active: @orchestrator_active,
+                                                    orchestrator_widget: @orchestrator_widget,
+                                                    session_id: @session[:id] %>
+      <% end %>
 
-      <%= render "sessions/transcript", messages: Array(@messages) %>
+      <%= render "sessions/transcript", messages: Array(@messages), harness: @session[:harness] %>
 
       <%# The jump keys (M4): two small physical keys that hop the reader
           between the reader's own messages. Hidden by default — the
@@ -71,7 +79,7 @@
     <textarea
       name="message"
       rows="1"
-      placeholder="Message opencode…"
+      placeholder="Message <%= @session[:harness] %>…"
       aria-label="Message"
       autocomplete="off"
       data-composer-target="input"

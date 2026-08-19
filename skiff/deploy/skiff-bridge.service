@@ -1,25 +1,25 @@
-# systemd user unit for the persistent pi bridge (opencode-compatible API)
-# that skiff (the phone web UI) talks to.
+# systemd user unit for the persistent skiff bridge (multi-harness: pi /
+# muse / opencode) that skiff (the phone web UI) talks to.
 #
 # Template: deploy/install-desktop.sh installs this as-is to
 # ~/.config/systemd/user/ — there are no __SKIFF_DIR__ placeholders in the
 # unit itself (the wrapper's __SKIFF_DIR__ is substituted into the INSTALLED
 # wrapper at install time). ExecStart uses the systemd user specifier %h for
 # the home directory and references the INSTALLED wrapper
-# (~/.config/skiff/pi-bridge.sh), not the repo's deploy/ copy, so the unit
+# (~/.config/skiff/skiff-bridge.sh), not the repo's deploy/ copy, so the unit
 # keeps working however the repo moves around.
 #
-# Mirrors the macOS launchd agent that runs the pi bridge (installed
-# separately there, out of repo); on the desktop this unit is installed by the
-# same script as skiff.service.
+# Mirrors the macOS launchd agent that runs the bridge (installed separately
+# there, out of repo); on the desktop this unit is installed by the same
+# script as skiff.service and opencode-serve.service.
 [Unit]
-Description=pi bridge (opencode-compatible API) for skiff (127.0.0.1:4120)
+Description=skiff bridge (pi / muse / opencode harnesses, 127.0.0.1:4120)
 After=network-online.target tailscaled.service
 Wants=network-online.target
 
 [Service]
 Type=exec
-ExecStart=%h/.config/skiff/pi-bridge.sh
+ExecStart=%h/.config/skiff/skiff-bridge.sh
 # Restart=always, not on-failure: the bridge's graceful shutdown exits 0, so a
 # stray external SIGTERM (e.g. signalling the wrong PID) looks like a clean
 # stop under on-failure and the unit stays dead — that killed the phone UI

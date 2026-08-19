@@ -5,25 +5,27 @@ module ApplicationHelper
     session[:title].presence || "Untitled session"
   end
 
-  # One instrumentation line per session, facts joined with · — e.g.
-  # "2h · code/blog · deepseek-v4-flash". Each fact is skipped cleanly when
-  # absent, so a session without a model or with an empty title never renders
-  # dangling separators.
+  # One instrumentation line per session, harness first, facts joined with ·
+  # — e.g. "pi · 2h · code/blog · deepseek-v4-flash". Each fact is skipped
+  # cleanly when absent, so a session without a model or with an empty title
+  # never renders dangling separators.
   def session_instrumentation(session)
     [
+      session[:harness],
       relative_activity(session[:time]),
       directory_basename(session[:directory]),
       session.dig(:model, :id)
     ].compact.join(" · ")
   end
 
-  # The show-page readout for one session, model first: "model · directory ·
-  # activity". Reuses the same per-fact helpers as session_instrumentation but
-  # leads with the model, per the M3 spec. Each fact is skipped cleanly when
-  # absent, so a session without a model or directory never renders dangling
-  # separators.
+  # The show-page readout for one session, harness then model: "pi · model ·
+  # directory · activity". Reuses the same per-fact helpers as
+  # session_instrumentation but leads with the harness and model, per the M3
+  # spec. Each fact is skipped cleanly when absent, so a session without a
+  # model or directory never renders dangling separators.
   def session_detail_instrumentation(session)
     [
+      session[:harness],
       session.dig(:model, :id),
       directory_basename(session[:directory]),
       relative_activity(session[:time])

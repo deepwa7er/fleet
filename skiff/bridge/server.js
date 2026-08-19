@@ -1,82 +1,70 @@
 // bridge/server.js
-// Zero-dependency HTTP bridge: skiff's client speaks opencode's HTTP API, and
-// this server answers it from pi's session files and live RPC processes.
+// Zero-dependency HTTP bridge: skiff's client speaks one JSON API, and this
+// server answers it from whichever coding-agent harness owns the session —
+// pi (lib/pi-harness.js), Meta's Muse Code (lib/muse-harness.js), or a
+// headless opencode serve (lib/opencode-harness.js).
 //
-// Composition model: the session store (lib/session-store.js) is a pure,
-// file-based reader; the pool (lib/pi-rpc.js) owns the live pi processes and
-// their streaming state. This file is the wiring: routes, auth, and the two
-// places process state must be composed with file state —
-//   1. the streaming overlay (an in-flight assistant message has no file
-//      entry yet, so it is appended to the message list from the pool), and
-//   2. newborn sessions (real pi creates NO file at new_session time; the
-//      file appears only when the first message is persisted, so until then
-//      the session object is served from the registered process).
+// Composition model: this file is routing, auth, and body handling only.
+// Session ids on the wire are harness-qualified ("pi:…", "muse:…",
+// "opencode:…" — lib/ids.js); each harness serves its own sessions behind
+// one interface (list/get/messages/create/prompt/abort/… plus a stream
+// driver for the generic registry in lib/stream-registry.js), and declares
+// capabilities — rename and the orchestrator toggle exist only where the
+// harness supports them, and unsupported operations are rejected loudly, not
+// silently dropped.
 //
 // Security posture: every response is JSON, every error is {"error": ...},
 // and prompt text and the password never reach logs or error surfaces
 // (prompt payloads are parsed and forwarded, not echoed).
 
 import http from "node:http";
-import path from "node:path";
 import os from "node:os";
-import fs from "node:fs";
+import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { pathToFileURL } from "node:url";
-import {
-  defaultSessionDir,
-  resolveSessionFile,
-  readSessionFile,
-  buildSessionObject,
-  mapMessages,
-  listSessions,
-} from "./lib/session-store.js";
-import { PiPool, PiError } from "./lib/pi-rpc.js";
+import { HttpError } from "./lib/errors.js";
+import { formatSessionId, parseSessionId } from "./lib/ids.js";
 import { createStreamRegistry } from "./lib/stream-registry.js";
+import { createPiHarness } from "./lib/pi-harness.js";
+import { createMuseHarness } from "./lib/muse-harness.js";
+import { createOpencodeHarness } from "./lib/opencode-harness.js";
 
-const AUTH_USERNAME = "opencode";
+const AUTH_USERNAME = "skiff";
 const BODY_LIMIT_BYTES = 1 << 20; // 1 MiB — title and prompt bodies are tiny
-const CREATE_READY_TIMEOUT_MS = 15000;
-const CREATE_READY_POLL_MS = 100;
-
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
 
 export function createBridge(config) {
   const ctx = {
-    password: config.password ?? process.env.OPENCODE_SERVER_PASSWORD,
-    host: config.host ?? process.env.PI_BRIDGE_HOST ?? "127.0.0.1",
-    port: config.port ?? Number(process.env.PI_BRIDGE_PORT ?? 4120),
-    sessionDir: config.sessionDir ?? defaultSessionDir(),
-    defaultCwd: config.defaultCwd ?? expandHome(process.env.PI_BRIDGE_CWD ?? "~/code"),
-    binary: resolvePiBinary(config.binary ?? process.env.PI_BINARY),
-    maxProcesses: config.maxProcesses ?? Number(process.env.PI_BRIDGE_MAX_PROCESSES ?? 8),
+    password: config.password ?? process.env.SKIFF_BRIDGE_PASSWORD,
+    host: config.host ?? process.env.SKIFF_BRIDGE_HOST ?? "127.0.0.1",
+    port: config.port ?? Number(process.env.SKIFF_BRIDGE_PORT ?? 4120),
+    defaultCwd: config.defaultCwd ?? expandHome(process.env.SKIFF_BRIDGE_CWD ?? "~/code"),
   };
   // A bridge without auth would expose every session file on the LAN, so the
   // password is a hard boot requirement, not a default.
   if (!ctx.password || ctx.password === "") {
     throw new Error(
-      "skiff-pi-bridge: OPENCODE_SERVER_PASSWORD must be set to the password skiff's opencode client uses."
+      "skiff-bridge: SKIFF_BRIDGE_PASSWORD must be set to the password skiff's bridge client uses."
     );
   }
-  ctx.pool = new PiPool({
-    binary: ctx.binary,
-    sessionDir: ctx.sessionDir,
-    sessionDirExplicit: config.sessionDirExplicit ?? envIsSet("PI_SESSION_DIR"),
-    defaultCwd: ctx.defaultCwd,
-    maxProcesses: ctx.maxProcesses,
-  });
-  // The stream registry is the push counterpart of the poll endpoints: it
-  // holds per-session live state (transcript, overlay, orchestrator readout)
-  // and fans it out over SSE. Wiring: the pool's processEvent hook feeds it
-  // pi's live events, and isPinned keeps a subscribed session's process from
-  // being LRU-evicted out from under its own stream.
-  ctx.registry = createStreamRegistry({ pool: ctx.pool, sessionDir: ctx.sessionDir });
-  ctx.pool.processEvent = (proc, event) => ctx.registry.onProcessEvent(proc, event);
-  ctx.pool.isPinned = (sessionFile) => ctx.registry.hasSubscribers(sessionFile);
+  ctx.registry = createStreamRegistry();
+  ctx.harnesses = new Map();
+  for (const [name, create] of [
+    ["pi", () => createPiHarness(config.pi ?? {}, { registry: ctx.registry, defaultCwd: ctx.defaultCwd })],
+    ["muse", () => createMuseHarness(config.muse ?? {}, { defaultCwd: ctx.defaultCwd })],
+    ["opencode", () => createOpencodeHarness(config.opencode ?? {})],
+  ]) {
+    // A host missing one harness (no muse on the Mac, say) must not lose the
+    // other two: the harness degrades to a stub that lists nothing, reports
+    // itself in the session list's errors map, and answers every operation
+    // with the boot failure — visible, never silent.
+    try {
+      const harness = create();
+      ctx.harnesses.set(harness.name, harness);
+    } catch (err) {
+      console.error(`skiff-bridge: ${name} harness unavailable: ${err.message}`);
+      ctx.harnesses.set(name, createUnavailableHarness(name, err.message));
+    }
+  }
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -91,7 +79,7 @@ export function createBridge(config) {
 
   return {
     server,
-    pool: ctx.pool,
+    harnesses: ctx.harnesses,
     registry: ctx.registry,
     config: ctx,
     port() {
@@ -102,9 +90,40 @@ export function createBridge(config) {
     },
     close() {
       ctx.registry.close();
-      ctx.pool.shutdown();
+      for (const harness of ctx.harnesses.values()) harness.shutdown();
       return new Promise((resolve) => server.close(resolve));
     },
+  };
+}
+
+// A harness that failed to construct (its binary is not installed on this
+// host). Sessions from it cannot exist, so gets answer null (404) and the
+// list reports the reason; anything that would drive it fails with the boot
+// error.
+function createUnavailableHarness(name, message) {
+  const fail = () => {
+    throw new HttpError(502, `${name} harness unavailable: ${message}`);
+  };
+  return {
+    name,
+    capabilities: { rename: false, orchestrator: false },
+    async listSessions() {
+      throw new Error(message);
+    },
+    async getSession() {
+      return null;
+    },
+    async getMessages() {
+      return null;
+    },
+    createSession: fail,
+    promptAsync: fail,
+    abort: fail,
+    busyLocalIds: () => [],
+    async resolveStreamDriver() {
+      return null;
+    },
+    shutdown() {},
   };
 }
 
@@ -114,43 +133,6 @@ function expandHome(p) {
   if (p === "~") return os.homedir();
   if (p.startsWith("~/")) return path.join(os.homedir(), p.slice(2));
   return p;
-}
-
-function envIsSet(name) {
-  const value = process.env[name];
-  return typeof value === "string" && value.trim() !== "";
-}
-
-// The pi executable, resolved to an absolute path at boot.
-//
-// Why not just "pi"? The bridge runs under systemd user units (and launchd
-// on the Mac), whose PATHs do not include ~/.local/bin — where pi is actually
-// installed on the desktop. A command name that only resolves for interactive
-// shells would fail intermittently on the first prompt, so resolution happens
-// once at boot: PATH first, then the home-relative locations that match where
-// pi installs itself. An explicit PI_BINARY is honored as-is when it carries a
-// path; a bare name from PI_BINARY goes through the same search. Failing to
-// find pi is a boot error, like a missing password — a bridge that cannot
-// prompt is not a bridge.
-function resolvePiBinary(explicit) {
-  const candidates =
-    explicit && explicit.trim() !== ""
-      ? [explicit]
-      : ["pi", path.join(os.homedir(), ".local", "bin", "pi"), path.join(os.homedir(), "bin", "pi")];
-  for (const candidate of candidates) {
-    if (candidate.includes("/")) {
-      if (fs.existsSync(candidate)) return path.resolve(candidate);
-      continue;
-    }
-    for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
-      if (dir === "") continue;
-      const resolved = path.join(dir, candidate);
-      if (fs.existsSync(resolved)) return resolved;
-    }
-  }
-  throw new Error(
-    `skiff-pi-bridge: pi executable not found (tried: ${candidates.join(", ")}); set PI_BINARY to its absolute path`
-  );
 }
 
 // Constant-time comparison: this is a localhost bridge, but password checks
@@ -211,56 +193,27 @@ async function readJsonBody(req) {
   }
 }
 
-// --- Session resolution -----------------------------------------------------
+// --- Dispatch ---------------------------------------------------------------
 
-// A session target is either a parseable file (the normal case) or a live
-// pool process whose file has not been written yet (newborn session). Both
-// are first-class: skiff redirects straight to a freshly created session, so
-// it must be readable before its first message persists it.
-async function resolveSessionTarget(ctx, id) {
-  const file = await resolveSessionFile(ctx.sessionDir, id);
-  if (file) {
-    const parsed = await readSessionFile(file);
-    if (parsed) return { kind: "file", file, parsed };
-    return null; // a file that is not a session is an unknown id
-  }
-  const proc = ctx.pool.getById(id);
-  if (proc) return { kind: "proc", proc };
-  return null;
+// A wire session id resolves to its harness and the harness's own local id;
+// an unknown prefix (or an unprefixed id) is an unknown session, full stop.
+function resolveHarness(ctx, id) {
+  const parsed = parseSessionId(id);
+  const harness = parsed ? ctx.harnesses.get(parsed.harness) : null;
+  if (!harness) throw new HttpError(404, `session ${id} not found`);
+  return { harness, localId: parsed.localId };
 }
 
-// The session object for a newborn session (no file yet): id from the file
-// path pi chose, title from the name the create flow set, directory from the
-// process cwd, and the pool's bookkeeping for times. Model is null until the
-// first message brings a model_change entry. Orchestrator mode is whatever
-// the live process last recorded: pi buffers the toggle's custom entry in
-// memory until the first assistant message persists the file, so the
-// process's entry_appended record is the only one in the newborn window.
-function newbornSessionObject(proc) {
+// Tag a harness-local session object for the wire: prefixed id, the harness
+// name, and its capabilities, so skiff renders exactly the controls the
+// session's harness supports.
+function tagSession(harness, session) {
   return {
-    id: path.basename(proc.sessionFile, ".jsonl"),
-    title: proc.sessionName ?? null,
-    directory: proc.cwd,
-    time: { created: proc.createdAt, updated: proc.lastActivity },
-    model: null,
-    orchestrator: { active: proc.lastOrchestratorActive ?? false },
+    ...session,
+    id: formatSessionId(harness.name, session.id),
+    harness: harness.name,
+    capabilities: harness.capabilities,
   };
-}
-
-// Merge the live orchestrator readout into a session object. The mode tag's
-// record comes from the session file (or the process in the newborn window);
-// the plan/worker readout exists only in the live process — the extension
-// publishes it fire-and-forget (setWidget/setStatus), and the bridge keeps
-// the last publication per process. The widget/status fields are present
-// only while the process holds one: cleared publications (mode off, idle)
-// drop them, and a file session with no live process simply has no readout.
-function withLiveOrchestrator(session, proc) {
-  if (!proc) return session;
-  if (proc.lastOrchestratorWidget === null && proc.lastOrchestratorStatus === null) return session;
-  const orchestrator = { ...(session.orchestrator ?? {}) };
-  if (proc.lastOrchestratorWidget !== null) orchestrator.widget = proc.lastOrchestratorWidget;
-  if (proc.lastOrchestratorStatus !== null) orchestrator.status = proc.lastOrchestratorStatus;
-  return { ...session, orchestrator };
 }
 
 // --- Routes -----------------------------------------------------------------
@@ -284,7 +237,7 @@ async function handle(req, res, ctx) {
     return handleStatus(res, ctx);
   }
   if (req.method === "GET" && parts.length === 2 && parts[0] === "session") {
-    return handleSessionShow(req, res, ctx, parts[1]);
+    return handleSessionShow(res, ctx, parts[1]);
   }
   if (req.method === "GET" && parts.length === 3 && parts[0] === "session" && parts[2] === "message") {
     return handleSessionMessages(res, ctx, parts[1]);
@@ -302,50 +255,57 @@ async function handle(req, res, ctx) {
     return handleSessionRename(req, res, ctx, parts[1]);
   }
   if (req.method === "POST" && parts.length === 3 && parts[0] === "session" && parts[2] === "abort") {
-    return handleAbort(req, res, ctx, parts[1]);
+    return handleAbort(res, ctx, parts[1]);
   }
   return sendJson(res, 404, { error: "not found" });
 }
 
+// GET /session — every harness's sessions in one list, newest first. A
+// harness that cannot answer (opencode serve down, an unreadable session
+// dir) is reported in `errors` by name rather than silently vanishing —
+// skiff shows the gap instead of pretending those sessions do not exist.
 async function handleSessionList(res, ctx) {
-  const sessions = await listSessions(ctx.sessionDir);
-  // Newborn sessions have no file, so they are invisible to the file scan;
-  // fold in pool processes whose file has not appeared yet. The file version
-  // wins once it exists, so the same session can never be listed twice.
-  const ids = new Set(sessions.map((s) => s.id));
-  for (const proc of ctx.pool.processes.values()) {
-    if (!proc.sessionFile) continue;
-    const id = path.basename(proc.sessionFile, ".jsonl");
-    if (!ids.has(id)) {
-      sessions.push(newbornSessionObject(proc));
-      ids.add(id);
-    }
-  }
+  const sessions = [];
+  const errors = {};
+  await Promise.all(
+    [...ctx.harnesses.values()].map(async (harness) => {
+      try {
+        for (const session of await harness.listSessions()) {
+          sessions.push(tagSession(harness, session));
+        }
+      } catch (err) {
+        errors[harness.name] = err.message;
+      }
+    })
+  );
   sessions.sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
-  return sendJson(res, 200, sessions);
+  return sendJson(res, 200, { sessions, errors });
 }
 
-async function handleSessionShow(req, res, ctx, id) {
-  const target = await resolveSessionTarget(ctx, id);
-  if (!target) return sendJson(res, 404, { error: `session ${id} not found` });
-  if (target.kind === "proc") {
-    return sendJson(res, 200, withLiveOrchestrator(newbornSessionObject(target.proc), target.proc));
+async function handleSessionCreate(req, res, ctx) {
+  const body = await readJsonBody(req);
+  const harness = ctx.harnesses.get(body?.harness);
+  if (!harness) {
+    return sendJson(res, 400, {
+      error: `create requires a "harness" field naming one of: ${[...ctx.harnesses.keys()].join(", ")}`,
+    });
   }
-  const proc = ctx.pool.getByFile(target.file);
-  return sendJson(res, 200, withLiveOrchestrator(buildSessionObject(target.file, target.parsed), proc));
+  const title = typeof body?.title === "string" && body.title.trim() !== "" ? body.title : "New session";
+  const localId = await harness.createSession({ title });
+  return sendJson(res, 201, { id: formatSessionId(harness.name, localId) });
+}
+
+async function handleSessionShow(res, ctx, id) {
+  const { harness, localId } = resolveHarness(ctx, id);
+  const session = await harness.getSession(localId);
+  if (!session) return sendJson(res, 404, { error: `session ${id} not found` });
+  return sendJson(res, 200, tagSession(harness, session));
 }
 
 async function handleSessionMessages(res, ctx, id) {
-  const target = await resolveSessionTarget(ctx, id);
-  if (!target) return sendJson(res, 404, { error: `session ${id} not found` });
-  const messages = target.kind === "file" ? mapMessages(target.parsed.entries) : [];
-  // Streaming overlay: while a live process for this session is mid-message,
-  // append the in-flight assistant message after the file-parsed ones. This
-  // is what lets the legacy poller show text growing (the stream endpoint
-  // serves the same overlay through the registry).
-  const proc = target.kind === "file" ? ctx.pool.getByFile(target.file) : target.proc;
-  const pending = proc?.getPendingMessage();
-  if (pending) messages.push(pending);
+  const { harness, localId } = resolveHarness(ctx, id);
+  const messages = await harness.getMessages(localId);
+  if (!messages) return sendJson(res, 404, { error: `session ${id} not found` });
   return sendJson(res, 200, messages);
 }
 
@@ -356,123 +316,17 @@ async function handleSessionMessages(res, ctx, id) {
 // registry once the session resolves, so an unknown id still gets a normal
 // 404.
 async function handleStream(res, ctx, id) {
-  const ok = await ctx.registry.subscribe(id, res);
+  const { harness, localId } = resolveHarness(ctx, id);
+  const ok = await ctx.registry.subscribe(id, res, () => harness.resolveStreamDriver(localId));
   if (!ok) return sendJson(res, 404, { error: `session ${id} not found` });
 }
 
-async function handleSessionCreate(req, res, ctx) {
-  const body = await readJsonBody(req);
-  const title = typeof body?.title === "string" && body.title.trim() !== "" ? body.title : "New session";
-
-  const proc = ctx.pool.spawnBare(ctx.defaultCwd);
-  proc.createdAt = Date.now();
-  try {
-    await waitForReady(proc);
-    const created = await proc.sendCommand("new_session", {}, { timeoutMs: CREATE_READY_TIMEOUT_MS });
-    if (!created.success) throw new PiError(`pi rejected new_session: ${created.error ?? "unknown error"}`);
-    const named = await proc.sendCommand("set_session_name", { name: title });
-    if (!named.success) throw new PiError(`pi rejected set_session_name: ${named.error ?? "unknown error"}`);
-    proc.sessionName = title;
-    const state = await proc.sendCommand("get_state");
-    const file = state.data?.sessionFile;
-    if (!state.success || typeof file !== "string" || file === "") {
-      throw new PiError("pi did not report a session file after new_session");
-    }
-    ctx.pool.register(proc, path.resolve(file));
-    return sendJson(res, 201, { id: path.basename(file, ".jsonl") });
-  } catch (err) {
-    proc.kill();
-    throw new HttpError(502, `create session failed: ${err.message}`);
-  }
-}
-
-// Poll get_state until pi answers successfully. A bare RPC process needs a
-// moment to boot its session manager; each attempt is bounded so a hung child
-// cannot hold the create request past the overall deadline.
-async function waitForReady(proc) {
-  const deadline = Date.now() + CREATE_READY_TIMEOUT_MS;
-  while (true) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new PiError("pi did not become ready within the timeout");
-    let response;
-    try {
-      response = await proc.sendCommand("get_state", {}, { timeoutMs: Math.min(remaining, 5000) });
-    } catch (err) {
-      throw new PiError(`pi did not become ready: ${err.message}`);
-    }
-    if (response.success) return;
-    await sleep(CREATE_READY_POLL_MS);
-  }
-}
-
 // POST /session/{id}/prompt_async — skiff sends exactly one text part. Only
-// text is forwarded (pi's prompt command takes a plain string); any other
-// part type is rejected loudly rather than silently dropped, because a
-// dropped image or file would be an invisible data loss.
-async function handleOrchestratorToggle(req, res, ctx, id) {
-  const target = await resolveSessionTarget(ctx, id);
-  if (!target) return sendJson(res, 404, { error: `session ${id} not found` });
-
-  const body = await readJsonBody(req);
-  const on = typeof body?.on === "boolean" ? body.on : null;
-  if (on === null) return sendJson(res, 400, { error: 'orchestrator toggle requires a boolean "on" field' });
-
-  // The toggle drives the live pi process through its extension command
-  // (prompt executes /orchestrator even while the agent streams); the
-  // extension persists the mode into the session file, so the file and the
-  // process stay consistent. Same lazy-spawn path as prompt/abort.
-  let proc;
-  if (target.kind === "file") {
-    const cwd = typeof target.parsed.header.cwd === "string" ? target.parsed.header.cwd : ctx.defaultCwd;
-    proc = await ctx.pool.ensure(target.file, cwd);
-  } else {
-    proc = target.proc;
-  }
-
-  try {
-    const response = await proc.sendCommand("prompt", { message: on ? "/orchestrator on" : "/orchestrator off" });
-    if (!response.success) throw new PiError(response.error ?? "pi rejected the orchestrator toggle");
-    return sendJson(res, 200, { ok: true });
-  } catch (err) {
-    return sendJson(res, 502, { error: `orchestrator toggle failed: ${err.message}` });
-  }
-}
-
-// POST /session/{id}/name — set the session display name. The rename drives
-// the session's live pi process through its set_session_name command; pi
-// persists the name as a session_info entry in the session file (the file
-// reader serves it back on the next GET), and the process keeps it in memory
-// for the newborn-session window when no file exists yet.
-async function handleSessionRename(req, res, ctx, id) {
-  const target = await resolveSessionTarget(ctx, id);
-  if (!target) return sendJson(res, 404, { error: `session ${id} not found` });
-
-  const body = await readJsonBody(req);
-  const name = typeof body?.name === "string" ? body.name.trim() : "";
-  if (name === "") return sendJson(res, 400, { error: 'rename requires a non-empty "name" field' });
-
-  let proc;
-  if (target.kind === "file") {
-    const cwd = typeof target.parsed.header.cwd === "string" ? target.parsed.header.cwd : ctx.defaultCwd;
-    proc = await ctx.pool.ensure(target.file, cwd);
-  } else {
-    proc = target.proc; // newborn: already registered with its own cwd
-  }
-
-  try {
-    const response = await proc.sendCommand("set_session_name", { name });
-    if (!response.success) throw new PiError(response.error ?? "pi rejected the rename");
-    proc.sessionName = name;
-    return sendJson(res, 200, { ok: true });
-  } catch (err) {
-    return sendJson(res, 502, { error: `rename failed: ${err.message}` });
-  }
-}
-
+// text is forwarded (every harness's prompt surface takes a plain string);
+// any other part type is rejected loudly rather than silently dropped,
+// because a dropped image or file would be an invisible data loss.
 async function handlePromptAsync(req, res, ctx, id) {
-  const target = await resolveSessionTarget(ctx, id);
-  if (!target) return sendJson(res, 404, { error: `session ${id} not found` });
-
+  const { harness, localId } = resolveHarness(ctx, id);
   const body = await readJsonBody(req);
   const parts = Array.isArray(body?.parts) ? body.parts : [];
   const unsupported = parts.find((part) => part?.type !== "text");
@@ -480,61 +334,60 @@ async function handlePromptAsync(req, res, ctx, id) {
   const text = parts.map((part) => part.text ?? "").join("\n");
   if (text === "") return sendJson(res, 400, { error: "prompt has no text" });
 
-  let proc;
-  if (target.kind === "file") {
-    const cwd = typeof target.parsed.header.cwd === "string" ? target.parsed.header.cwd : ctx.defaultCwd;
-    proc = await ctx.pool.ensure(target.file, cwd);
-  } else {
-    proc = target.proc; // newborn: already registered with its own cwd
-  }
-
-  try {
-    const response = await proc.sendCommand("prompt", { message: text });
-    if (!response.success) {
-      // Never echo the prompt text; the pi error explains the rejection.
-      throw new PiError(response.error ?? "pi rejected the prompt");
-    }
-    return sendJson(res, 200, { ok: true });
-  } catch (err) {
-    return sendJson(res, 502, { error: `prompt failed: ${err.message}` });
-  }
+  await harness.promptAsync(localId, text);
+  return sendJson(res, 200, { ok: true });
 }
 
-async function handleAbort(req, res, ctx, id) {
-  const target = await resolveSessionTarget(ctx, id);
-  if (!target) return sendJson(res, 404, { error: `session ${id} not found` });
-
-  let proc;
-  if (target.kind === "file") {
-    const cwd = typeof target.parsed.header.cwd === "string" ? target.parsed.header.cwd : ctx.defaultCwd;
-    proc = await ctx.pool.ensure(target.file, cwd);
-  } else {
-    proc = target.proc;
+// POST /session/{id}/orchestrator — pi's orchestrator extension. Harnesses
+// without the capability reject the toggle; skiff never renders the control
+// for them, so reaching this is a client bug worth surfacing.
+async function handleOrchestratorToggle(req, res, ctx, id) {
+  const { harness, localId } = resolveHarness(ctx, id);
+  if (!harness.capabilities.orchestrator) {
+    return sendJson(res, 400, { error: `${harness.name} sessions have no orchestrator` });
   }
+  const body = await readJsonBody(req);
+  const on = typeof body?.on === "boolean" ? body.on : null;
+  if (on === null) return sendJson(res, 400, { error: 'orchestrator toggle requires a boolean "on" field' });
 
-  try {
-    const response = await proc.sendCommand("abort", {}, { timeoutMs: 10000 });
-    if (!response.success) throw new PiError(response.error ?? "pi rejected abort");
-    return sendJson(res, 204, null);
-  } catch (err) {
-    return sendJson(res, 502, { error: `abort failed: ${err.message}` });
-  }
+  await harness.orchestrator(localId, on);
+  return sendJson(res, 200, { ok: true });
 }
 
+// POST /session/{id}/name — set the session display name, where the harness
+// has a rename surface (pi persists a session_info entry; opencode PATCHes
+// the session; muse names its sessions itself and rejects here).
+async function handleSessionRename(req, res, ctx, id) {
+  const { harness, localId } = resolveHarness(ctx, id);
+  if (!harness.capabilities.rename) {
+    return sendJson(res, 400, { error: `${harness.name} sessions cannot be renamed` });
+  }
+  const body = await readJsonBody(req);
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
+  if (name === "") return sendJson(res, 400, { error: 'rename requires a non-empty "name" field' });
+
+  await harness.rename(localId, name);
+  return sendJson(res, 200, { ok: true });
+}
+
+async function handleAbort(res, ctx, id) {
+  const { harness, localId } = resolveHarness(ctx, id);
+  await harness.abort(localId);
+  return sendJson(res, 204, null);
+}
+
+// GET /session/status — the busy map for sessions with a live run the bridge
+// itself is driving (pi: agent_start .. agent_settled; muse: an exec child
+// in flight). opencode owns its runs server-side and contributes nothing
+// here; its working state surfaces through the stream instead.
 async function handleStatus(res, ctx) {
-  // Busy is event-driven (agent_start .. agent_settled), so a process that is
-  // still booting, or idle in the pool, is never reported busy.
   const statuses = {};
-  for (const proc of ctx.pool.all()) {
-    if (proc.isBusy() && proc.sessionFile) {
-      statuses[path.basename(proc.sessionFile, ".jsonl")] = { type: "busy" };
+  for (const harness of ctx.harnesses.values()) {
+    for (const localId of harness.busyLocalIds()) {
+      statuses[formatSessionId(harness.name, localId)] = { type: "busy" };
     }
   }
   return sendJson(res, 200, statuses);
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // --- CLI entry point --------------------------------------------------------
@@ -552,14 +405,14 @@ export function main() {
     process.exit(1);
   }
   bridge.listen().then(() => {
-    console.error(`skiff-pi-bridge listening on http://${bridge.config.host}:${bridge.port()}`);
+    console.error(`skiff-bridge listening on http://${bridge.config.host}:${bridge.port()}`);
   });
 
   let shuttingDown = false;
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.error("skiff-pi-bridge shutting down");
+    console.error("skiff-bridge shutting down");
     bridge.close().then(() => process.exit(0));
     // A stubborn keep-alive connection must not block the exit forever.
     setTimeout(() => process.exit(0), 2000).unref();
