@@ -13,6 +13,7 @@ description: Create and list Fizzy (Once) kanban cards from the shell — the ag
 - Account: `1` (Fizzy mounts at `/{account}/boards.json` — without it every request 302s to `/session/menu`)
 - Token: file `~/.config/fizzy/write-token` (0600), `permission: write` (`Identity::AccessToken#allows?` is `GET|HEAD || write?`). Env override `FIZZY_TOKEN_FILE`.
 - Create: `POST /{account}/boards/:board_id/cards.json` `{"card":{"title": "...", "description": "…"}}` → `201 {number, title}` (`CardsController#create`, `status: published`, `creator: Current.user`).
+- Comment: `POST /{account}/cards/:number/comments.json` `{"comment":{"body": "<html>"}}` → `201 {id, url, body:{plain_text}}` (`Cards::CommentsController#create`). `403` means the card is a draft — `Card::Commentable#commentable?` is `published?`. Closed cards still accept comments.
 
 Read tokens (`/etc/mirror/fizzy-token` on the VPS) can only `GET`/`HEAD`.
 
@@ -94,7 +95,30 @@ Flags:
 
 Formatting guarantees (in `crates/fizzy/src/format.rs`): `\r\n`→`\n`, trailing ws stripped, at most one blank line, blank line before/after every `##` heading and `---` rule, blank line after heading before content, list markers normalised (`-item` → `- item`, `1.item` → `1. item`), fenced blocks preserved, ends with single `\n`.
 
+### 5. Comment on a card — record an outcome
+
+```bash
+cargo run -p fizzy -- comment 81 --body-file /tmp/shipped.md
+# commented on #81
+# https://fizzy.intern.deepwa7er.net/1/cards/81/comments/0193...
+```
+
+`comment <number> (--body-file <PATH> | --body "…") [--dry-run]`. The body is
+markdown, normalised and rendered to HTML like a card description — but the
+`Why / Evidence` scaffold is a *card* convention and is deliberately not
+enforced on comments.
+
 Tagging is not supported: Fizzy attaches tags via `taggings` after create, not in the card payload. Tag in the web UI.
+
+**Closing a card is not supported, by design.** Standing changes (closed /
+not-now / back to triage) go through `Columns::Cards::Drops::*`, whose actions
+render only `create.turbo_stream.erb` and have no JSON representation. Bearer
+auth is honored only when `request.format.json?`
+(`Authentication#bearer_token_authenticatable_request?`), so a JSON request
+authenticates, runs the side effect, and then fails to render — while a
+non-JSON request is not authenticated at all. Every `.json.jbuilder` in Fizzy
+is a read view, and each endpoint meant for the API declares `format.json`
+explicitly. Close cards in the web UI; use a comment to record what happened.
 
 Always use `~/.config/fizzy/write-token` (or `FIZZY_TOKEN_FILE`) — never `echo $TOKEN` in a prompt.
 

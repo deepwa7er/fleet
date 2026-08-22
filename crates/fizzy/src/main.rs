@@ -106,6 +106,24 @@ enum Command {
         #[arg(long)]
         raw: bool,
     },
+    /// Post a comment on a card.
+    ///
+    /// The supported way to record an outcome against a card from a token.
+    /// Fizzy's card *standing* — triage, not-now, closed — has no JSON API and
+    /// cannot be changed with a token; see `Client::comment_on_card`.
+    Comment {
+        /// Card number, as it appears in the URL `/1/cards/<number>` (with or without a leading `#`).
+        number: String,
+        /// Comment body (markdown — Fizzy renders it). Prefer `--body-file`.
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        /// Read body from a file (preferred — preserves newlines and markdown structure).
+        #[arg(long, conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        /// If set, don't POST — print what would be sent and exit 0.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 fn default_token_file() -> PathBuf {
@@ -355,6 +373,54 @@ async fn run() -> Result<()> {
             if let Some(board) = card.board {
                 println!("board: {} ({})", board.name, board.id);
             }
+        }
+        Command::Comment {
+            number,
+            body,
+            body_file,
+            dry_run,
+        } => {
+            let n: i64 = number
+                .trim()
+                .trim_start_matches('#')
+                .parse()
+                .with_context(|| format!("card number must be an integer, got {number:?}"))?;
+
+            let raw_body = if let Some(p) = body_file {
+                std::fs::read_to_string(&p)
+                    .with_context(|| format!("reading body from {}", p.display()))?
+            } else {
+                body.unwrap_or_default()
+            };
+
+            // Comments are ActionText like card descriptions, so they get the
+            // same markdown normalisation before rendering to HTML. They carry
+            // no Why/Evidence scaffold — that is a card convention, not a
+            // comment one — so `validate_body` deliberately does not run here.
+            let body_text = format::normalize_body(&raw_body);
+            if body_text.trim().is_empty() {
+                anyhow::bail!("comment body is empty — pass --body or --body-file");
+            }
+            let html_body = format::markdown_to_html(&body_text);
+
+            let c = client_with(&base, &account, &token_file)?;
+
+            if dry_run {
+                println!("dry-run: would POST {}/cards/{}/comments.json", c.base(), n);
+                println!("--- body (markdown, normalised) ---");
+                println!("{body_text}");
+                println!("--- end body ---");
+                if !html_body.is_empty() {
+                    println!("--- html (what will be POSTed) ---");
+                    println!("{html_body}");
+                    println!("--- end html ---");
+                }
+                return Ok(());
+            }
+
+            let comment = c.comment_on_card(n, &html_body).await?;
+            println!("commented on #{n}");
+            println!("{}", comment.url);
         }
     }
     Ok(())
