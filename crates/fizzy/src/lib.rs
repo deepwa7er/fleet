@@ -60,6 +60,27 @@ pub struct User {
     pub name: String,
 }
 
+/// A comment, as returned by `POST /cards/:number/comments.json`.
+///
+/// Narrow on purpose, like every type here: Fizzy's `_comment.json.jbuilder`
+/// also serializes `creator` (which embeds the user partial, and with it an
+/// email address), `reactions_url`, and the rich-text `html`. None of that is
+/// filtered downstream — it is filtered *here*, by having nowhere to land.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Comment {
+    pub id: String,
+    /// Fizzy's canonical URL for the comment.
+    pub url: String,
+    pub body: CommentBody,
+}
+
+/// The rich-text body Fizzy echoes back. Only the plain-text rendering is
+/// kept — the `html` sibling is the same content and nothing here renders it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CommentBody {
+    pub plain_text: String,
+}
+
 /// The three card sets disjoint from columns — `GET /boards/:id/columns/:standing.json`.
 #[derive(Debug, Clone, Copy)]
 pub enum Standing {
@@ -212,6 +233,44 @@ impl Client {
 
     // --- writes ---
 
+    /// POST a JSON body and parse the JSON response.
+    ///
+    /// `Accept: application/json` is not decoration: Fizzy only honors Bearer
+    /// auth when `request.format.json?` (`Authentication#bearer_token_authenticatable_request?`),
+    /// so a non-JSON write is not merely unparsed — it is unauthenticated, and
+    /// redirects to the sign-in menu instead of failing usefully. That is also
+    /// why only endpoints with a JSON representation are reachable from here.
+    async fn post_json<B: Serialize, T: DeserializeOwned>(&self, url: &str, payload: &B) -> Result<T> {
+        let resp = self
+            .http
+            .post(url)
+            .bearer_auth(&self.token)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .json(payload)
+            .send()
+            .await
+            .with_context(|| format!("POST {url}"))?;
+
+        let status = resp.status();
+        if status.is_redirection() {
+            bail!(
+                "POST {url} redirected ({status}) — the token was rejected or lacks `write` \
+                 permission (read tokens are GET/HEAD only), or the account prefix in {} is wrong",
+                self.base
+            );
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            bail!(
+                "POST {url} failed: {status} — {}",
+                body.chars().take(800).collect::<String>()
+            );
+        }
+        resp.json()
+            .await
+            .with_context(|| format!("parsing the response to POST {url}"))
+    }
+
     /// Create a published card in `board_id`. Returns the created card
     /// (including its `number` and board URL). `description` is ActionText
     /// rich text — plain markdown is fine; Fizzy renders it.
@@ -236,39 +295,50 @@ impl Client {
             description: &'a str,
         }
 
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.token)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .json(&Payload {
+        self.post_json(
+            &url,
+            &Payload {
                 card: CardPayload { title, description },
-            })
-            .send()
-            .await
-            .with_context(|| format!("POST {url}"))?;
+            },
+        )
+        .await
+    }
 
-        let status = resp.status();
-        if status.is_redirection() {
-            bail!(
-                "POST {url} redirected ({status}) — the token was rejected or lacks `write` \
-                 permission (read tokens are GET/HEAD only), or the account prefix in {} is wrong",
-                self.base
-            );
+    /// Post a comment on a card, addressed by its per-account `number`.
+    ///
+    /// `body` is ActionText rich text, like a card description — Fizzy renders
+    /// it, so pass HTML (see `format::markdown_to_html`).
+    ///
+    /// This is the only supported way to record an outcome against a card from
+    /// a token. Fizzy's card *standing* — triage, not-now, closed — is changed
+    /// through `Columns::Cards::Drops::*`, whose actions render only
+    /// `turbo_stream` and have no JSON representation; since Bearer auth is
+    /// honored only for JSON, those routes are unreachable with a token by
+    /// design, not by oversight. Closing a card stays a human act in the web UI.
+    pub async fn comment_on_card(&self, number: i64, body: &str) -> Result<Comment> {
+        if body.trim().is_empty() {
+            bail!("comment body must not be empty");
         }
-        if !status.is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            bail!(
-                "POST {url} failed: {status} — {}",
-                body.chars().take(800).collect::<String>()
-            );
+        let url = format!("{}/cards/{number}/comments.json", self.base);
+
+        #[derive(Serialize)]
+        struct Payload<'a> {
+            comment: CommentPayload<'a>,
         }
-        let card: Card = resp
-            .json()
+        #[derive(Serialize)]
+        struct CommentPayload<'a> {
+            body: &'a str,
+        }
+
+        self.post_json(&url, &Payload { comment: CommentPayload { body } })
             .await
-            .context("parsing the created card")?;
-        Ok(card)
+            .with_context(|| {
+                format!(
+                    "commenting on card #{number} (a 403 means the card is not commentable — \
+                     `Card::Commentable#commentable?` is `published?`, so drafts reject comments; \
+                     closed cards still accept them)"
+                )
+            })
     }
 }
 
@@ -333,6 +403,23 @@ mod tests {
     #[test]
     fn rejects_a_base_without_a_scheme() {
         assert!(client("fizzy.example", "1").is_err());
+    }
+
+    // The write guards run before the request is built, so these assert real
+    // behaviour without touching the network — `fizzy.example` is never resolved.
+
+    #[tokio::test]
+    async fn rejects_an_empty_comment_body() {
+        let c = client("https://fizzy.example", "1").unwrap();
+        assert!(c.comment_on_card(1, "").await.is_err());
+        assert!(c.comment_on_card(1, "  \n\t ").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn rejects_an_empty_card_title() {
+        let c = client("https://fizzy.example", "1").unwrap();
+        assert!(c.create_card("board", "", "body").await.is_err());
+        assert!(c.create_card("board", "   ", "body").await.is_err());
     }
 
     #[test]
