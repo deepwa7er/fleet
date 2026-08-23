@@ -119,8 +119,39 @@ Prompt text and the password are never logged.
 | `POST /session/{id}/orchestrator` | pi's extension toggle; 400 for every other harness |
 | `POST /session/{id}/abort` | 204; pi sends `abort`, muse SIGINTs the run's child, opencode POSTs its abort |
 | `GET /session/status` | `{"<harness>:<id>":{"type":"busy"}}` for runs the bridge itself drives (pi, muse); opencode's working state surfaces through the stream |
+| `GET /change` | `{"changes":[…]}` — every change in the store, newest activity first |
+| `POST /change` | `{"repo":…,"card":…}` → 201 the new change (state `working`); 409 if the card already has one, 404 for an unknown repo |
+| `GET /change/{repo}/{card}` | the change with each round enriched from jj (`commit` is null for an abandoned or divergent change id, never a guess) |
+| `GET /change/{repo}/{card}/diff` | `{"diff":…}` — the cumulative diff, base of round 1 → tip round, git format |
+| `GET /change/{repo}/{card}/diff/{n}` | `{"diff":…}` — round *n* alone |
+| `POST /change/{repo}/{card}/round` | `{"author":"agent"\|"you","changeId":…,"note":…}` → 201; the id must be a full jj change id resolving to one visible commit, and a child of the previous round; 409 while landing/shipped |
+| `POST /change/{repo}/{card}/annotation` | `{"round":…,"path":…,"line":…,"side":"old"\|"new","text":…}` → 201; the path must be one the round's diff touches |
+| `POST /change/{repo}/{card}/submit` | `working → in_review`; 409 from any other state or with no rounds |
+| `POST /change/{repo}/{card}/reopen` | `in_review → working` (request-changes takes the change back for another round) |
 
 All bodies are JSON; errors are `{"error":"..."}`.
+
+## Changes — the DW-002 change object
+
+`/change` serves the change object from the source control redesign
+([DW-002](../../docs/source-control-redesign.md) §4): one Fizzy card, one
+change, an ordered **additive** sequence of rounds (each round is one jj
+commit, identified by its stable change id), annotations positioned in a
+round's diff, and the `working → in_review → landing → shipped` lifecycle.
+The `landing`/`shipped` half is validated by the store but not reachable
+over HTTP — approve (rebase-and-push, then the Fizzy comment) is step 03.
+
+Division of storage follows the design: the jj repository holds the rounds
+(they are commits), Fizzy holds the card, and the bridge owns what has no
+other home — annotations and the change record — as one append-only JSONL
+event log per change under `$XDG_DATA_HOME/skiff-bridge/changes/<repo>/<card>.jsonl`
+(override: `SKIFF_BRIDGE_CHANGE_DIR`). Repos are addressed by name under the
+bridge's repos root (`SKIFF_BRIDGE_REPOS_DIR`, default the bridge cwd
+`~/code`) and must be jj repositories. jj itself is resolved at boot like a
+harness binary (`JJ_BINARY` override); a host without jj keeps its sessions
+and answers every `/change` request with a visible 502. All jj reads run
+`--ignore-working-copy`, so the bridge never snapshots a working copy or
+contends for the operation lock.
 
 ## Running
 

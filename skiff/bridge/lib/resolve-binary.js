@@ -20,7 +20,14 @@ export function resolveBinary(name, explicit) {
   const candidates =
     explicit && explicit.trim() !== ""
       ? [explicit]
-      : [name, path.join(os.homedir(), ".local", "bin", name), path.join(os.homedir(), "bin", name)];
+      : [
+          name,
+          path.join(os.homedir(), ".local", "bin", name),
+          path.join(os.homedir(), "bin", name),
+          // Where `cargo install` puts binaries (jj on the desktop) — like
+          // ~/.local/bin, present in interactive PATHs but not systemd's.
+          path.join(os.homedir(), ".cargo", "bin", name),
+        ];
   for (const candidate of candidates) {
     if (candidate.includes("/")) {
       if (fs.existsSync(candidate)) return path.resolve(candidate);

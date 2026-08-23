@@ -11,7 +11,8 @@
 // driver for the generic registry in lib/stream-registry.js), and declares
 // capabilities — rename and the orchestrator toggle exist only where the
 // harness supports them, and unsupported operations are rejected loudly, not
-// silently dropped.
+// silently dropped. The /change family (DW-002's change object — rounds,
+// annotations, card binding) is served by lib/changes.js the same way.
 //
 // Security posture: every response is JSON, every error is {"error": ...},
 // and prompt text and the password never reach logs or error surfaces
@@ -28,6 +29,7 @@ import { createStreamRegistry } from "./lib/stream-registry.js";
 import { createPiHarness } from "./lib/pi-harness.js";
 import { createMuseHarness } from "./lib/muse-harness.js";
 import { createOpencodeHarness } from "./lib/opencode-harness.js";
+import { createChanges, createUnavailableChanges } from "./lib/changes.js";
 
 const AUTH_USERNAME = "skiff";
 const BODY_LIMIT_BYTES = 1 << 20; // 1 MiB — title and prompt bodies are tiny
@@ -64,6 +66,15 @@ export function createBridge(config) {
       console.error(`skiff-bridge: ${name} harness unavailable: ${err.message}`);
       ctx.harnesses.set(name, createUnavailableHarness(name, err.message));
     }
+  }
+  // The change subsystem (DW-002 §4 — rounds, annotations, card binding)
+  // degrades the same way a harness does: a host without jj keeps its
+  // sessions and loses /change with a visible 502, never silently.
+  try {
+    ctx.changes = createChanges(config.changes ?? {}, { defaultCwd: ctx.defaultCwd });
+  } catch (err) {
+    console.error(`skiff-bridge: change subsystem unavailable: ${err.message}`);
+    ctx.changes = createUnavailableChanges(err.message);
   }
 
   const server = http.createServer(async (req, res) => {
@@ -262,6 +273,63 @@ async function handle(req, res, ctx) {
   }
   if (req.method === "POST" && parts.length === 3 && parts[0] === "session" && parts[2] === "abort") {
     return handleAbort(res, ctx, parts[1]);
+  }
+  if (parts[0] === "change") {
+    return handleChange(req, res, ctx, parts);
+  }
+  return sendJson(res, 404, { error: "not found" });
+}
+
+// --- Changes (DW-002 §4: one card, one change, additive rounds) -------------
+//
+// /change/{repo}/{card} — the card number is the only identifier the user
+// ever sees; the repo name scopes it to one jj repository under the bridge's
+// repos root. lib/changes.js owns all semantics; these routes only shape
+// HTTP. Approve (rebase-and-push, the Fizzy comment) is step 03 and has no
+// route yet — submit and reopen are the whole lifecycle surface for now.
+async function handleChange(req, res, ctx, parts) {
+  if (req.method === "GET" && parts.length === 1) {
+    return sendJson(res, 200, { changes: await ctx.changes.list() });
+  }
+  if (req.method === "POST" && parts.length === 1) {
+    const body = await readJsonBody(req);
+    const change = await ctx.changes.create(body?.repo, body?.card);
+    return sendJson(res, 201, change);
+  }
+  if (req.method === "GET" && parts.length === 3) {
+    return sendJson(res, 200, await ctx.changes.get(parts[1], parts[2]));
+  }
+  if (req.method === "GET" && parts.length === 4 && parts[3] === "diff") {
+    return sendJson(res, 200, { diff: await ctx.changes.diff(parts[1], parts[2]) });
+  }
+  if (req.method === "GET" && parts.length === 5 && parts[3] === "diff") {
+    return sendJson(res, 200, { diff: await ctx.changes.diff(parts[1], parts[2], parts[4]) });
+  }
+  if (req.method === "POST" && parts.length === 4 && parts[3] === "round") {
+    const body = await readJsonBody(req);
+    const round = await ctx.changes.addRound(parts[1], parts[2], {
+      author: body?.author,
+      changeId: body?.changeId,
+      note: body?.note,
+    });
+    return sendJson(res, 201, round);
+  }
+  if (req.method === "POST" && parts.length === 4 && parts[3] === "annotation") {
+    const body = await readJsonBody(req);
+    const annotation = await ctx.changes.addAnnotation(parts[1], parts[2], {
+      round: body?.round,
+      path: body?.path,
+      line: body?.line,
+      side: body?.side,
+      text: body?.text,
+    });
+    return sendJson(res, 201, annotation);
+  }
+  if (req.method === "POST" && parts.length === 4 && parts[3] === "submit") {
+    return sendJson(res, 200, await ctx.changes.transition(parts[1], parts[2], "in_review"));
+  }
+  if (req.method === "POST" && parts.length === 4 && parts[3] === "reopen") {
+    return sendJson(res, 200, await ctx.changes.transition(parts[1], parts[2], "working"));
   }
   return sendJson(res, 404, { error: "not found" });
 }
