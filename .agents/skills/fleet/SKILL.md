@@ -1,52 +1,111 @@
 ---
 name: fleet
-description: End-to-end workflow for making changes to the fleet monorepo — Fizzy cards, git worktrees, PRs, and deploy after human merge.
+description: End-to-end workflow for making changes to the fleet monorepo — Fizzy cards, jj workspaces, rounds with annotations submitted to the review in skiff. The human approves; approve lands.
 ---
 
 # Fleet — monorepo change workflow
 
-Use when making **any** change to `fleet` (code, docs, style, config). One card = one branch = one PR. Never merge or deploy — the human merges; `tugboat` ships `origin/main`. (Drydock was the autonomous worker; archived 2026-08-13 at `drydock.ARCHIVED.md` — tag `archive/drydock-2026-08-13`)
+Use when making **any** change to `fleet` (code, docs, style, config). One
+card = one change = one ordered stack of rounds ([DW-002](../../../docs/source-control-redesign.md)).
+You produce rounds and submit; the human reviews in skiff; **approve** is
+the only thing that lands to `origin/main`, and the timeline records what
+shipped ([DW-003](../../../docs/public-record.md)). There are no branches to
+push and no PRs to open — GitHub is a publishing target, not the review
+mechanism. (The pre-2026-08-23 card→branch→PR workflow lives in git
+history and `archive/*` tags; do not resurrect it.)
 
 ## 0. Orient (every run)
 
 - Read `~/.claude/CLAUDE.md` (NO HACKS — authoritative; overrides summaries).
-- Read `fleet/docs/deepwater-style-guide.md` (DW-001) if the change touches UI — six rules + tokens are authoritative; `taste` is the negative filter and DW-001 overrides it (e.g. fleet paper `#f7f2e9` is intentional, not `taste`'s `#faf8f4` ban).
-- Run `cargo run -p fizzy -- boards` and `cargo run -p fizzy -- stream --board Playground` to see open cards before creating new ones.
+- Read `docs/deepwater-style-guide.md` (DW-001) if the change touches UI.
+- `cargo run -p fizzy -- stream --board Playground` to see open cards before creating new ones (fizzy skill is the CLI contract).
+- The bridge is the change API, loopback on the desktop. Auth, used by every call below — parse, never source, never echo:
+
+```bash
+BRIDGE=http://127.0.0.1:4120
+PW=$(awk -F= '/^SKIFF_BRIDGE_PASSWORD=/{print $2}' ~/.config/skiff/secrets)
+# usage: curl -s -u "skiff:$PW" $BRIDGE/...
+```
 
 ## 1. Discover → Card
 
-- Search and read first. If you find a gap, bug, or follow-up, create a card per `.agents/skills/fizzy/SKILL.md#4` (single source of truth for the `draft → lint → create` flow). If the follow-up extends an *existing* card (new evidence, narrowed scope), update that card in place with `fizzy update` (fizzy skill §5) instead of creating a duplicate:
+Unchanged: search and read first; create or update a card per
+`.agents/skills/fizzy/SKILL.md` §4–§5 (`draft → lint → create --dedupe`,
+update in place for follow-ups). Ask before posting unless the user said
+"create cards". The card number is the change's identity.
+
+## 2. Isolate — a jj workspace, never the main working copy
+
+Parallel work cannot share a working copy, but rounds must be jj changes
+the bridge can see — so isolation is a **jj workspace** (shares the repo
+and op log), not a git worktree:
 
 ```bash
-cargo run -p fizzy -- draft --title "fleet: <area> — <what>"
-# then create per fizzy skill: `create --board Playground --title "fleet: <area> — <what>" --body-file /tmp/<slug>.md --dedupe`
+cd ~/code/fleet
+jj git fetch --remote origin
+mkdir -p .workspaces                      # jj does not create the parent
+jj workspace add .workspaces/<slug>      # gitignored, like .worktrees was
+cd .workspaces/<slug>
+jj new main@origin                        # round 1 bases on fresh main
 ```
 
-- Ask before posting unless the user said "create cards". Token is `~/.config/fizzy/write-token` (0600); never `echo $TOKEN`.
+**Undo is scoped to you — hard rule (DW-002 §3).** The op log is shared by
+every workspace. Never run bare `jj undo`: it reverses the *globally* most
+recent operation, which may be another agent's or the human's. If you must
+revert, find your own operation in `jj op log` first and name it.
 
-## 2. Prepare — isolate
+## 3. Work — rounds are additive commits
 
-Never work in the shared checkout. Never commit to `main`.
-
-Worktrees live in `.worktrees/<slug>` inside this repo (gitignored). Fizzy and
-drydock are unrelated systems — nothing in this workflow writes to
-`~/code/.drydock`, which the archived worker owned.
+Build to the card's acceptance criteria. When the work is ready to show:
 
 ```bash
-cd ~/code/fleet && git fetch origin
-# fresh card:
-git worktree add .worktrees/<slug> -b fleet/<card#>-<slug> origin/main
-# resumed card (branch already on origin):
-git worktree add .worktrees/<slug> fleet/<card#>-<slug>
-cd .worktrees/<slug>   # or <service>/ inside it
+# gates FIRST — see §4; only what you actually ran becomes a claim
+jj describe -m "round 1: <what this round is>"
+R1=$(jj log --no-graph -r @ -T change_id)
+jj new                                    # move off; round 2 grows here
 ```
 
-> Archived: Drydock `ticket/<id>-<slug>` workflow removed 2026-08-13 — see `drydock.ARCHIVED.md` + tag `archive/drydock-2026-08-13` for the autonomous worker docs.
+Register the change and the round with the bridge (`skiff/bridge/README.md`
+is the endpoint contract). `gatesRan` is **only what you ran** — it is
+displayed as a claim, verified by nothing, and lying in it defeats the
+whole system. `worthKnowing` is the header's bullet list (new deps, config
+touched, breaking behavior):
 
-## 3. Work — build to acceptance criteria
+```bash
+curl -s -u "skiff:$PW" -X POST $BRIDGE/change -H 'content-type: application/json' \
+  -d '{"repo":"fleet","card":<card#>,"title":"<card title, humanized>"}'
+curl -s -u "skiff:$PW" -X POST $BRIDGE/change/fleet/<card#>/round -H 'content-type: application/json' \
+  -d "{\"author\":\"agent\",\"changeId\":\"$R1\",\"gatesRan\":[\"cargo test\",\"clippy\",\"fleet gen --check\"],\"worthKnowing\":[\"…\"]}"
+```
 
-- Match existing conventions; prefer correct design over preserving a flawed one (back-compat not required per `~/.claude/CLAUDE.md`).
-- Run the gates. CI was archived 2026-08-13 (`ci.ARCHIVED.md`), so these are the *only* enforcement — nothing checks `origin/main` after you push:
+**Annotate — your final act, not optional.** You did the work and know why;
+the review renders the code with your justifications at the point they
+apply. Annotate the decisions a reader would question: the why of a cache,
+a timeout's value, a deliberate asymmetry. Positions are (path, side, line)
+in that round's diff; the bridge rejects files the round never touched.
+**Never write review commentary into source comments instead** (DW-002 §5):
+
+```bash
+curl -s -u "skiff:$PW" -X POST $BRIDGE/change/fleet/<card#>/annotation -H 'content-type: application/json' \
+  -d '{"round":1,"path":"skiff/app/x.rb","line":12,"side":"new","text":"cached because …"}'
+```
+
+Then submit — this is your "PR is up" moment:
+
+```bash
+curl -s -u "skiff:$PW" -X POST $BRIDGE/change/fleet/<card#>/submit
+```
+
+**Revisions arrive as round n+1** (a child of round n — the bridge enforces
+the stack), never by amending a submitted round; that is what keeps the
+human's annotations and read-state honest. A request-changes note reaches
+your session prefixed `[dw request-changes · fleet #<card#>]`; answer it
+with the next round and re-submit.
+
+## 4. Gates — before every submit
+
+CI stays archived; these run before **every** round you submit, not once
+per change, and nothing checks main after a landing except the next deploy:
 
 ```bash
 cargo test --workspace
@@ -54,36 +113,36 @@ cargo clippy --workspace --all-targets -- -D warnings
 TUGBOAT_FLEET=$PWD/fleet.toml cargo run -q -p tugboat -- fleet gen --check
 ```
 
-- `fleet gen --check` verifies the generated registries (`breakwater/breakwater.toml`, `fleet-backup/state.sh`) still match each service's `deploy.toml`. Run it whenever you touch a `deploy.toml` or `fleet.toml`; without it drift surfaces only at deploy time.
-- Also `bun run build` in `<app>/web` for any web app you touched — nothing else typechecks it now.
-- Keep the worktree's `fleet/Cargo.toml` workspace lockfile intact.
-- Heartbeat if long-running: `cargo run -p fizzy -- boards` is not a heartbeat — drydock heartbeats were `drydock heartbeat "<step>"` (archived).
+Plus the per-area gates when touched, unchanged from before: `bun run
+build` in `<app>/web`; `cargo test && cargo clippy --all-targets -- -D
+warnings` from `ide/`; `(cd loom && make build)`, `(cd filament && swift
+test)`, `(cd shutter && make build)` on macOS; `node --test
+bridge/test/*.test.js` from `skiff/` for the bridge; `bin/ci` from `skiff/`
+for Rails; `node --test timeline/test/` for `timeline/`.
 
-## 4. PR — push and open, then stop
+## 5. Stop — the human closes the loop
 
-```bash
-git push -u origin fleet/<card#>-<slug>
-gh pr create --title "fleet: <area> — <what> (#<card>)" --body "Closes https://fizzy.intern.deepwa7er.net/1/cards/<card>
-
-Summary: ...
-
-Evidence: ...
-
-Breaking change: yes/no
-Fizzy: https://fizzy.intern.deepwa7er.net/1/cards/<card>"
-```
-
-- One PR per card. Link the Fizzy URL in the PR body.
-- Clean up the worktree after push (branch is safe on origin): `git worktree remove --force .worktrees/<slug>`
-
-## 5. Wait — human gates
-
-- **Never** `gh pr merge`, never `tugboat deploy` / `tugboat fleet deploy`, never push to `main`, never close the Fizzy card from the agent.
-- The human reviews, merges to `main`, and deploy follows automatically (`tugboat` ships `origin/main`; `breakwater` routes, `fleet-backup` captures state declared in each `deploy.toml` + `fleet.toml::backup`). There is no CI gate — archived 2026-08-13 (`ci.ARCHIVED.md`) — so §3's gates must be green *before* you push.
+- **Never** approve, never `jj git push`, never move the `main` bookmark,
+  never `dw ship` (it is the human's own-work verb), never close the card.
+- The human reviews at the desk (skiff), requests changes or approves;
+  approve rebases onto `origin/main` and pushes — the same artifact a
+  merged PR used to be. Landing does not deploy; deploys stay human-requested.
+- If approve comes back with conflicts, the conflicted round commits carry
+  them (`lastLanding.conflicts`). Resolve **in those commits** — `jj edit
+  <changeId>`, fix, `jj new` — the change ids are stable, and this is the
+  one case where submitted rounds legitimately change under their
+  annotations (the landing rebase already rewrote them).
+- After the change ships: `jj workspace forget <name>` from the main
+  checkout, then remove `.workspaces/<slug>`.
 
 ## Hard rules
 
-- `~/.claude/CLAUDE.md` is authoritative on quality: no hacks, no workarounds, no partial fixes. If blocked, report — don't ship a hack to reach "done". (Was `drydock block`; drydock archived 2026-08-13.)
-- `docs/deepwater-style-guide.md` (DW-001) governs all UI; `taste` is the anti-slop filter — DW-001 wins on conflict.
-- Deployability is discovered: a top-level dir is deployable iff it has `deploy.toml` (`fleet.toml:14-20`). No registry to update.
-- `fleet.toml::docs.guidance` and `fleet.toml::backup` are the only central manifests — keep them in sync when adding docs or state.
+- `~/.claude/CLAUDE.md` is authoritative on quality: no hacks, no
+  workarounds, no partial fixes. If blocked, report — don't submit a hack
+  to reach "done".
+- `docs/deepwater-style-guide.md` (DW-001) governs all UI.
+- `gatesRan` is a claim about what you actually ran. The human's reading of
+  the code is the only verification in the system — do not poison it.
+- Deployability is discovered: a top-level dir is deployable iff it has
+  `deploy.toml`. `fleet.toml::docs.guidance` and `fleet.toml::backup` are
+  the only central manifests — keep them in sync.

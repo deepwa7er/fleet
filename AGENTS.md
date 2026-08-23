@@ -9,17 +9,15 @@ For any UI work, read `docs/deepwater-style-guide.md` (DW-001) first.
 Specimens: `docs/deepwater-style-guide.html` and `docs/deepwater-404.html`.
 Reference: [DW-001](docs/deepwater-style-guide.md) · [specimen](docs/deepwater-style-guide.html)
 
-## In flight — the source control redesign
+## The source control redesign — shipped; this workflow is it
 
-The workflow below (card → worktree → PR → human merges) is being replaced. Before working on `jj`, the `dw` CLI, the change/round/annotation model, or the review surface in `skiff`, read [DW-002](docs/source-control-redesign.md).
+The card→branch→PR workflow was retired at the cutover (2026-08-23). Before working on `jj`, the `dw` CLI, the change/round/annotation model, the review in `skiff`, or the record/timeline, read [DW-002](docs/source-control-redesign.md) and [DW-003](docs/public-record.md) — they record alternatives that were tried and rejected, and re-deriving that reasoning costs more than reading it.
 
-It records alternatives that were tried and rejected — a capture daemon, a two-axis change model, closing Fizzy cards from `approve`, pre-land verification — and the reasoning is the point. Re-deriving it costs more than reading it. Design is settled; steps 01–03 (colocated `jj`, the change object, the review in skiff) shipped 2026-08-23; step 04 (the timeline) is designed in [DW-003](docs/public-record.md), awaiting acceptance. **Until the cutover ships, the workflow below is still authoritative.**
+## Workflow — one card = one change = rounds in review
 
-## Workflow — one card = one branch = one PR
+For any fleet change, read `.agents/skills/fleet/SKILL.md` first. In one breath: search first; Fizzy card (`cargo run -p fizzy -- create --board Playground --dedupe`); isolate in a **jj workspace** (`jj workspace add .workspaces/<slug>`, never the main working copy, never bare `jj undo` — the op log is shared); run the gates; register each finished pass as a **round** with the bridge (`127.0.0.1:4120`, auth from `~/.config/skiff/secrets`) carrying `gatesRan` (only what you actually ran — it renders as a claim, verified by nothing) and your **annotations** (the justifications the review renders at the point they apply — never source comments); `submit`; then stop. The human reviews at the skiff desk; request-changes returns as your next round; **approve** rebases onto `origin/main` and pushes — the only lander — and the record/timeline follow automatically. No branches, no `gh pr`, no pushes from agents; `dw ship` is the human's own-work verb.
 
-For any fleet change, read `.agents/skills/fleet/SKILL.md` first. It covers: search first, create a Fizzy triage card (`cargo run -p fizzy -- create --board Playground --dedupe`), `git worktree` isolation in `.worktrees/<slug>` inside this repo (never `main`), the gates below, `git push -u origin fleet/<card#>-<slug>` + `gh pr create` linking the Fizzy card, then stop — human merges, `tugboat` ships `origin/main`.
-
-Gates before every PR. CI was archived 2026-08-13, so these are the *only* enforcement — nothing checks `origin/main` after you push:
+Gates before every submitted round. CI stays archived (2026-08-13), so these are the *only* enforcement — nothing checks `origin/main` after a landing:
 
 ```bash
 cargo test --workspace
