@@ -93,6 +93,8 @@ export function createChanges(config, { defaultCwd }) {
   // repository — commit id, description, author, timestamp. A round whose
   // change id no longer resolves (abandoned, or divergent after a
   // concurrent amend) carries commit: null plus the reason, never a guess.
+  // `path` is the repository checkout — the single place a filesystem path
+  // is allowed to surface (DW-002 §5: the edit verb needs one).
   async function enrich(repoPath, change) {
     const rounds = await Promise.all(
       change.rounds.map(async (round) => {
@@ -100,7 +102,7 @@ export function createChanges(config, { defaultCwd }) {
         return { ...round, commit, ...(divergent ? { divergent: true } : {}) };
       })
     );
-    return { ...change, rounds };
+    return { ...change, path: repoPath, rounds };
   }
 
   // The landing itself: fetch → rebase → conflict check → push, retried on

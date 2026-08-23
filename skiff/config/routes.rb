@@ -11,8 +11,18 @@ Rails.application.routes.draw do
   get "manifest" => "rails/pwa#manifest", as: :pwa_manifest
   get "service-worker" => "rails/pwa#service_worker", as: :pwa_service_worker
 
-  # The sessions list is the root page (M2). show renders the transcript (M3).
+  # The sessions list (M2) stays at /sessions; the root moved to the desk
+  # (DW-002 §6). show renders the transcript (M3).
   resources :sessions, only: %i[index show create]
+
+  # DW-002: the review. A change is addressed by repo name and card number —
+  # the card number is the only identifier the user sees, the repo scopes it.
+  # Flat member routes in the house style; the verbs POST to their own.
+  get "changes/:repo/:card" => "changes#show", as: :change, constraints: { card: /\d+/ }
+  get "changes/:repo/:card/status" => "changes#status", as: :change_status, constraints: { card: /\d+/ }
+  post "changes/:repo/:card/approve" => "changes#approve", as: :approve_change, constraints: { card: /\d+/ }
+  post "changes/:repo/:card/request_changes" => "changes#request_changes",
+       as: :request_changes_change, constraints: { card: /\d+/ }
 
   # M3: the composer posts to the session's messages. A plain member route
   # rather than `resources :sessions { post :messages }`, because the action
@@ -35,5 +45,7 @@ Rails.application.routes.draw do
   # The model picker POSTs the chosen model to its own member route.
   post "sessions/:id/model" => "sessions#model", as: :session_model
 
-  root "sessions#index"
+  # DW-002 §6: one page ordered by what needs you — changes in review on
+  # top, then working, then idle. The sessions list survives at /sessions.
+  root "desk#index"
 end

@@ -178,4 +178,73 @@ class BridgeClientTest < ActiveSupport::TestCase
     error = assert_raises(BridgeClient::Error) { BridgeClient.sessions }
     assert_match(/skiff bridge unreachable/, error.message)
   end
+
+  # ---- DW-002: the change object ----
+
+  test "changes hits /change" do
+    stub_request(:get, "#{BASE_URL}/change")
+      .with(basic_auth: [ "skiff", PASSWORD ])
+      .to_return(status: 200, body: '{"changes":[{"repo":"fleet","card":81,"state":"in_review"}]}')
+
+    assert_equal "in_review", BridgeClient.changes[:changes].first[:state]
+  end
+
+  test "change and change_diff address the repo-and-card routes" do
+    stub_request(:get, "#{BASE_URL}/change/fleet/81")
+      .with(basic_auth: [ "skiff", PASSWORD ])
+      .to_return(status: 200, body: '{"repo":"fleet","card":81,"rounds":[]}')
+    stub_request(:get, "#{BASE_URL}/change/fleet/81/diff")
+      .to_return(status: 200, body: '{"diff":"cumulative"}')
+    stub_request(:get, "#{BASE_URL}/change/fleet/81/diff/2")
+      .to_return(status: 200, body: '{"diff":"round two"}')
+
+    assert_equal 81, BridgeClient.change("fleet", 81)[:card]
+    assert_equal "cumulative", BridgeClient.change_diff("fleet", 81)[:diff]
+    assert_equal "round two", BridgeClient.change_diff("fleet", 81, round: 2)[:diff]
+  end
+
+  test "approve_change posts and returns the landing change" do
+    stub_request(:post, "#{BASE_URL}/change/fleet/81/approve")
+      .with(basic_auth: [ "skiff", PASSWORD ])
+      .to_return(status: 202, body: '{"state":"landing"}')
+
+    assert_equal "landing", BridgeClient.approve_change("fleet", 81)[:state]
+  end
+
+  test "request_changes posts the note" do
+    stub_request(:post, "#{BASE_URL}/change/fleet/81/request_changes")
+      .with(basic_auth: [ "skiff", PASSWORD ], body: '{"note":"tighten it"}')
+      .to_return(status: 200, body: '{"state":"working"}')
+
+    assert_equal "working", BridgeClient.request_changes("fleet", 81, "tighten it")[:state]
+  end
+
+  test "session_statuses hits /session/status" do
+    stub_request(:get, "#{BASE_URL}/session/status")
+      .with(basic_auth: [ "skiff", PASSWORD ])
+      .to_return(status: 200, body: '{"pi:busy_one":{"type":"busy"}}')
+
+    assert_equal({ type: "busy" }, BridgeClient.session_statuses[:"pi:busy_one"])
+  end
+
+  # The review's verbs need to tell a bridge refusal from a dead socket:
+  # HTTP failures carry status + the bridge's own error text; transport
+  # failures carry neither. The message contract is unchanged either way.
+  test "an HTTP failure carries status and the bridge's error text" do
+    stub_request(:post, "#{BASE_URL}/change/fleet/81/approve")
+      .to_return(status: 409, body: '{"error":"change fleet/81 is working; cannot move to landing"}')
+
+    error = assert_raises(BridgeClient::Error) { BridgeClient.approve_change("fleet", 81) }
+    assert_equal 409, error.status
+    assert_equal "change fleet/81 is working; cannot move to landing", error.remote_message
+    assert_match(/skiff bridge unreachable: HTTP 409/, error.message)
+  end
+
+  test "a transport failure carries neither status nor remote message" do
+    stub_request(:get, "#{BASE_URL}/change").to_raise(Errno::ECONNREFUSED)
+
+    error = assert_raises(BridgeClient::Error) { BridgeClient.changes }
+    assert_nil error.status
+    assert_nil error.remote_message
+  end
 end

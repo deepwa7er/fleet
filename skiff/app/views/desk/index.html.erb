@@ -1,0 +1,65 @@
+<% flash.each do |type, message| %>
+  <p class="flash flash--<%= type %>"><%= message %></p>
+<% end %>
+
+<main class="measure">
+  <% if @error %>
+    <p class="instrumentation instrumentation--danger"><%= @error %></p>
+  <% else %>
+    <%# A harness the bridge could not reach is a named gap, not a silent
+        one; likewise a change subsystem without jj on this host. %>
+    <% @harness_errors.each do |harness, _message| %>
+      <p class="instrumentation instrumentation--danger"><%= harness %> unreachable — its sessions are not listed</p>
+    <% end %>
+    <% if @changes_error %>
+      <p class="instrumentation instrumentation--danger">changes unavailable — <%= @changes_error %></p>
+    <% end %>
+
+    <%# DW-002 §6: the registers, ordered by what needs you. "needs you" is
+        the only count that matters, so it leads even when empty — its
+        emptiness is the good news. %>
+    <section class="register">
+      <p class="instrumentation">needs you · <%= @needs_you.length %></p>
+      <% if @needs_you.empty? %>
+        <p class="prose">Nothing is waiting on you.</p>
+      <% else %>
+        <ul class="list">
+          <%= render partial: "changes/item", collection: @needs_you, as: :change %>
+        </ul>
+      <% end %>
+    </section>
+
+    <% if @working[:changes].any? || @working[:sessions].any? %>
+      <section class="register">
+        <p class="instrumentation">working · <%= @working[:changes].length + @working[:sessions].length %></p>
+        <ul class="list">
+          <%= render partial: "changes/item", collection: @working[:changes], as: :change %>
+          <%= render partial: "sessions/item", collection: @working[:sessions], as: :session %>
+        </ul>
+      </section>
+    <% end %>
+
+    <section class="register">
+      <p class="instrumentation">idle · <%= @idle[:changes].length + @idle[:sessions].length %></p>
+      <% if @idle[:changes].empty? && @idle[:sessions].empty? %>
+        <p class="prose">No sessions yet. Your first message starts one.</p>
+      <% else %>
+        <ul class="list">
+          <%= render partial: "sessions/item", collection: @idle[:sessions], as: :session %>
+          <%= render partial: "changes/item", collection: @idle[:changes], as: :change %>
+        </ul>
+      <% end %>
+    </section>
+  <% end %>
+</main>
+
+<%# One key per harness, sharing the tray's single row (rule 2: depth marks
+    the pressable keys; the row splits the same column the single key used). %>
+<nav class="action-bar" aria-label="Session actions">
+  <div class="action-bar-row">
+    <%= button_to "New pi", sessions_path, params: { harness: "pi" }, class: "button" %>
+    <%= button_to "New muse", sessions_path, params: { harness: "muse" }, class: "button" %>
+    <%= button_to "New opencode", sessions_path, params: { harness: "opencode" }, class: "button" %>
+  </div>
+</nav>
+<div class="action-bar-spacer" aria-hidden="true"></div>

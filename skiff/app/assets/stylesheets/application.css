@@ -598,6 +598,102 @@ code {
     * { transition: none !important; }
 }
 
+/* ---------- DW-002: the review ---------- */
+
+/* Registers (rule 1): whitespace divides them — the instrumentation count
+   line is the heading, the space above is the separator. */
+.register { margin-top: 2.5rem; }
+.register:first-of-type { margin-top: 0; }
+
+/* Worth-knowing (rule 5 extended): facts under an instrumentation label,
+   set small and quiet — a report, not prose. */
+.worth-knowing ul {
+    margin: 0.25rem 0 0;
+    padding-left: 1.1rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+/* Round navigation (rule 5): the current view is a fact, not a key — links
+   for the others, plain text for where you already are. */
+.round-nav { display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 1.5rem 0 0.5rem; }
+.round-nav a { color: var(--accent); text-decoration: none; }
+.round-nav-current { color: var(--text); }
+
+/* The diff (rule 1 + §4): a --fill surface like the code-block, wide lines
+   scroll inside their own box, never the page. Same palette as the
+   transcript's diff tokens — --good and --danger, never a second color set
+   (DW-001 §8, the diff precedent). */
+.diff-file {
+    background: var(--fill);
+    border-radius: 6px;
+    margin: 0.75rem 0;
+    padding: 0.5rem 0;
+}
+.diff-file-header { padding: 0.25rem 0.75rem; }
+.diff-scroll { overflow-x: auto; }
+.diff-hunk-header {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin: 0.5rem 0 0.25rem;
+    padding: 0 0.75rem;
+}
+.diff-line {
+    display: flex;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.5;
+    white-space: pre;
+}
+.diff-gutter {
+    flex: none;
+    width: 2.75rem;
+    padding-right: 0.5rem;
+    text-align: right;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+}
+.diff-text { padding-left: 0.5rem; }
+/* The changed lines carry the status colors as a wash on the surface (§2:
+   --good/--danger mark states); the text itself stays --text. */
+.diff-line--add { background: color-mix(in srgb, var(--good) 14%, transparent); }
+.diff-line--del { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+/* The annotation (DW-002 §5): the agent's justification at the point it
+   applies — a quiet aside barred in the one accent (§2: blue marks the
+   interactive/authored voice, one per view is the annotation bar). It sits
+   inside the diff surface, indented past the gutters, and wraps normally:
+   it is reading matter, not code. */
+.annotation {
+    margin: 0.25rem 0.75rem 0.5rem 3.25rem;
+    padding: 0.35rem 0 0.35rem 0.75rem;
+    border-left: 2px solid var(--accent);
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+/* The verbs (rule 2): approve is the one primary key; the request note is a
+   recess like the composer's field; edit-yourself reuses the disclosure
+   pattern. In flow, not a fixed tray — the review page ends with the
+   embedded session, and stacked fixed trays would fight for the thumb. */
+.verbs { margin-top: 2rem; display: grid; gap: 0.75rem; }
+.request-form { display: flex; gap: 0.75rem; align-items: flex-end; }
+.request-form textarea {
+    flex: 1;
+    min-height: 44px;
+    resize: none;
+}
+.edit-path {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+    margin: 0.25rem 0;
+}
+
 /* ---------- §4 responsive: the desktop column ---------- */
 
 /* DW-001 §9, recorded: the phone keeps the 40rem column; a desktop viewport
