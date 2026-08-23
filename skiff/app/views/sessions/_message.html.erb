@@ -18,7 +18,7 @@
       the thinking is visible while it streams; a settled message renders
       closed, and the user opens it on tap. %>
   <% streaming = message[:role] == "assistant" && message.dig(:time, :completed).nil? %>
-  <% parts.each do |part| %>
-    <%= render "sessions/part", part: part, message_index: message_index, streaming: streaming %>
+  <% parts.each_with_index do |part, part_index| %>
+    <%= render "sessions/part", part: part, message_index: message_index, part_index: part_index, streaming: streaming %>
   <% end %>
 </section>

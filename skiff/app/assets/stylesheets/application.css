@@ -264,6 +264,15 @@ label {
 }
 .back-link:hover { text-decoration: underline; }
 
+/* Inline links (same §7 recipe): a link inside a line of text, e.g. the
+   landed commit in the review's instrumentation. */
+.link {
+    color: var(--accent);
+    font-weight: 600;
+    text-decoration: none;
+}
+.link:hover { text-decoration: underline; }
+
 /* Login form: one field, one key, stacked on the phone. */
 .login-form { display: grid; gap: 1rem; }
 .login-form .button { justify-self: start; }

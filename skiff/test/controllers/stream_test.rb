@@ -46,9 +46,16 @@ class StreamTest < ActionDispatch::IntegrationTest
   end
 
   test "streams the snapshot as transcript, working, and orchestrator replacements" do
+    overlay = {
+      info: { id: "<pending>", role: "assistant", agent: "build", time: { created: 1 } },
+      parts: [
+        { type: "reasoning", text: "thinking…" },
+        { type: "text", text: "streaming…", synthetic: false }
+      ]
+    }
     payload = {
       messages: [ user_message("msg_1", "hello"), assistant_message("msg_2", "hi") ],
-      pending: { index: 2, entry: pending_overlay("streaming…") },
+      pending: { index: 2, entry: overlay },
       working: true,
       orchestrator: { active: true, widget: nil, status: nil }
     }
@@ -69,7 +76,11 @@ class StreamTest < ActionDispatch::IntegrationTest
     assert_includes html, 'id="message-1"'
     assert_includes html, 'id="message-2"'
     assert_includes html, "streaming…"
-    # The overlay's reasoning renders open; the working readout shows the tag.
+    # The overlay's reasoning renders open at its positional key (message
+    # 2, part 0) — the same key the settled entry renders at, which is what
+    # lets reasoning-state keep it open across settlement (card #110). The
+    # working readout shows the tag.
+    assert_includes html, "data-reasoning-state-key=\"2:0\""
     assert_includes html, 'class="instrumentation status-tag">working'
     assert_includes html, "orchestrator on"
   end
