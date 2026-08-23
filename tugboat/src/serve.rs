@@ -83,9 +83,10 @@ struct JobInner {
     outcome: Option<Outcome>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 struct Outcome {
     ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
 
@@ -291,7 +292,9 @@ pub fn run(args: ServeArgs) -> Result<()> {
             .route("/services", get(list_services))
             .route("/status", get(list_status))
             .route("/changelog/{name}", get(changelog))
+            .route("/deploy", post(deploy_fleet))
             .route("/deploy/{name}", post(deploy_service))
+            .route("/jobs/{id}", get(job_status))
             .route("/jobs/{id}/stream", get(job_stream))
             .route("/docs", get(docs_status))
             .route("/docs/refresh", post(docs_refresh))
@@ -632,13 +635,15 @@ async fn changelog(
 }
 
 /// `POST /deploy/{name}` — start a deploy job for one member and return its id.
+///
+/// The manifest is resolved and validated before the in-flight slot is
+/// reserved, so a rejected request never leaves a service marked busy.
 async fn deploy_service(
     State(state): State<Arc<ServeState>>,
     Path(name): Path<String>,
 ) -> Result<Json<DeployStarted>, (StatusCode, String)> {
-    // Validate fully before reserving the in-flight slot, so a rejected request
-    // never leaves a service marked busy. Discovery guarantees the manifest
-    // exists, so finding the service by name yields a ready-to-use manifest path.
+    // Discovery guarantees the manifest exists, so finding the service by name
+    // yields a ready-to-use manifest path.
     let fleet = state.fleet();
     let root = fleet.root_dir();
     let manifest_path = fleet::deployables(&fleet)
@@ -654,13 +659,38 @@ async fn deploy_service(
             ),
         ))?;
 
-    {
-        let mut in_flight = state.in_flight.lock().unwrap();
-        if !in_flight.insert(name.clone()) {
-            return Err((
+    let job_id = start_deploy_job(&state, &name, &manifest_path)
+        .map_err(|err| match err {
+            StartError::InProgress => (
                 StatusCode::CONFLICT,
                 format!("a deploy of `{name}` is already in progress"),
-            ));
+            ),
+        })?;
+    Ok(Json(DeployStarted { job_id }))
+}
+
+/// Why a deploy job did not start. Reservation and spawn are the only
+/// synchronous steps — the build, manifest load and install all run inside the
+/// blocking task — and the in-flight check is the only failure they can raise.
+enum StartError {
+    /// Another deploy of the same service is already running.
+    InProgress,
+}
+
+/// Reserve the in-flight slot for one service and spawn its deploy job.
+///
+/// The engine is synchronous (it drives subprocesses and joins reader threads),
+/// so it runs on a blocking task rather than the async executor; the job's
+/// transcript streams through the returned id's `/jobs/{id}/stream`.
+fn start_deploy_job(
+    state: &Arc<ServeState>,
+    name: &str,
+    manifest_path: &std::path::Path,
+) -> Result<String, StartError> {
+    {
+        let mut in_flight = state.in_flight.lock().unwrap();
+        if !in_flight.insert(name.to_owned()) {
+            return Err(StartError::InProgress);
         }
     }
 
@@ -679,9 +709,9 @@ async fn deploy_service(
         jobs.insert(job_id.clone(), job.clone());
     }
 
-    // The deploy engine is synchronous (it drives subprocesses and joins reader
-    // threads), so it runs on a blocking task rather than the async executor.
     let state_for_task = state.clone();
+    let name_for_task = name.to_owned();
+    let manifest_path = manifest_path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         let sink = ChannelSink { job: job.clone() };
         let result = (|| -> Result<()> {
@@ -692,10 +722,90 @@ async fn deploy_service(
             deploy::run(&manifest, project_dir, deploy::Source::DefaultBranch, false, &sink)
         })();
         finish(&job, result);
-        state_for_task.in_flight.lock().unwrap().remove(&name);
+        state_for_task.in_flight.lock().unwrap().remove(&name_for_task);
     });
 
-    Ok(Json(DeployStarted { job_id }))
+    Ok(job_id)
+}
+
+/// One entry in a fleet-deploy response: a started job, or a service that could
+/// not be started because another deploy of it is already running.
+#[derive(Serialize)]
+struct FleetDeployEntry {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    job_id: Option<String>,
+    /// `"in_progress"` when `job_id` is absent: the service was already
+    /// deploying, so this fleet deploy did not start a second one for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<String>,
+}
+
+/// The wire shape of one service's start result — pure so the response
+/// contract is unit-testable without a daemon.
+fn fleet_entry(name: String, start: Result<String, StartError>) -> FleetDeployEntry {
+    match start {
+        Ok(job_id) => FleetDeployEntry {
+            name,
+            job_id: Some(job_id),
+            status: None,
+        },
+        Err(StartError::InProgress) => FleetDeployEntry {
+            name,
+            job_id: None,
+            status: Some("in_progress".to_owned()),
+        },
+    }
+}
+
+/// `POST /deploy` — start a deploy job for every deployable service, in
+/// manifest order. This is the daemon half of the CLI's `tugboat fleet deploy`:
+/// each service runs the same engine with the same per-service atomicity, and
+/// one service already deploying never stops the rest — the response carries
+/// every outcome, and a caller follows each job id to its live transcript
+/// (`/jobs/{id}/stream`) or terminal outcome (`/jobs/{id}`).
+async fn deploy_fleet(
+    State(state): State<Arc<ServeState>>,
+) -> Result<Json<FleetDeployStarted>, (StatusCode, String)> {
+    let deployables = fleet::deployables(&state.fleet())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
+    let jobs = deployables
+        .iter()
+        .map(|d| fleet_entry(d.name.clone(), start_deploy_job(&state, &d.name, &d.manifest_path)))
+        .collect();
+    Ok(Json(FleetDeployStarted { jobs }))
+}
+
+#[derive(Serialize)]
+struct FleetDeployStarted {
+    jobs: Vec<FleetDeployEntry>,
+}
+
+/// `GET /jobs/{id}` — one deploy job's terminal outcome, or `null` while it
+/// runs. The live transcript stays on `/jobs/{id}/stream`; this is the
+/// poll-friendly half, for a caller that only needs to know whether the deploy
+/// finished and how (the skiff bridge records outcomes on the change it
+/// approved).
+async fn job_status(
+    State(state): State<Arc<ServeState>>,
+    Path(id): Path<String>,
+) -> Result<Json<JobStatus>, (StatusCode, String)> {
+    let job = state
+        .jobs
+        .lock()
+        .unwrap()
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such job `{id}`")))?;
+    let outcome = job.inner.lock().unwrap().outcome.clone();
+    Ok(Json(JobStatus { id, outcome }))
+}
+
+#[derive(Serialize)]
+struct JobStatus {
+    id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outcome: Option<Outcome>,
 }
 
 /// Record a job's terminal outcome and broadcast it to live viewers.
@@ -914,4 +1024,25 @@ fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fleet_entry_started_carries_job_id() {
+        let entry = fleet_entry("lighthouse".to_owned(), Ok("lighthouse-1".to_owned()));
+        assert_eq!(entry.name, "lighthouse");
+        assert_eq!(entry.job_id.as_deref(), Some("lighthouse-1"));
+        assert!(entry.status.is_none());
+    }
+
+    #[test]
+    fn fleet_entry_in_progress_has_no_job_id() {
+        let entry = fleet_entry("tidepool".to_owned(), Err(StartError::InProgress));
+        assert_eq!(entry.name, "tidepool");
+        assert!(entry.job_id.is_none());
+        assert_eq!(entry.status.as_deref(), Some("in_progress"));
+    }
 }
