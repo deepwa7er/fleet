@@ -5,7 +5,7 @@
 │ DOC. NO.  DW-002          REV. A          CLASSIFICATION: INTERNAL     │
 │ SUBJECT   Replacing git's ceremony without leaving its ecosystem       │
 │ ORIGIN    Design session 2026-08-22                                    │
-│ STATUS    Steps 01–03 shipped 2026-08-23. Step 04: DW-003.             │
+│ STATUS    Shipped. Cutover 2026-08-23 — this is the live workflow.     │
 │ SCOPE     fleet · fizzy · skiff                                        │
 └──────────────────────────────────────────────────────────────────────┘
 ```

@@ -7,7 +7,7 @@ description: Pull the most recent open Fizzy card and explain what needs to be d
 
 Use when the user wants the next piece of work from Fizzy without specifying a card — phrases like "pull the latest open card", "pull latest card", "next card", "what's open on Playground".
 
-This is a shortcut into the `fleet` workflow (`.agents/skills/fleet/SKILL.md`) for the common startup: find the most recent open card and summarize what closing it requires. Do not create a new card, worktree, branch, or PR unless the user asks.
+This is a shortcut into the `fleet` workflow (`.agents/skills/fleet/SKILL.md`) for the common startup: find the most recent open card and summarize what closing it requires. Do not create a new card, workspace, change, or round unless the user asks.
 
 ## Steps
 
@@ -29,11 +29,11 @@ This is a shortcut into the `fleet` workflow (`.agents/skills/fleet/SKILL.md`) f
    - Suggested files/areas to inspect (from card + quick search)
    - Exact next commands to start work (from fleet §2):
      ```bash
-     cd ~/code/fleet && git fetch origin
-     git worktree add .worktrees/<slug> -b fleet/<card#>-<slug> origin/main
-     cd .worktrees/<slug>
+     cd ~/code/fleet && jj git fetch --remote origin
+     jj workspace add .workspaces/<slug>
+     cd .workspaces/<slug> && jj new main@origin
      ```
-   - Gates to pass: `cargo test`, `cargo clippy -- -D warnings`, `cargo build`
+   - Gates to pass before each submitted round: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `fleet gen --check`
 5. Align on design — ask clarifying questions before starting work:
    - State your interpretation in 2-4 sentences: what "done" means for this card, the approach you'd take, key files/data-model/API boundaries you'd touch, and any risks or tradeoffs you see. Keep it brief but specific to this card — not generic.
    - Then ask 2-4 focused clarifying questions to confirm alignment. Tailor them to the card; do not reuse a canned list. Good question types:
@@ -44,4 +44,4 @@ This is a shortcut into the `fleet` workflow (`.agents/skills/fleet/SKILL.md`) f
      - UX / product intent (if UI) — per DW-001, confirm the intended feel before coding.
    - Prefer `muse.request_user_input` for these questions when the choices are discrete (2-3 options per question), otherwise ask directly in chat. Always wait for the user's answers and explicitly confirm the aligned direction (e.g. "Proceeding with X per your answer") before moving to implementation.
    - If the card is trivial/unambiguous, still confirm your reading with one question (e.g. "My read is X — correct?") rather than skipping alignment. If the user says "just do it" / "use your judgment", proceed with the interpretation you stated.
-6. Stop and ask if the user wants to start the worktree (after alignment). Never push, merge, deploy, or close the Fizzy card — human merges per fleet §5. Do not create the worktree, branch, or start coding until the user has answered the alignment questions or explicitly told you to proceed.
+6. Stop and ask if the user wants to start the workspace (after alignment). Never push, approve, deploy, or close the Fizzy card — the human approves in skiff per fleet §5. Do not create the workspace or the change, and do not start coding, until the user has answered the alignment questions or explicitly told you to proceed.
