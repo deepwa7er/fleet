@@ -233,28 +233,33 @@ impl Client {
 
     // --- writes ---
 
-    /// POST a JSON body and parse the JSON response.
+    /// Send a JSON write request and parse the JSON response.
     ///
     /// `Accept: application/json` is not decoration: Fizzy only honors Bearer
     /// auth when `request.format.json?` (`Authentication#bearer_token_authenticatable_request?`),
     /// so a non-JSON write is not merely unparsed — it is unauthenticated, and
     /// redirects to the sign-in menu instead of failing usefully. That is also
     /// why only endpoints with a JSON representation are reachable from here.
-    async fn post_json<B: Serialize, T: DeserializeOwned>(&self, url: &str, payload: &B) -> Result<T> {
+    async fn send_json<B: Serialize, T: DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        payload: &B,
+    ) -> Result<T> {
         let resp = self
             .http
-            .post(url)
+            .request(method.clone(), url)
             .bearer_auth(&self.token)
             .header(reqwest::header::ACCEPT, "application/json")
             .json(payload)
             .send()
             .await
-            .with_context(|| format!("POST {url}"))?;
+            .with_context(|| format!("{method} {url}"))?;
 
         let status = resp.status();
         if status.is_redirection() {
             bail!(
-                "POST {url} redirected ({status}) — the token was rejected or lacks `write` \
+                "{method} {url} redirected ({status}) — the token was rejected or lacks `write` \
                  permission (read tokens are GET/HEAD only), or the account prefix in {} is wrong",
                 self.base
             );
@@ -262,13 +267,13 @@ impl Client {
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
             bail!(
-                "POST {url} failed: {status} — {}",
+                "{method} {url} failed: {status} — {}",
                 body.chars().take(800).collect::<String>()
             );
         }
         resp.json()
             .await
-            .with_context(|| format!("parsing the response to POST {url}"))
+            .with_context(|| format!("parsing the response to {method} {url}"))
     }
 
     /// Create a published card in `board_id`. Returns the created card
@@ -295,7 +300,8 @@ impl Client {
             description: &'a str,
         }
 
-        self.post_json(
+        self.send_json(
+            reqwest::Method::POST,
             &url,
             &Payload {
                 card: CardPayload { title, description },
@@ -330,7 +336,7 @@ impl Client {
             body: &'a str,
         }
 
-        self.post_json(&url, &Payload { comment: CommentPayload { body } })
+        self.send_json(reqwest::Method::POST, &url, &Payload { comment: CommentPayload { body } })
             .await
             .with_context(|| {
                 format!(
@@ -340,6 +346,52 @@ impl Client {
                 )
             })
     }
+
+    /// Update a card's title and/or description, addressed by its per-account
+    /// `number`.
+    ///
+    /// Partial update: only the fields that are `Some` are sent; everything
+    /// else is preserved server-side (`CardsController#update` applies only
+    /// the provided params). Pass `None` for a field you do not want to change.
+    ///
+    /// `description` is ActionText rich text, like a card description — Fizzy
+    /// renders it, so pass HTML (see `format::markdown_to_html`).
+    pub async fn update_card(
+        &self,
+        number: i64,
+        title: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<Card> {
+        if title.is_none() && description.is_none() {
+            bail!("nothing to update — pass at least one of title or description");
+        }
+        let url = format!("{}/cards/{number}.json", self.base);
+
+        #[derive(Serialize)]
+        struct Payload<'a> {
+            card: UpdateCardPayload<'a>,
+        }
+
+        self.send_json(
+            reqwest::Method::PUT,
+            &url,
+            &Payload {
+                card: UpdateCardPayload { title, description },
+            },
+        )
+        .await
+        .with_context(|| format!("updating card #{number}"))
+    }
+}
+
+/// The `card` payload for a partial card update — `None` fields are omitted
+/// from the request so the server preserves the current value.
+#[derive(Serialize)]
+struct UpdateCardPayload<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
 }
 
 fn next_page_url(headers: &reqwest::header::HeaderMap) -> Option<String> {
@@ -426,5 +478,38 @@ mod tests {
     fn ignores_other_rels() {
         let h = headers("<https://fizzy.example/a>; rel=\"prev\", <https://fizzy.example/b>; rel=\"next\"");
         assert_eq!(next_page_url(&h).as_deref(), Some("https://fizzy.example/b"));
+    }
+
+    #[test]
+    fn update_payload_omits_unchanged_fields() {
+        let payload = UpdateCardPayload {
+            title: None,
+            description: Some("new body"),
+        };
+        let v = serde_json::to_value(&payload).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("title"), "{v}");
+        assert_eq!(obj["description"], "new body");
+    }
+
+    #[test]
+    fn update_payload_sends_both_fields_when_provided() {
+        let payload = UpdateCardPayload {
+            title: Some("new title"),
+            description: Some("new body"),
+        };
+        let v = serde_json::to_value(&payload).unwrap();
+        assert_eq!(v["title"], "new title");
+        assert_eq!(v["description"], "new body");
+    }
+
+    #[tokio::test]
+    async fn update_rejects_empty_update_before_any_request() {
+        let c = client("https://fizzy.example", "1").unwrap();
+        let err = c.update_card(1, None, None).await.unwrap_err();
+        assert!(
+            err.to_string().contains("nothing to update"),
+            "unexpected error: {err:#}"
+        );
     }
 }

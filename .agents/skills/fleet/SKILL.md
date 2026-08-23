@@ -15,7 +15,7 @@ Use when making **any** change to `fleet` (code, docs, style, config). One card 
 
 ## 1. Discover → Card
 
-- Search and read first. If you find a gap, bug, or follow-up, create a card per `.agents/skills/fizzy/SKILL.md#4` (single source of truth for the `draft → lint → create` flow):
+- Search and read first. If you find a gap, bug, or follow-up, create a card per `.agents/skills/fizzy/SKILL.md#4` (single source of truth for the `draft → lint → create` flow). If the follow-up extends an *existing* card (new evidence, narrowed scope), update that card in place with `fizzy update` (fizzy skill §5) instead of creating a duplicate:
 
 ```bash
 cargo run -p fizzy -- draft --title "fleet: <area> — <what>"

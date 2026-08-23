@@ -1,6 +1,6 @@
 ---
 name: fizzy
-description: Create and list Fizzy (Once) kanban cards from the shell — the agent's write path to the kanban board. Use when you have found a repo gap that should become a triage card, or when the user asks to list boards/cards.
+description: Create, list, and update Fizzy (Once) kanban cards from the shell — the agent's write path to the kanban board. Use when you have found a repo gap that should become a triage card, when you need to revise a card after new findings, or when the user asks to list boards/cards.
 ---
 
 # Fizzy — kanban card CLI for Muse
@@ -13,6 +13,7 @@ description: Create and list Fizzy (Once) kanban cards from the shell — the ag
 - Account: `1` (Fizzy mounts at `/{account}/boards.json` — without it every request 302s to `/session/menu`)
 - Token: file `~/.config/fizzy/write-token` (0600), `permission: write` (`Identity::AccessToken#allows?` is `GET|HEAD || write?`). Env override `FIZZY_TOKEN_FILE`.
 - Create: `POST /{account}/boards/:board_id/cards.json` `{"card":{"title": "...", "description": "…"}}` → `201 {number, title}` (`CardsController#create`, `status: published`, `creator: Current.user`).
+- Update: `PUT /{account}/cards/:number.json` `{"card":{"title": "…", "description": "…"}}` → `200 {number, title}` (`CardsController#update`). Partial: omitted fields are preserved — send only what changed.
 - Comment: `POST /{account}/cards/:number/comments.json` `{"comment":{"body": "<html>"}}` → `201 {id, url, body:{plain_text}}` (`Cards::CommentsController#create`). `403` means the card is a draft — `Card::Commentable#commentable?` is `published?`. Closed cards still accept comments.
 
 Read tokens (`/etc/mirror/fizzy-token` on the VPS) can only `GET`/`HEAD`.
@@ -89,13 +90,38 @@ Flags:
 - `draft --title <TITLE> [--output /tmp/card.md] [--force]` — writes the `Why / Evidence / Options / Provenance` template (default `/tmp/<slug>.md`). This is the preferred entry point.
 - `lint --title <TITLE> (--body "…" | --body-file <PATH>)` — validates and prints the normalised body without posting. `fleet:` titles require `## Why` + `## Evidence`; all titles print soft warnings for missing `Provenance` / title dash.
 - `create --board <BOARD> --title <TITLE> (--body-file <PATH> | --body "…") [--dry-run] [--dedupe] [--raw]` — posts the card. Bodies are normalised before POST (blank lines around headings, `*text` → `* text`, `---` rules). `fleet:` cards missing `Why`/`Evidence` are rejected unless `--raw`. `--body` is deprecated — it still works but warns; prefer `draft` + `--body-file` to preserve newlines.
+- `update <NUMBER> [--title <TITLE>] [--body-file <PATH> | --body "…"] [--dry-run] [--raw]` — revises an existing card in place. Partial update: only the fields you pass change; the rest is preserved. Number is positional (like `show`/`comment`); at least one of `--title`/`--body`/`--body-file` is required. Same normalisation and `fleet:` `Why`/`Evidence` validation as `create` (skipped with `--raw`); body-only updates validate against the card's current title.
 - `--dry-run` — print what would be POSTed (normalised body) and exit 0.
 - `--dedupe` — skip if a published triage card with the same title already exists (checked before `--dry-run`).
 - Env overrides: `FIZZY_BASE`, `FIZZY_ACCOUNT`, `FIZZY_TOKEN_FILE`
 
 Formatting guarantees (in `crates/fizzy/src/format.rs`): `\r\n`→`\n`, trailing ws stripped, at most one blank line, blank line before/after every `##` heading and `---` rule, blank line after heading before content, list markers normalised (`-item` → `- item`, `1.item` → `1. item`), fenced blocks preserved, ends with single `\n`.
 
-### 5. Comment on a card — record an outcome
+### 5. Update a card — revise findings in place, don't duplicate
+
+A follow-up investigation that extends an existing card (new evidence,
+narrowed scope) updates that card — never create a second card for the same
+gap. The update is partial: only the fields you pass change, so a title-only
+fix does not touch the body and vice versa.
+
+```bash
+# 1. Fetch the current body, edit the relevant section, then post
+cargo run -p fizzy -- show 80 > /tmp/card80.md
+$EDITOR /tmp/card80.md   # extend Why / Evidence / Options
+
+# 2. Check it, then update
+cargo run -p fizzy -- lint --title "fleet: <area> — <what>" --body-file /tmp/card80.md
+cargo run -p fizzy -- update 80 --body-file /tmp/card80.md
+# updated #80: fleet: <area> — <what>
+# https://fizzy.intern.deepwa7er.net/1/cards/80
+```
+
+**ActionText gotcha:** Fizzy's rich-text sanitizer strips unknown HTML tags
+on save — a literal `<name>` placeholder does not survive (`localhost/<name>:deploy`
+was stored as `localhost/:deploy`). Use plain-text placeholders (`${NAME}`)
+for angle-bracket-shaped text; the CLI normaliser cannot guard against this.
+
+### 6. Comment on a card — record an outcome
 
 ```bash
 cargo run -p fizzy -- comment 81 --body-file /tmp/shipped.md
@@ -126,7 +152,8 @@ Always use `~/.config/fizzy/write-token` (or `FIZZY_TOKEN_FILE`) — never `echo
 
 - After you have finished a repo investigation and have 1–3 concrete gaps that are **actionable cards**, not observations. Show the draft `title`/`body` and ask before posting, unless the user said "create cards for the gaps."
 - Prefer one card per gap, with a short `fleet: <area> — <what>` title and a body containing `Why / Evidence (file:line) / Options / Provenance`. Use `draft` so you don't hand-roll the scaffold.
+- When a follow-up investigation extends an existing card (new evidence, narrowed scope), **update the card in place** with `fizzy update` — never create a second card for the same gap.
 
-### After creating
+### After creating or updating
 
-Echo the printed `https://fizzy.intern.deepwa7er.net/1/cards/:number` URL back to the user so they can open it.
+Echo the printed `https://fizzy.intern.deepwa7er.net/1/cards/:number` URL back to the user so they can open it — both `create` and `update` print it.

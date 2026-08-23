@@ -1,7 +1,8 @@
-//! `fizzy` — create and list Fizzy (Once) cards from the shell.
+//! `fizzy` — create, list, and update Fizzy (Once) cards from the shell.
 //!
-//! The agent's write path: `cargo run -p fizzy -- create --board Playground --title "…" --body-file /tmp/card.md`.
-//! Reads the write token from `FIZZY_TOKEN_FILE` (default `~/.config/fizzy/write-token`), not from env —
+//! The agent's write path: `cargo run -p fizzy -- create --board Playground --title "…" --body-file /tmp/card.md`
+//! to post a card, and `cargo run -p fizzy -- update 42 --title "…" --body-file /tmp/card.md`
+//! to revise one. Reads the write token from `FIZZY_TOKEN_FILE` (default `~/.config/fizzy/write-token`), not from env —
 //! `/proc/<pid>/environ` and `systemctl show` both leak env, while a 0600 file does not (same rationale as
 //! `MIRROR_FIZZY_TOKEN_FILE` in `mirror.service`).
 
@@ -15,7 +16,7 @@ use fizzy::format;
 use fizzy::{Client, Standing};
 
 #[derive(Parser)]
-#[command(name = "fizzy", about = "Fizzy (Once) card client — list boards and create triage cards")]
+#[command(name = "fizzy", about = "Fizzy (Once) card client — list boards, create and update triage cards")]
 struct Cli {
     /// Origin, e.g. https://fizzy.intern.deepwa7er.net (no trailing slash, no account).
     #[arg(long, env = "FIZZY_BASE", default_value = "https://fizzy.intern.deepwa7er.net")]
@@ -103,6 +104,31 @@ enum Command {
         #[arg(long)]
         dedupe: bool,
         /// Skip scaffold validation (still normalises markdown). Use for free-form idea cards.
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Update an existing card's title and/or body.
+    ///
+    /// Partial update: only the fields you pass change; everything else is
+    /// preserved. At least one of `--title` / `--body` / `--body-file` is
+    /// required. Body updates run the same normalisation and `Why / Evidence`
+    /// scaffold validation as `create` (skip with `--raw`).
+    Update {
+        /// Card number, as it appears in the URL `/1/cards/<number>` (with or without a leading `#`).
+        number: String,
+        /// New title. Omit to keep the current title.
+        #[arg(long)]
+        title: Option<String>,
+        /// New body (markdown — Fizzy renders it). Prefer `--body-file`.
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        /// Read the new body from a file (preferred — preserves newlines and markdown structure).
+        #[arg(long, conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        /// If set, don't PUT — print what would be sent and exit 0.
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip scaffold validation (still normalises markdown).
         #[arg(long)]
         raw: bool,
     },
@@ -369,6 +395,100 @@ async fn run() -> Result<()> {
             // Fizzy's canonical card URL is <origin>/<account>/cards/:number — and
             // `base` is exactly origin/account, e.g. https://fizzy.intern.deepwa7er.net/1.
             println!("created #{}: {}", card.number, card.title);
+            println!("{}/cards/{}", c.base(), card.number);
+            if let Some(board) = card.board {
+                println!("board: {} ({})", board.name, board.id);
+            }
+        }
+        Command::Update {
+            number,
+            title,
+            body,
+            body_file,
+            dry_run,
+            raw,
+        } => {
+            let n: i64 = number
+                .trim()
+                .trim_start_matches('#')
+                .parse()
+                .with_context(|| format!("card number must be an integer, got {number:?}"))?;
+
+            if title.is_none() && body.is_none() && body_file.is_none() {
+                anyhow::bail!("nothing to update — pass at least one of --title, --body, or --body-file");
+            }
+            if let Some(t) = &title {
+                format::validate_title(t)?;
+            }
+
+            let is_body_flag = body.is_some();
+            let raw_body = if let Some(p) = &body_file {
+                Some(
+                    std::fs::read_to_string(p)
+                        .with_context(|| format!("reading body from {}", p.display()))?,
+                )
+            } else {
+                body
+            };
+            if is_body_flag {
+                eprintln!(
+                    "warning: --body is deprecated — use `fizzy draft --title ...` and --body-file for reliable formatting (preserves newlines, headings, lists)"
+                );
+            }
+            let body_text = raw_body.map(|rb| format::normalize_body(&rb));
+
+            let c = client_with(&base, &account, &token_file)?;
+
+            // Fetch the current card so scaffold validation and --dry-run
+            // reflect the card's *resulting* state — a body-only update still
+            // inherits the current title for `fleet:` strictness.
+            let current = c.card(n).await?;
+            let effective_title = title.clone().unwrap_or(current.title.clone());
+
+            if let Some(bt) = &body_text {
+                let warnings = format::validate_body(bt, &effective_title);
+                if !raw && !warnings.is_empty() {
+                    let is_hard = warnings
+                        .iter()
+                        .any(|w| w.contains("## Why") || w.contains("## Evidence"));
+                    if is_hard {
+                        eprintln!("validation failed for {effective_title:?}:");
+                        for w in &warnings {
+                            eprintln!("  - {w}");
+                        }
+                        eprintln!("hint: run `cargo run -p fizzy -- lint --title {effective_title:?} --body-file <path>` to check, or pass --raw to skip this check");
+                        anyhow::bail!("aborted — body missing required sections (use --raw to update anyway)");
+                    } else {
+                        for w in &warnings {
+                            eprintln!("warning: {w}");
+                        }
+                    }
+                }
+            }
+
+            if dry_run {
+                println!("dry-run: would PUT {}/cards/{}.json", c.base(), n);
+                println!("number: #{}", current.number);
+                println!("title: {effective_title}");
+                if let Some(bt) = &body_text {
+                    let html_preview = format::markdown_to_html(bt);
+                    println!("--- body (markdown, normalised) ---");
+                    println!("{bt}");
+                    println!("--- end body ---");
+                    if !html_preview.is_empty() {
+                        println!("--- html (what will be PUT) ---");
+                        println!("{html_preview}");
+                        println!("--- end html ---");
+                    }
+                } else {
+                    println!("(body unchanged)");
+                }
+                return Ok(());
+            }
+
+            let html_body = body_text.map(|bt| format::markdown_to_html(&bt));
+            let card = c.update_card(n, title.as_deref(), html_body.as_deref()).await?;
+            println!("updated #{}: {}", card.number, card.title);
             println!("{}/cards/{}", c.base(), card.number);
             if let Some(board) = card.board {
                 println!("board: {} ({})", board.name, board.id);
