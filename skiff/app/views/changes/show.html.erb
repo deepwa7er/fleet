@@ -42,15 +42,32 @@
       <p class="instrumentation instrumentation--danger">landed, but the card comment failed — <%= comment[:message] %></p>
     <% end %>
 
+    <%# The deploy an approval triggers (card #123): the per-service readout
+        after the land, recorded by the bridge — never un-shipping anything.
+        A failed trigger (daemon down) is one danger line; otherwise each
+        started service gets a fact line as its outcome arrives. %>
+    <% if (deploy = @change[:deploy]) %>
+      <% if deploy[:error] %>
+        <p class="instrumentation instrumentation--danger">deploy not triggered — <%= deploy[:error] %></p>
+      <% else %>
+        <% Array(deploy[:services]).each do |service| %>
+          <p class="instrumentation <%= "instrumentation--danger" if service[:outcome] && !service[:outcome][:ok] %>">
+            deploy · <%= service[:name] %> · <%= deploy_service_state(service) %>
+          </p>
+        <% end %>
+      <% end %>
+    <% end %>
+
     <%# The poll (DW-002 §6: round n+1 appears in place, approve's outcome
         follows). Mounted only while the page can go stale on its own — an
         agent working, or a landing in flight. It reloads whole; the view
         renders ops, it never diffs. %>
-    <% poll = %w[working landing].include?(@change[:state]) %>
+    <% poll = %w[working landing].include?(@change[:state]) || deploy_pending?(@change) %>
     <div <% if poll %>data-controller="change-poll"
          data-change-poll-url-value="<%= change_status_path(@change[:repo], @change[:card]) %>"
          data-change-poll-state-value="<%= @change[:state] %>"
-         data-change-poll-rounds-value="<%= rounds.length %>"<% end %>>
+         data-change-poll-rounds-value="<%= rounds.length %>"
+         data-change-poll-deploy-pending-value="<%= deploy_pending?(@change) %>"<% end %>>
 
       <% if rounds.any? %>
         <%# Two views fall out for free (DW-002 §4): this round's diff, and
@@ -121,7 +138,10 @@
         otherwise — controls are real actions, never decoration. %>
     <% if @change[:state] == "in_review" %>
       <section class="verbs">
-        <%= button_to "Approve — rebase onto main and push", approve_change_path(@change[:repo], @change[:card]), class: "button" %>
+        <%= button_to "Approve — land and deploy the fleet", approve_change_path(@change[:repo], @change[:card]), class: "button" %>
+        <% if (will = @change[:willDeploy]) %>
+          <p class="instrumentation">approval will deploy the whole fleet · <%= will[:services] %> services</p>
+        <% end %>
 
         <%= form_with url: request_changes_change_path(@change[:repo], @change[:card]), class: "request-form",
               data: { controller: "composer", action: "submit->composer#disableDuringSubmit" } do |form| %>

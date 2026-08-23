@@ -36,7 +36,12 @@ class ChangesController < ApplicationController
   # and reloads whole — it never diffs (skiff's own rule).
   def status
     change = BridgeClient.change(params[:repo], params[:card])
-    render json: { state: change[:state], rounds: Array(change[:rounds]).length, updatedAt: change[:updatedAt] }
+    render json: {
+      state: change[:state],
+      rounds: Array(change[:rounds]).length,
+      updatedAt: change[:updatedAt],
+      deployPending: helpers.deploy_pending?(change)
+    }
   rescue BridgeClient::Error
     head :bad_gateway
   end

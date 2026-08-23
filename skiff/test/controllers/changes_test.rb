@@ -137,6 +137,7 @@ class ChangesTest < ActionDispatch::IntegrationTest
     payload = JSON.parse(response.body)
     assert_equal "in_review", payload["state"]
     assert_equal 1, payload["rounds"]
+    assert_equal false, payload["deployPending"]
   end
 
   test "approve redirects with the landing notice" do
@@ -187,5 +188,58 @@ class ChangesTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_select ".instrumentation--danger", text: /skiff bridge unreachable/
+  end
+
+  test "show renders the deploy preview and the per-service readout" do
+    deployed = change_fixture.merge(
+      willDeploy: { services: 7 },
+      deploy: {
+        at: "2026-08-23T12:01:00Z",
+        error: nil,
+        services: [
+          { name: "lighthouse", jobId: "lighthouse-1", status: "started", outcome: { ok: true } },
+          { name: "tidepool", jobId: "tidepool-2", status: "started", outcome: { ok: false, message: "build failed" } },
+          { name: "sonar", jobId: nil, status: "in_progress", outcome: nil }
+        ]
+      }
+    )
+    stub_show(deployed) do
+      get change_path("fleet", 81)
+    end
+
+    assert_response :success
+    assert_select "p.instrumentation", text: /approval will deploy the whole fleet · 7 services/
+    assert_select "p.instrumentation", text: /deploy · lighthouse · deployed/
+    assert_select "p.instrumentation.instrumentation--danger", text: /deploy · tidepool · failed — build failed/
+    assert_select "p.instrumentation", text: /deploy · sonar · already deploying/
+  end
+
+  test "show reports a deploy that never triggered" do
+    stub_show(
+      change_fixture.merge(deploy: { at: "2026-08-23T12:01:00Z", error: "tugboat daemon unreachable", services: [] })
+    ) do
+      get change_path("fleet", 81)
+    end
+
+    assert_response :success
+    assert_select "p.instrumentation.instrumentation--danger", text: /deploy not triggered — tugboat daemon unreachable/
+  end
+
+  test "the page keeps polling while a shipped change's deploy is in flight" do
+    pending = change_fixture(state: "shipped").merge(
+      deploy: { at: "x", error: nil, services: [ { name: "lighthouse", jobId: "lighthouse-1", status: "started", outcome: nil } ] }
+    )
+    stub_show(pending) do
+      get change_path("fleet", 81)
+    end
+    assert_select "[data-controller='change-poll'][data-change-poll-deploy-pending-value='true']"
+
+    done = change_fixture(state: "shipped").merge(
+      deploy: { at: "x", error: nil, services: [ { name: "lighthouse", jobId: "lighthouse-1", status: "started", outcome: { ok: true } } ] }
+    )
+    stub_show(done) do
+      get change_path("fleet", 81)
+    end
+    assert_select "[data-controller='change-poll']", 0
   end
 end

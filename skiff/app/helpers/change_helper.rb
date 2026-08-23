@@ -59,6 +59,29 @@ module ChangeHelper
     anchors_for(file, line).flat_map { |key| lookup.fetch(key, []) }
   end
 
+  # One service's deploy state, as a fact: the daemon reported it already
+  # deploying (this approval started nothing), a job is still running, it
+  # deployed, or it failed with the daemon's reason.
+  def deploy_service_state(service)
+    return "already deploying" if service[:status] == "in_progress"
+
+    outcome = service[:outcome]
+    return "deploying" if outcome.nil?
+
+    outcome[:ok] ? "deployed" : "failed — #{outcome[:message]}"
+  end
+
+  # Whether a shipped change still has deploy jobs in flight — true from the
+  # trigger until every started job reports an outcome (or the bridge's poll
+  # deadline passed). Keeps the review page reloading while the fleet is
+  # still deploying, exactly like a landing in flight.
+  def deploy_pending?(change)
+    deploy = change[:deploy]
+    return false if deploy.nil? || deploy[:error]
+
+    Array(deploy[:services]).any? { |service| service[:jobId] && service[:outcome].nil? }
+  end
+
   private
 
   def anchors_for(file, line)

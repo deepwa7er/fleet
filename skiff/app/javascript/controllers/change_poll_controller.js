@@ -13,6 +13,7 @@ export default class extends Controller {
     url: String,
     state: String,
     rounds: Number,
+    deployPending: Boolean,
     interval: { type: Number, default: 5000 },
   }
 
@@ -33,7 +34,11 @@ export default class extends Controller {
     } catch {
       return
     }
-    if (status.state !== this.stateValue || status.rounds !== this.roundsValue) {
+    if (
+      status.state !== this.stateValue ||
+      status.rounds !== this.roundsValue ||
+      status.deployPending !== this.deployPendingValue
+    ) {
       Turbo.visit(window.location.href, { action: "replace" })
     }
   }
