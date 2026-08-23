@@ -39,6 +39,8 @@ describe("the three verbs", { skip: SKIP }, () => {
   let tmp;
   let repoDir;
   let originDir;
+  let recordDir;
+  let recordOriginDir;
   let bridge;
   let base;
   let fizzyStub;
@@ -95,6 +97,12 @@ describe("the three verbs", { skip: SKIP }, () => {
 
     originDir = path.join(tmp, "origin.git");
     await git(["init", "--bare", originDir]);
+    // The record repository (DW-003): a local checkout with a bare origin,
+    // exactly the production shape.
+    recordOriginDir = path.join(tmp, "record-origin.git");
+    await git(["init", "--bare", recordOriginDir]);
+    recordDir = path.join(tmp, "record");
+    await git(["clone", recordOriginDir, recordDir]);
     const reposDir = path.join(tmp, "repos");
     repoDir = path.join(reposDir, "demo");
     await fs.mkdir(repoDir, { recursive: true });
@@ -133,6 +141,7 @@ describe("the three verbs", { skip: SKIP }, () => {
         dir: path.join(tmp, "changes"),
         reposDir,
         binary: JJ,
+        record: { dir: recordDir, binary: GIT },
         fizzy: {
           base: `http://127.0.0.1:${fizzyStub.address().port}`,
           account: "1",
@@ -182,6 +191,21 @@ describe("the three verbs", { skip: SKIP }, () => {
     // keeping change ids, not commit ids.
     assert.equal(change.rounds[0].changeId, r1);
     assert.equal(change.rounds[1].changeId, r2);
+    // The record entry (DW-003): written, pushed, public-subset only.
+    assert.equal(change.recordExport.ok, true);
+    const entry = JSON.parse(await fs.readFile(path.join(recordDir, "demo", "81.json"), "utf8"));
+    assert.equal(entry.title, "pi model picker");
+    assert.equal(entry.tip, change.landed.tip);
+    assert.equal(entry.rounds.length, 2);
+    assert.match(entry.rounds[0].diff, /\+feature/);
+    assert.deepEqual(entry.rounds[0].gatesRan, ["cargo test"]);
+    assert.deepEqual(entry.afterward, []);
+    assert.ok(!("note" in entry.rounds[0]), "round notes are private");
+    assert.ok(!("session" in entry), "session ids are private");
+    assert.ok(!("path" in entry), "filesystem paths are private");
+    // Pushed: the record origin holds the commit.
+    const { stdout: recordLog } = await execFileAsync(GIT, ["--git-dir", recordOriginDir, "log", "--oneline", "-1"]);
+    assert.match(recordLog, /record: demo #81 — pi model picker/);
   });
 
   it("a conflicting landing returns to review carrying the conflicted rounds, and lands after resolution", async () => {
@@ -281,6 +305,25 @@ describe("the three verbs", { skip: SKIP }, () => {
     assert.equal(bound.status, 200);
     assert.equal((await bound.json()).session, "pi:multi-turn");
     assert.equal((await post("/change", { repo: "demo", card: 86, session: "warp:123" })).status, 400);
+  });
+
+  it("a failed record export is recorded on the change and never un-ships it", async () => {
+    const hook = path.join(recordOriginDir, "hooks", "pre-receive");
+    await fs.writeFile(hook, "#!/bin/sh\necho record origin rejects >&2\nexit 1\n", { mode: 0o755 });
+
+    const tip = (await jj(["log", "--no-graph", "-r", "main@origin", "-T", "change_id"])).trim();
+    const w1 = await makeRound(tip, "j.txt", "content\n", "export-failure round");
+    await post("/change", { repo: "demo", card: 87 });
+    await post("/change/demo/87/round", { author: "agent", changeId: w1 });
+    await post("/change/demo/87/submit");
+    await post("/change/demo/87/approve");
+
+    const change = await settledChange(87);
+    await fs.rm(hook);
+    assert.equal(change.state, "shipped", "the land is the irreversible half; the export never blocks it");
+    assert.equal(change.recordExport.ok, false);
+    assert.match(change.recordExport.message, /record export failed/);
+    assert.equal(change.cardComment.ok, true, "the card comment still happens after a failed export");
   });
 
   it("approve requires review", async () => {

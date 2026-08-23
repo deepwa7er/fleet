@@ -157,6 +157,17 @@ mutations run *without* `--ignore-working-copy` — they take part in normal
 snapshot/checkout discipline like a human's own jj commands, and every one
 of them is in the operation log and undoable.
 
+After a land — beside the card comment, with the same recorded-not-blocking
+discipline — the bridge exports the entry the timeline renders (DW-003):
+the public subset of the change (title, card, rounds, claims, annotations,
+diffs frozen at ship time; round notes, session ids, and paths never leave)
+written to the record checkout (`SKIFF_BRIDGE_RECORD_DIR`, default
+`~/code/record`), committed under the bridge's own identity, and pushed —
+pushing is publishing. The outcome lands on the change as `recordExport`;
+a failed export is visible there and never un-ships anything. The privacy
+filter is `buildEntry` in `lib/record.js`, and exclusion is the default: a
+new change field reaches the record only by being added there deliberately.
+
 Division of storage follows the design: the jj repository holds the rounds
 (they are commits), Fizzy holds the card, and the bridge owns what has no
 other home — annotations and the change record — as one append-only JSONL

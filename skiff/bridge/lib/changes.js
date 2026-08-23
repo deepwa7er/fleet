@@ -23,6 +23,7 @@ import { randomUUID } from "node:crypto";
 import { HttpError } from "./errors.js";
 import { createChangeStore } from "./change-store.js";
 import { createFizzyCards } from "./fizzy-cards.js";
+import { createRecord } from "./record.js";
 import { createJjClient, diffFilePaths, isFullChangeId } from "./jj.js";
 import { resolveBinary } from "./resolve-binary.js";
 import { xdgDataDir } from "./xdg.js";
@@ -64,6 +65,20 @@ export function createChanges(config, { defaultCwd }) {
   const jj = createJjClient(resolveBinary("jj", config.binary ?? process.env.JJ_BINARY));
   const store = createChangeStore({ dir });
   const fizzy = createFizzyCards(config.fizzy ?? {});
+  // A host without git keeps its landings; every export then fails into
+  // the change's recordExport readout with the boot error — visible, never
+  // fatal, the same degrade as a missing harness.
+  const record = (() => {
+    try {
+      return createRecord(config.record ?? {});
+    } catch (err) {
+      return {
+        export: async () => {
+          throw new Error(`record unavailable: ${err.message}`);
+        },
+      };
+    }
+  })();
   // One in-flight landing per change, awaitable — shutdown drains these so
   // a bridge restart never abandons a land mid-push.
   const landings = new Map();
@@ -144,8 +159,21 @@ export function createChanges(config, { defaultCwd }) {
         console.error(`skiff-bridge: landed ${repoName}/${card} but could not resolve its tip:`, err.message);
       }
       const landed = await store.completeLanding(repoName, card, { tip });
-      // Land first, then write to the card: a comment failure is recorded
-      // on the change and never un-ships it.
+      // Land first, then the metadata — the export to the record (DW-003
+      // §3: the entry is written after the push, beside the Fizzy comment)
+      // and the card comment. Each failure is recorded on the change and
+      // never un-ships it.
+      try {
+        const enriched = await enrich(repoPath, landed);
+        const diffsByRound = new Map();
+        for (const round of enriched.rounds) {
+          diffsByRound.set(round.n, await jj.diffForRound(repoPath, round.changeId));
+        }
+        await record.export(enriched, diffsByRound);
+        await store.recordExport(repoName, card, { ok: true });
+      } catch (err) {
+        await store.recordExport(repoName, card, { ok: false, message: err.message });
+      }
       try {
         await fizzy.commentOnCard(card, landedComment(landed));
         await store.recordCardComment(repoName, card, { ok: true });
