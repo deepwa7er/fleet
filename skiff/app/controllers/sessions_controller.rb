@@ -72,9 +72,19 @@ class SessionsController < ApplicationController
 
   # The streaming proxy. Each bridge SSE frame is translated into turbo-stream
   # HTML and re-framed as one SSE `data:` message; the view renders it with
-  # Turbo.renderStreamMessage. The upstream read has no timeout — the bridge
-  # owns liveness — and when the bridge or the browser goes away, the action
-  # ends and EventSource reconnects (the next snapshot converges the DOM).
+  # Turbo.renderStreamMessage. When the bridge or the browser goes away, the
+  # action ends and EventSource reconnects (the next snapshot converges the
+  # DOM).
+  #
+  # This action holds a Puma thread for as long as it runs, so noticing that
+  # the browser left is what keeps the pool from draining: a thread blocked
+  # reading the bridge learns nothing from breakwater closing the downstream
+  # socket. The bridge's heartbeat is the fix on both ends — it bounds the
+  # upstream read (BridgeClient::STREAM_READ_TIMEOUT, so a stalled bridge
+  # frees the thread), and each tick is forwarded downstream as an SSE
+  # comment, which is the write that raises ClientDisconnected once the
+  # viewer is gone. An idle session therefore releases its thread within one
+  # heartbeat of the page closing, not never.
   def stream
     response.headers["Content-Type"] = "text/event-stream"
     response.headers["Cache-Control"] = "no-cache"
@@ -83,15 +93,19 @@ class SessionsController < ApplicationController
     BridgeClient.stream_session(params[:id]) do |chunk|
       buffer << chunk
       while (frame = extract_frame!(buffer))
-        actions = translate_stream_event(frame)
-        next if actions.blank?
-
-        write_stream_events(actions)
+        event, payload = parse_frame(frame)
+        if event == "heartbeat"
+          write_stream_heartbeat
+        else
+          actions = translate_stream_event(event, payload)
+          write_stream_events(actions) if actions.present?
+        end
       end
     end
   rescue BridgeClient::Error
-    # Upstream unreachable or dropped: end the stream quietly; the browser's
-    # EventSource retries and the bridge answers with a snapshot on success.
+    # Upstream unreachable, dropped, or silent past the heartbeat window: end
+    # the stream quietly; the browser's EventSource retries and the bridge
+    # answers with a snapshot on success.
   rescue ActionController::Live::ClientDisconnected
     # The page went away; closing the upstream read is the teardown.
   ensure
@@ -169,8 +183,7 @@ class SessionsController < ApplicationController
   #   working      -> the working readout (tag + abort key)
   #   orchestrator -> the orchestrator readout (mode tag, toggle, widget)
 
-  def translate_stream_event(frame)
-    event, payload = parse_frame(frame)
+  def translate_stream_event(event, payload)
     case event
     when "snapshot" then snapshot_actions(payload)
     when "append" then [ append_action(payload) ]
@@ -265,6 +278,12 @@ class SessionsController < ApplicationController
     html = render_to_string(turbo_stream: actions.reduce(:+))
     html.lines.each { |line| response.stream.write("data: #{line.chomp}\n") }
     response.stream.write("\n")
+  end
+
+  # An SSE comment: EventSource discards it, so the page sees nothing, but
+  # the write itself is what detects a viewer that has gone away.
+  def write_stream_heartbeat
+    response.stream.write(": heartbeat\n\n")
   end
 
   # The picker's options for a session whose harness switches models; nil

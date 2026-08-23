@@ -21,6 +21,7 @@ const FAKE_PI = path.join(FIXTURES, "fake-pi.mjs");
 const FAKE_MUSE = path.join(FIXTURES, "fake-muse.mjs");
 const PASSWORD = "test-password";
 const PROMPT_TEXT = "hello stream hello stream hello stream hello stream";
+const HEARTBEAT_MS = 100;
 
 process.env.FAKE_PI_DELAY_MS = "80";
 
@@ -42,6 +43,9 @@ before(async () => {
     pi: { sessionDir: tmp, binary: FAKE_PI, maxProcesses: 8 },
     muse: { sessionDir: path.join(tmp, "muse", "sessions"), binary: FAKE_MUSE },
     opencode: { url: "http://127.0.0.1:1" },
+    // Fast heartbeats so the liveness test runs in milliseconds; every other
+    // test filters by event name and is indifferent to the extra frames.
+    stream: { heartbeatIntervalMs: HEARTBEAT_MS },
   });
   await bridge.listen();
   base = `http://127.0.0.1:${bridge.port()}`;
@@ -280,10 +284,11 @@ describe("stream endpoint", () => {
     const { id } = await createSession("stream newborn");
     const stream = await openStream(id);
 
-    // No file yet: the subscription is silent until the first message
-    // persists the file, then the initial read delivers the snapshot.
+    // No file yet: the subscription carries no state until the first message
+    // persists the file, then the initial read delivers the snapshot. (The
+    // heartbeat ticks regardless — it is liveness, not state.)
     await sleep(150);
-    assert.equal(stream.frames.length, 0);
+    assert.deepEqual(stream.frames.filter((f) => f.event !== "heartbeat"), []);
 
     const prompt = await post(`/session/${id}/prompt_async`, { parts: [{ type: "text", text: "first!" }] });
     assert.equal(prompt.status, 200);
@@ -437,5 +442,22 @@ describe("stream endpoint", () => {
     const snap = await again.next((f) => f.event === "snapshot");
     assert.equal(snap.data.messages.length, 2);
     await again.close();
+  });
+
+  it("ticks a heartbeat on the interval while subscribed, and stops with the last subscriber", async () => {
+    const { id } = await createSession("stream heartbeat");
+    const stream = await openStream(id);
+
+    // Liveness is independent of state: ticks arrive before any file exists.
+    await sleep(HEARTBEAT_MS * 3.5);
+    const ticks = stream.frames.filter((f) => f.event === "heartbeat");
+    assert.ok(ticks.length >= 2 && ticks.length <= 4, `expected ~3 heartbeats, got ${ticks.length}`);
+    assert.deepEqual(ticks[0].data, {});
+
+    await stream.close();
+    assert.equal(bridge.registry.hasSubscribers(id), false);
+    const ticksAtClose = stream.frames.filter((f) => f.event === "heartbeat").length;
+    await sleep(HEARTBEAT_MS * 3);
+    assert.equal(stream.frames.filter((f) => f.event === "heartbeat").length, ticksAtClose);
   });
 });

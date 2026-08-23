@@ -24,6 +24,14 @@ class BridgeClient
   OPEN_TIMEOUT = 5
   READ_TIMEOUT = 15
 
+  # The bridge ticks a `heartbeat` event on every stream at this interval
+  # (bridge/lib/stream-registry.js HEARTBEAT_INTERVAL_MS). A stream that
+  # stays silent for several intervals is a bridge that has stalled or
+  # vanished without closing the socket, so the stream read times out at a
+  # multiple of it — never at an idle session, which still ticks.
+  STREAM_HEARTBEAT_INTERVAL = 15
+  STREAM_READ_TIMEOUT = STREAM_HEARTBEAT_INTERVAL * 3
+
   class << self
     def health
       get("/global/health")
@@ -86,16 +94,15 @@ class BridgeClient
     end
 
     # Open the session's SSE stream and yield each body chunk as it arrives.
-    # Liveness is the bridge's job — the stream stays open for the page's
-    # lifetime, so this read deliberately has no read timeout (an idle
-    # session would otherwise be killed mid-stream); the connection ends when
-    # the bridge closes it, and any failure raises Error like every other
-    # call.
+    # The stream stays open for the page's lifetime; the bridge's heartbeat
+    # is what keeps an idle session inside STREAM_READ_TIMEOUT, so a timeout
+    # here means the bridge itself went quiet. The connection ends when the
+    # bridge closes it, and any failure raises Error like every other call.
     def stream_session(id)
       uri = URI.parse("#{base_url}/session/#{id}/stream")
       http = Net::HTTP.new(uri.host, uri.port)
       http.open_timeout = OPEN_TIMEOUT
-      http.read_timeout = nil
+      http.read_timeout = STREAM_READ_TIMEOUT
       http.request(build_request(:get, uri, nil)) do |response|
         raise_for_status(response)
         response.read_body { |chunk| yield chunk }
