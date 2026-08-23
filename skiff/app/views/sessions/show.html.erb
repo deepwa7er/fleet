@@ -54,6 +54,19 @@
       </details>
     <% end %>
 
+    <%# The embedded review (DW-002 §6): the change this session produced
+        returns here — header, the latest round's annotated diff, and the
+        verbs that close the loop without leaving the chat. Rendered when
+        the bridge reports a bound change whose binding still points at this
+        session; a fetch failure degrades to a named line, never a dead
+        page. %>
+    <% if @review %>
+      <%= render "changes/review", change: @review.change, round: @review.round,
+                 diff_files: @review.diff_files, session_id: params[:id] %>
+    <% elsif @review_error %>
+      <p class="instrumentation instrumentation--danger">review unavailable — <%= @review_error %></p>
+    <% end %>
+
     <%# M4: status, orchestrator readout, and transcript under one stable
         wrapper that carries the stream wiring. Only #session-status,
         #orchestrator-readout, and #transcript themselves are targeted by

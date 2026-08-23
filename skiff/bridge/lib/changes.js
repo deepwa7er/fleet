@@ -280,6 +280,31 @@ export function createChanges(config, { defaultCwd }) {
       return store.list();
     },
 
+    // The change bound to one session, as the ref session payloads carry
+    // (DW-002 §6: the session embeds its review). A session can carry
+    // several changes over its life — rebinding is deliberate, a card can
+    // outlive the session that started it — so this returns the most
+    // recently active bound change, the one the session page should render.
+    // A raw store scan is the honest cost model (the store holds active
+    // work, not history); the result is trimmed to the ref fields the
+    // session list needs, never the enriched change. Returns null for a
+    // session with no bound change.
+    async boundTo(sessionId) {
+      const changes = await store.list();
+      const bound = changes
+        .filter((change) => change.session === sessionId)
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0];
+      if (!bound) return null;
+      return {
+        repo: bound.repo,
+        card: bound.card,
+        state: bound.state,
+        rounds: bound.rounds.length,
+        title: bound.title,
+        updatedAt: bound.updatedAt,
+      };
+    },
+
     async create(repoName, cardValue, { title = null, session = null } = {}) {
       const card = parseCard(cardValue);
       await resolveRepo(repoName);
@@ -525,6 +550,10 @@ export function createUnavailableChanges(message) {
   };
   return {
     list: fail,
+    // The session list must keep working on a host without the change
+    // subsystem: sessions just carry no change ref, and the desk names the
+    // gap.
+    boundTo: async () => null,
     create: fail,
     get: fail,
     diff: fail,

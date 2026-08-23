@@ -80,6 +80,17 @@ Design decisions (recorded so they are not re-litigated later):
   (bridge/lib/pi-harness.js, muse-harness.js, opencode-harness.js). A
   harness whose binary is missing on a host degrades to a named error in the
   session list — never a dead bridge, never silently absent sessions.
+- **The desk is the root; the session is the container.** DW-002 §6: root is
+  one page ordered by what needs you — changes in review, then working, then
+  idle — with the sessions list surviving at /sessions. The change the
+  agent bound to a session comes back to that session: the session page
+  renders the same review region as the change page (one shared partial —
+  the header's claims, the latest round's annotated diff, and the
+  approve/request-changes verbs, which return to the session rather than
+  navigating away), so the whole loop — ask, implement, review, approve,
+  next round — stays in the chat that started it. The change page keeps the
+  full view: rounds navigation, the cumulative diff, and the bound session
+  embedded below.
 - **muse runs headless per prompt.** Muse has no long-lived RPC mode; the
   bridge spawns one `muse exec --json --yolo --session-id <uuid>` child per
   prompt (the prompt travels by file, never argv), reads incremental

@@ -183,6 +183,22 @@ class ChangesTest < ActionDispatch::IntegrationTest
     assert_equal [ [ "fleet", "81", "tighten the error copy" ] ], calls
   end
 
+  test "verbs from the session page return to the session, not the change" do
+    # The embedded review's verbs carry the session id so the loop stays in
+    # the chat it started from (DW-002 §6).
+    BridgeClient.stub(:approve_change, ->(repo, card) { { state: "landing" } }) do
+      post approve_change_path("fleet", 81), params: { session: "pi:ses_review" }
+    end
+    assert_redirected_to session_path("pi:ses_review")
+    assert_match(/Landing/, flash[:notice])
+
+    BridgeClient.stub(:request_changes, ->(repo, card, note) { { state: "working" } }) do
+      post request_changes_change_path("fleet", 81), params: { note: "round 2 please", session: "pi:ses_review" }
+    end
+    assert_redirected_to session_path("pi:ses_review")
+    assert_match(/the agent is working/, flash[:notice])
+  end
+
   test "a dead socket reads out as unreachable on show" do
     BridgeClient.stub(:change, ->(*) { raise BridgeClient::Error, "skiff bridge unreachable: down" }) do
       get change_path("fleet", 81)

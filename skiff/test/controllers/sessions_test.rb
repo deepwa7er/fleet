@@ -509,4 +509,156 @@ class SessionsTest < ActionDispatch::IntegrationTest
     assert_select "form.composer textarea[placeholder='Message muse…']"
     assert_select "h2 + p.instrumentation", text: /muse · muse-spark-1\.2/
   end
+
+  # ---- The embedded review (DW-002 §6) ------------------------------------
+
+  DIFF = <<~DIFF.freeze
+    diff --git a/app/models/harness.rb b/app/models/harness.rb
+    @@ -1,2 +1,3 @@
+     class Harness
+    +  def available_models = cache.fetch(:models)
+     end
+  DIFF
+
+  def bound_change_fixture(session_id:, state: "in_review")
+    {
+      repo: "fleet",
+      card: 81,
+      title: "pi model picker",
+      session: session_id,
+      state: state,
+      path: "/home/deepwater/code/fleet",
+      updatedAt: "2026-08-23T12:00:00Z",
+      rounds: [
+        {
+          n: 1, author: "agent", note: nil,
+          gatesRan: [ "cargo test", "clippy" ],
+          worthKnowing: [],
+          annotations: [],
+          commit: { commitId: "abc123", description: "round 1" }
+        }
+      ]
+    }
+  end
+
+  def stub_bound_session(change, session_id: "pi:ses_review", &block)
+    session = {
+      id: session_id,
+      harness: "pi",
+      capabilities: { rename: true, orchestrator: true },
+      title: "The working session",
+      directory: "/home/deepwater/code/fleet",
+      model: nil,
+      time: { created: 1_780_000_000_000, updated: 1_780_000_200_000 },
+      change: { repo: "fleet", card: 81, state: change[:state], rounds: 1, title: "pi model picker", updatedAt: "2026-08-23T12:00:00Z" }
+    }
+    BridgeClient.stub(:session, session) do
+      BridgeClient.stub(:messages, []) do
+        BridgeClient.stub(:change, change) do
+          BridgeClient.stub(:change_diff, { diff: DIFF }, &block)
+        end
+      end
+    end
+  end
+
+  test "show embeds the bound change's review in the chat that produced it" do
+    stub_bound_session(bound_change_fixture(session_id: "pi:ses_review")) do
+      get session_path("pi:ses_review")
+    end
+
+    assert_response :success
+    # The review region: the header's claims, the round's diff, and the
+    # verbs — which return to this session, not to the change page.
+    assert_select "h2", text: "pi model picker"
+    assert_select ".instrumentation", text: /fleet #81 · round 1 · in review/
+    assert_select ".diff-file-header", text: "app/models/harness.rb"
+    assert_select "form[action='/changes/fleet/81/approve'] input[name='session'][value='pi:ses_review']"
+    assert_select "form[action='/changes/fleet/81/request_changes'] input[name='session'][value='pi:ses_review']"
+    assert_select "form[action='/changes/fleet/81/request_changes'] textarea[name='note']"
+    # The chat that owns the review stays below it, with the composer.
+    assert_select "#transcript"
+    assert_select "form.composer textarea[name='message']"
+    # The poll does not mount while the change is in review — it cannot go
+    # stale on its own.
+    assert_select "[data-controller='change-poll']", count: 0
+  end
+
+  test "show keeps the review visible while the agent works the next round" do
+    stub_bound_session(bound_change_fixture(session_id: "pi:ses_review", state: "working")) do
+      get session_path("pi:ses_review")
+    end
+
+    assert_response :success
+    # The region renders the last round's diff even while working (the
+    # change page does the same), the verbs disappear, and the poll mounts
+    # because the change can move to in_review on its own.
+    assert_select ".instrumentation", text: /fleet #81 · round 1 · working/
+    assert_select ".diff-file-header", text: "app/models/harness.rb"
+    assert_select "form[action='/changes/fleet/81/approve']", count: 0
+    assert_select "[data-controller='change-poll'][data-change-poll-state-value='working']"
+  end
+
+  test "show renders no review region for a session with no bound change" do
+    session = {
+      id: "pi:ses_plain", harness: "pi", capabilities: { rename: true, orchestrator: true },
+      title: "Plain chat", directory: nil, model: nil, time: nil
+    }
+    BridgeClient.stub(:session, session) do
+      BridgeClient.stub(:messages, []) do
+        BridgeClient.stub(:change, ->(*) { flunk "change must not be fetched without a binding" }) do
+          get session_path("pi:ses_plain")
+        end
+      end
+    end
+
+    assert_response :success
+    assert_select ".diff-file", count: 0
+    assert_select ".session-title", text: "Plain chat"
+  end
+
+  test "show renders no review region when the binding has moved away" do
+    # The ref said this session owns the change, but the change's own
+    # binding now points elsewhere (rebinding is deliberate) — the review
+    # belongs to the session it is bound to now.
+    moved = bound_change_fixture(session_id: "pi:ses_other")
+    stub_bound_session(moved, session_id: "pi:ses_review") do
+      get session_path("pi:ses_review")
+    end
+
+    assert_response :success
+    assert_select ".diff-file", count: 0
+  end
+
+  test "show degrades to a named line when the bound change cannot be fetched" do
+    BridgeClient.stub(:session, {
+      id: "pi:ses_review", harness: "pi", capabilities: { rename: true, orchestrator: true },
+      title: "The working session", directory: nil, model: nil, time: nil,
+      change: { repo: "fleet", card: 81, state: "in_review", rounds: 1, title: "pi model picker", updatedAt: "x" }
+    }) do
+      BridgeClient.stub(:messages, []) do
+        BridgeClient.stub(:change, ->(*) { raise BridgeClient::Error, "skiff bridge unreachable: HTTP 502" }) do
+          get session_path("pi:ses_review")
+        end
+      end
+    end
+
+    assert_response :success
+    assert_select ".instrumentation--danger", text: /review unavailable/
+    assert_select "#transcript"
+  end
+
+  test "index and desk items show the bound change on the session line" do
+    session = {
+      id: "pi:ses_bound", harness: "pi", capabilities: { rename: true, orchestrator: true },
+      title: "The working session", directory: "/home/deepwater/code/fleet", model: nil,
+      time: { created: 1_780_000_000_000, updated: 1_780_000_200_000 },
+      change: { repo: "fleet", card: 81, state: "working", rounds: 1, title: "pi model picker", updatedAt: "x" }
+    }
+    stub_sessions([ session ]) do
+      get sessions_path
+    end
+
+    assert_response :success
+    assert_select ".item .instrumentation", text: /pi · fleet #81 /
+  end
 end
