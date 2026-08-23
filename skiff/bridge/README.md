@@ -111,7 +111,7 @@ Prompt text and the password are never logged.
 | `POST /session` | `{"harness":"pi"\|"muse"\|"opencode","title":…}` → 201 `{"id":"<harness>:<id>"}`; 400 without a valid harness |
 | `GET /session/{id}` | one tagged session object (404 unknown) |
 | `GET /session/{id}/message` | transcript + in-flight streaming overlay |
-| `GET /session/{id}/stream` | SSE: snapshot + append/replace/remove/working/orchestrator events (see lib/stream-registry.js) |
+| `GET /session/{id}/stream` | SSE: snapshot + append/replace/remove/working/orchestrator events, plus a `heartbeat` every 15s for liveness (see lib/stream-registry.js) |
 | `POST /session/{id}/prompt_async` | one text part → the harness's prompt surface; 200 accepted, 404 unknown, 409 a muse run already active, 502 harness failure |
 | `POST /session/{id}/name` | rename, where `capabilities.rename` (pi, opencode); 400 for muse |
 | `GET /harness/{name}/models` | the models the harness's sessions can switch to (`capabilities.model` — pi only: `pi --list-models`, parsed and briefly cached); 400 elsewhere |

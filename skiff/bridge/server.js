@@ -46,7 +46,7 @@ export function createBridge(config) {
       "skiff-bridge: SKIFF_BRIDGE_PASSWORD must be set to the password skiff's bridge client uses."
     );
   }
-  ctx.registry = createStreamRegistry();
+  ctx.registry = createStreamRegistry(config.stream ?? {});
   ctx.harnesses = new Map();
   for (const [name, create] of [
     ["pi", () => createPiHarness(config.pi ?? {}, { registry: ctx.registry, defaultCwd: ctx.defaultCwd })],

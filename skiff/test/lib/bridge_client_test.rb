@@ -130,6 +130,17 @@ class BridgeClientTest < ActiveSupport::TestCase
     assert_match(/skiff bridge unreachable/, error.message)
   end
 
+  # The stream read is bounded so a bridge that stalls without closing the
+  # socket cannot hold a Puma thread forever; the bound is sized to the
+  # bridge's heartbeat so an idle-but-live session never trips it.
+  test "stream_session times out a bridge that goes silent past the heartbeat window" do
+    stub_request(:get, "#{BASE_URL}/session/pi:s1/stream").to_timeout
+
+    error = assert_raises(BridgeClient::Error) { BridgeClient.stream_session("pi:s1") { |_chunk| } }
+    assert_match(/skiff bridge unreachable/, error.message)
+    assert_operator BridgeClient::STREAM_READ_TIMEOUT, :>=, BridgeClient::STREAM_HEARTBEAT_INTERVAL * 2
+  end
+
   test "reads the password from ENV at call time" do
     ENV["SKIFF_BRIDGE_PASSWORD"] = "changed-password"
     stub_request(:get, "#{BASE_URL}/session")

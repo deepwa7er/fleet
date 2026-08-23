@@ -20,6 +20,16 @@
 //   remove        { index }          a message is gone (aborted run)
 //   working       { working }        the harness's run started / settled
 //   orchestrator  { orchestrator }   mode toggle or widget publication (pi)
+//   heartbeat     {}                 liveness tick, every HEARTBEAT_INTERVAL_MS
+//                                    per session while it has subscribers.
+//                                    Carries no state: a consumer uses it to
+//                                    bound its read timeout (a stream silent
+//                                    for longer than a few intervals is a
+//                                    dead bridge) and, for a proxying
+//                                    consumer, as the moment to touch its
+//                                    own downstream — a write to a viewer
+//                                    that has gone away is how that consumer
+//                                    learns to release the connection.
 //
 // The registry is harness-agnostic: it owns the subscribers, the index-wise
 // transcript diff, the overlay's position bookkeeping, and the coalesced
@@ -69,11 +79,14 @@
 // replace, and appends otherwise.
 //
 // Lifecycle: a session's state exists while it has subscribers; the driver
-// opens on the first and closes on the last.
+// opens on the first and closes on the last, and so does the heartbeat.
 
 const FLUSH_INTERVAL_MS = 100;
+export const HEARTBEAT_INTERVAL_MS = 15_000;
 
-export function createStreamRegistry() {
+// `heartbeatIntervalMs` is configurable for tests only; production takes the
+// default, which skiff's BridgeClient sizes its read timeout against.
+export function createStreamRegistry({ heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS } = {}) {
   const sessions = new Map(); // session key -> state
 
   function createState(key) {
@@ -86,6 +99,7 @@ export function createStreamRegistry() {
       working: false,
       orchestrator: { active: false, widget: null, status: null },
       flushTimer: null,
+      heartbeatTimer: null,
     };
   }
 
@@ -112,6 +126,7 @@ export function createStreamRegistry() {
     res.on("close", () => unsubscribe(key, res));
     writeSseHeaders(res);
     state.driver = create(makeHandle(state));
+    startHeartbeat(state);
     return true;
   }
 
@@ -137,21 +152,38 @@ export function createStreamRegistry() {
     if (!state) return;
     state.subscribers.delete(res);
     if (state.subscribers.size === 0) {
-      cancelFlush(state);
-      state.driver?.close();
+      teardown(state);
       sessions.delete(key);
     }
   }
 
   function close() {
     for (const state of sessions.values()) {
-      cancelFlush(state);
-      state.driver?.close();
+      teardown(state);
       for (const res of state.subscribers) {
         if (!res.writableEnded) res.end();
       }
     }
     sessions.clear();
+  }
+
+  function teardown(state) {
+    cancelFlush(state);
+    stopHeartbeat(state);
+    state.driver?.close();
+  }
+
+  // One ticker per session, not per subscriber: every subscriber receives
+  // the same tick, and the state's lifetime already bounds the timer's.
+  function startHeartbeat(state) {
+    state.heartbeatTimer = setInterval(() => broadcast(state, "heartbeat", {}), heartbeatIntervalMs);
+  }
+
+  function stopHeartbeat(state) {
+    if (state.heartbeatTimer) {
+      clearInterval(state.heartbeatTimer);
+      state.heartbeatTimer = null;
+    }
   }
 
   function hasSubscribers(key) {

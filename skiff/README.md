@@ -96,8 +96,14 @@ Design decisions (recorded so they are not re-litigated later):
   fingerprints, no backoff) and smoother (coalesced ~100ms overlay pushes
   instead of 300ms poll turns). The battery cost is accepted: the phone is
   not the primary client. Each open stream occupies one Puma thread
-  (`RAILS_MAX_THREADS`, default 3, is the knob; one or two viewers fit
-  comfortably).
+  (`RAILS_MAX_THREADS`, default 5, is the knob; one or two viewers fit
+  comfortably) — which makes releasing it the thing that matters. A thread
+  blocked reading the bridge never sees breakwater drop the browser's side,
+  so the bridge ticks a `heartbeat` event every 15s on every stream: the
+  proxy forwards each tick as an SSE comment (the write is what raises
+  `ClientDisconnected` for a viewer that left), and bounds its upstream read
+  at three intervals (a silent bridge frees the thread too). Before this,
+  five closed tabs drained the pool and every request hung (card #102).
 - **Reconciliation lives in the bridge, not the view.** The registry decides
   what changed — file appends, overlay growth, overlay resolution, aborted
   runs, compaction — and emits exact append/replace/remove ops. The view

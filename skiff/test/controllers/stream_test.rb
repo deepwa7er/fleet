@@ -152,4 +152,36 @@ class StreamTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_equal "", response.body
   end
+
+  # The bridge's heartbeat reaches the browser as an SSE comment: invisible
+  # to EventSource, but the write is what lets a Puma thread notice that
+  # the viewer has gone (see the stream action's comment).
+  test "forwards each heartbeat as an SSE comment and nothing else" do
+    stub_stream([ frame("heartbeat", {}), frame("working", { working: true }), frame("heartbeat", {}) ]) do
+      get session_stream_path("pi:ses_123")
+    end
+
+    assert_response :success
+    messages = response.body.split("\n\n")
+    assert_equal 3, messages.size
+    assert_equal ": heartbeat", messages[0]
+    assert_includes messages[1], 'target="session-status"'
+    assert_equal ": heartbeat", messages[2]
+  end
+
+  # Once the viewer is gone, ActionController::Live's buffer raises
+  # ClientDisconnected from the next write — the heartbeat forward, for an
+  # idle session. The action must end quietly, releasing the thread.
+  test "a viewer that has gone away ends the stream quietly" do
+    gone = lambda do |_id, &yield_chunks|
+      yield_chunks.call(frame("heartbeat", {}))
+      raise ActionController::Live::ClientDisconnected, "client disconnected"
+    end
+    BridgeClient.stub(:stream_session, gone) do
+      get session_stream_path("pi:ses_123")
+    end
+
+    assert_response :success
+    assert_equal ": heartbeat\n\n", response.body
+  end
 end
