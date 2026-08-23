@@ -9,6 +9,12 @@ For any UI work, read `docs/deepwater-style-guide.md` (DW-001) first.
 Specimens: `docs/deepwater-style-guide.html` and `docs/deepwater-404.html`.
 Reference: [DW-001](docs/deepwater-style-guide.md) · [specimen](docs/deepwater-style-guide.html)
 
+## In flight — the source control redesign
+
+The workflow below (card → worktree → PR → human merges) is being replaced. Before working on `jj`, the `dw` CLI, the change/round/annotation model, or the review surface in `skiff`, read [DW-002](docs/source-control-redesign.md).
+
+It records alternatives that were tried and rejected — a capture daemon, a two-axis change model, closing Fizzy cards from `approve`, pre-land verification — and the reasoning is the point. Re-deriving it costs more than reading it. Design is settled; step 01 has not started. **Until it ships, the workflow below is still authoritative.**
+
 ## Workflow — one card = one branch = one PR
 
 For any fleet change, read `.agents/skills/fleet/SKILL.md` first. It covers: search first, create a Fizzy triage card (`cargo run -p fizzy -- create --board Playground --dedupe`), `git worktree` isolation in `.worktrees/<slug>` inside this repo (never `main`), the gates below, `git push -u origin fleet/<card#>-<slug>` + `gh pr create` linking the Fizzy card, then stop — human merges, `tugboat` ships `origin/main`.
