@@ -124,6 +124,15 @@ upstream = "127.0.0.1:8105"
 label = "docs"
 serve_dir = "/opt/pilot/web"
 
+# The fleet timeline (DW-003) — process-less static files like docs, so
+# breakwater serves the directory directly. Assembled on the desktop from the
+# record repo by timeline/publish.sh (hourly systemd user timer) and shipped
+# here with a staged swap. The record repo is private; this route is tailnet-
+# only like everything else here, which is the "private for now" posture.
+[[routes]]
+label = "record"
+serve_dir = "/opt/record/web"
+
 # netfps client distribution — external member (repo deepwa7er/netfps).
 # Download page + version manifest + per-platform game binaries; process-less
 # static files like docs, so breakwater serves the directory directly. The

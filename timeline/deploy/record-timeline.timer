@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly timeline publish (no-op while the record is unchanged)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

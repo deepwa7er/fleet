@@ -1,0 +1,14 @@
+[Unit]
+Description=Rebuild and ship the fleet timeline from the record repo (DW-003)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/code/fleet/timeline/publish.sh
+WorkingDirectory=%h/code/fleet/timeline
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
