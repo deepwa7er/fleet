@@ -99,9 +99,11 @@ export function createBridge(config) {
     listen() {
       return new Promise((resolve) => server.listen(ctx.port, ctx.host, resolve));
     },
-    close() {
+    async close() {
       ctx.registry.close();
       for (const harness of ctx.harnesses.values()) harness.shutdown();
+      // Drain in-flight landings: a push must not be abandoned mid-approve.
+      await ctx.changes.shutdown();
       return new Promise((resolve) => server.close(resolve));
     },
   };
@@ -293,7 +295,11 @@ async function handleChange(req, res, ctx, parts) {
   }
   if (req.method === "POST" && parts.length === 1) {
     const body = await readJsonBody(req);
-    const change = await ctx.changes.create(body?.repo, body?.card);
+    if (body?.session !== undefined && body?.session !== null) requireKnownSession(ctx, body.session);
+    const change = await ctx.changes.create(body?.repo, body?.card, {
+      title: body?.title ?? null,
+      session: body?.session ?? null,
+    });
     return sendJson(res, 201, change);
   }
   if (req.method === "GET" && parts.length === 3) {
@@ -311,6 +317,8 @@ async function handleChange(req, res, ctx, parts) {
       author: body?.author,
       changeId: body?.changeId,
       note: body?.note,
+      gatesRan: body?.gatesRan,
+      worthKnowing: body?.worthKnowing,
     });
     return sendJson(res, 201, round);
   }
@@ -331,7 +339,39 @@ async function handleChange(req, res, ctx, parts) {
   if (req.method === "POST" && parts.length === 4 && parts[3] === "reopen") {
     return sendJson(res, 200, await ctx.changes.transition(parts[1], parts[2], "working"));
   }
+  if (req.method === "POST" && parts.length === 4 && parts[3] === "session") {
+    const body = await readJsonBody(req);
+    requireKnownSession(ctx, body?.session);
+    return sendJson(res, 200, await ctx.changes.setSession(parts[1], parts[2], body.session));
+  }
+  // Request changes: the note goes into the bound agent session (through
+  // the same prompt surface the composer uses) and the change reopens. The
+  // review and the session transcript are the same page at different
+  // moments of its life — nothing here navigates anywhere.
+  if (req.method === "POST" && parts.length === 4 && parts[3] === "request_changes") {
+    const body = await readJsonBody(req);
+    const change = await ctx.changes.requestChanges(parts[1], parts[2], body?.note, async (sessionId) => {
+      const { harness, localId } = resolveHarness(ctx, sessionId);
+      await harness.promptAsync(localId, `[dw request-changes · ${parts[1]} #${parts[2]}] ${body.note}`);
+    });
+    return sendJson(res, 200, change);
+  }
+  // Approve is a request, not an instant: 202 with the change in `landing`;
+  // the fetch→rebase→push runs async and the change ends `shipped` or back
+  // `in_review` carrying the reason. Poll GET /change/{repo}/{card}.
+  if (req.method === "POST" && parts.length === 4 && parts[3] === "approve") {
+    return sendJson(res, 202, await ctx.changes.approve(parts[1], parts[2]));
+  }
   return sendJson(res, 404, { error: "not found" });
+}
+
+// A change's bound session must belong to a harness this bridge knows —
+// otherwise request-changes would accept notes it can never deliver.
+function requireKnownSession(ctx, id) {
+  const parsed = typeof id === "string" ? parseSessionId(id) : null;
+  if (!parsed || !ctx.harnesses.has(parsed.harness)) {
+    throw new HttpError(400, `"session" must be a harness-qualified session id (${[...ctx.harnesses.keys()].join("|")}):<id>`);
+  }
 }
 
 // GET /session — every harness's sessions in one list, newest first. A

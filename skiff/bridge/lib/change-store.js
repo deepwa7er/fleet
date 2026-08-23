@@ -85,10 +85,16 @@ function replay(events) {
       change = {
         repo: event.repo,
         card: event.card,
+        title: event.title ?? null,
+        session: event.session ?? null,
         state: "working",
         createdAt: event.at,
         updatedAt: event.at,
         rounds: [],
+        lastRequest: null,
+        landed: null,
+        lastLanding: null,
+        cardComment: null,
       };
       continue;
     }
@@ -99,9 +105,22 @@ function replay(events) {
         author: event.author,
         changeId: event.changeId,
         note: event.note ?? null,
+        gatesRan: event.gatesRan ?? [],
+        worthKnowing: event.worthKnowing ?? [],
         createdAt: event.at,
         annotations: [],
       });
+    } else if (event.event === "session") {
+      change.session = event.session;
+    } else if (event.event === "requested") {
+      change.lastRequest = { note: event.note, at: event.at };
+    } else if (event.event === "landed") {
+      change.landed = { tip: event.tip, at: event.at };
+      change.lastLanding = { ok: true, at: event.at };
+    } else if (event.event === "landing_failed") {
+      change.lastLanding = { ok: false, reason: event.reason, conflicts: event.conflicts ?? [], at: event.at };
+    } else if (event.event === "card_comment") {
+      change.cardComment = { ok: event.ok, ...(event.message ? { message: event.message } : {}), at: event.at };
     } else if (event.event === "annotation") {
       const round = change.rounds.find((r) => r.n === event.round);
       if (round) {
@@ -194,9 +213,15 @@ export function createChangeStore({ dir }) {
     // repo — the card number is the only identifier the user sees, so a
     // second change under the same number would be two things wearing one
     // name.
-    async create(repo, card) {
+    async create(repo, card, { title = null, session = null } = {}) {
+      if (title !== null && (typeof title !== "string" || title.trim() === "")) {
+        throw new Error("title must be a non-empty string");
+      }
+      if (session !== null && (typeof session !== "string" || session === "")) {
+        throw new Error("session must be a non-empty string");
+      }
       return serialize(filePath(repo, card), async () => {
-        const event = { event: "created", repo, card, at: new Date().toISOString() };
+        const event = { event: "created", repo, card, title, session, at: new Date().toISOString() };
         try {
           await append(repo, card, event, { exclusive: true });
         } catch (err) {
@@ -247,10 +272,23 @@ export function createChangeStore({ dir }) {
     // change, after the state check — lib/changes.js uses it for the jj
     // checks (the id exists, the round is a child of its predecessor) so
     // validation and append cannot interleave with another writer.
-    async addRound(repo, card, { author, changeId, note = null }, validate = async () => {}) {
+    async addRound(
+      repo,
+      card,
+      { author, changeId, note = null, gatesRan = [], worthKnowing = [] },
+      validate = async () => {}
+    ) {
       if (!AUTHORS.includes(author)) throw new Error(`author must be one of: ${AUTHORS.join(", ")}`);
       if (typeof changeId !== "string" || changeId === "") throw new Error("round requires a changeId");
       if (note !== null && typeof note !== "string") throw new Error("note must be a string");
+      for (const [name, list] of [
+        ["gatesRan", gatesRan],
+        ["worthKnowing", worthKnowing],
+      ]) {
+        if (!Array.isArray(list) || list.some((item) => typeof item !== "string" || item.trim() === "")) {
+          throw new Error(`${name} must be an array of non-empty strings`);
+        }
+      }
       return serialize(filePath(repo, card), async () => {
         const change = await load(repo, card);
         if (change === null) return null;
@@ -271,10 +309,12 @@ export function createChangeStore({ dir }) {
           author,
           changeId,
           note,
+          gatesRan,
+          worthKnowing,
           at: new Date().toISOString(),
         };
         await append(repo, card, event);
-        return { n: event.n, author, changeId, note, createdAt: event.at, annotations: [] };
+        return { n: event.n, author, changeId, note, gatesRan, worthKnowing, createdAt: event.at, annotations: [] };
       });
     },
 
@@ -305,6 +345,92 @@ export function createChangeStore({ dir }) {
         const event = { event: "annotation", id, round, path: file, line, side, text, at: new Date().toISOString() };
         await append(repo, card, event);
         return { id, round, path: file, line, side, text, createdAt: event.at };
+      });
+    },
+
+    // Bind (or rebind) the agent session the review's request-changes notes
+    // go to. Rebinding is deliberate: a card can outlive the session that
+    // started it.
+    async setSession(repo, card, session) {
+      if (typeof session !== "string" || session === "") throw new Error("session must be a non-empty string");
+      return serialize(filePath(repo, card), async () => {
+        const change = await load(repo, card);
+        if (change === null) return null;
+        const event = { event: "session", session, at: new Date().toISOString() };
+        await append(repo, card, event);
+        return { ...change, session, updatedAt: event.at };
+      });
+    },
+
+    // Request changes: record the note and hand the change back to the
+    // agent in one append sequence — the note and the reopen must not be
+    // separable, or a crash between them leaves a reopened change with no
+    // record of why.
+    async requestChanges(repo, card, note) {
+      if (typeof note !== "string" || note.trim() === "") throw new Error("request requires a note");
+      return serialize(filePath(repo, card), async () => {
+        const change = await load(repo, card);
+        if (change === null) return null;
+        if (change.state !== "in_review") {
+          const err = new Error(`change ${repo}/${card} is ${change.state}; only in_review changes take requests`);
+          err.code = "TRANSITION";
+          throw err;
+        }
+        const at = new Date().toISOString();
+        await append(repo, card, { event: "requested", note, at });
+        await append(repo, card, { event: "state", state: "working", at });
+        return { ...change, state: "working", lastRequest: { note, at }, updatedAt: at };
+      });
+    },
+
+    // The two ends of a landing (the async half of approve). Each records
+    // the outcome and the resulting state in one queue task; the store does
+    // not know how the landing was attempted, only how it ended.
+    async completeLanding(repo, card, { tip }) {
+      if (typeof tip !== "string" || tip === "") throw new Error("completeLanding requires the tip commit");
+      return serialize(filePath(repo, card), async () => {
+        const change = await load(repo, card);
+        if (change === null) return null;
+        if (change.state !== "landing") {
+          const err = new Error(`change ${repo}/${card} is ${change.state}, not landing`);
+          err.code = "TRANSITION";
+          throw err;
+        }
+        const at = new Date().toISOString();
+        await append(repo, card, { event: "landed", tip, at });
+        await append(repo, card, { event: "state", state: "shipped", at });
+        return { ...change, state: "shipped", landed: { tip, at }, updatedAt: at };
+      });
+    },
+
+    async failLanding(repo, card, { reason, conflicts = [] }) {
+      if (typeof reason !== "string" || reason === "") throw new Error("failLanding requires a reason");
+      return serialize(filePath(repo, card), async () => {
+        const change = await load(repo, card);
+        if (change === null) return null;
+        if (change.state !== "landing") {
+          const err = new Error(`change ${repo}/${card} is ${change.state}, not landing`);
+          err.code = "TRANSITION";
+          throw err;
+        }
+        const at = new Date().toISOString();
+        await append(repo, card, { event: "landing_failed", reason, conflicts, at });
+        await append(repo, card, { event: "state", state: "in_review", at });
+        return { ...change, state: "in_review", updatedAt: at };
+      });
+    },
+
+    // The Fizzy comment is the recoverable half of approve (land first,
+    // card second — DW-002 §6); its outcome is recorded either way so a
+    // failed comment is visible on the change instead of lost in a log.
+    async recordCardComment(repo, card, { ok, message = null }) {
+      if (typeof ok !== "boolean") throw new Error("recordCardComment requires ok: boolean");
+      return serialize(filePath(repo, card), async () => {
+        const change = await load(repo, card);
+        if (change === null) return null;
+        const event = { event: "card_comment", ok, ...(message ? { message } : {}), at: new Date().toISOString() };
+        await append(repo, card, event);
+        return { ...change, updatedAt: event.at };
       });
     },
 

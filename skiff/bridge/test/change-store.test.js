@@ -156,6 +156,60 @@ describe("change store", () => {
     assert.equal(change.state, "working");
   });
 
+  it("keeps title, session, and per-round claims through replay", async () => {
+    await store.create("demo", 3, { title: "pi model picker", session: "pi:abc" });
+    await store.addRound("demo", 3, {
+      author: "agent",
+      changeId: "p".repeat(32),
+      gatesRan: ["cargo test", "clippy"],
+      worthKnowing: ["+1 dependency (serde_yaml)"],
+    });
+    const change = await store.get("demo", 3);
+    assert.equal(change.title, "pi model picker");
+    assert.equal(change.session, "pi:abc");
+    assert.deepEqual(change.rounds[0].gatesRan, ["cargo test", "clippy"]);
+    assert.deepEqual(change.rounds[0].worthKnowing, ["+1 dependency (serde_yaml)"]);
+    const rebound = await store.setSession("demo", 3, "muse:def");
+    assert.equal(rebound.session, "muse:def");
+    assert.equal((await store.get("demo", 3)).session, "muse:def");
+  });
+
+  it("rejects malformed claims on a round", async () => {
+    await assert.rejects(
+      store.addRound("demo", 3, { author: "agent", changeId: "q".repeat(32), gatesRan: ["ok", ""] }),
+      /gatesRan must be an array of non-empty strings/
+    );
+  });
+
+  it("records a request atomically with the reopen", async () => {
+    await assert.rejects(store.requestChanges("demo", 3, "not yet in review"), (err) => err.code === "TRANSITION");
+    await store.transition("demo", 3, "in_review");
+    const change = await store.requestChanges("demo", 3, "cache the model list");
+    assert.equal(change.state, "working");
+    assert.equal(change.lastRequest.note, "cache the model list");
+    assert.equal((await store.get("demo", 3)).lastRequest.note, "cache the model list");
+  });
+
+  it("records landing outcomes and their states", async () => {
+    await store.transition("demo", 3, "in_review");
+    await assert.rejects(store.completeLanding("demo", 3, { tip: "abc" }), (err) => err.code === "TRANSITION");
+    await store.transition("demo", 3, "landing");
+    const failed = await store.failLanding("demo", 3, { reason: "the rebase conflicts", conflicts: ["r".repeat(32)] });
+    assert.equal(failed.state, "in_review");
+    let change = await store.get("demo", 3);
+    assert.equal(change.lastLanding.ok, false);
+    assert.deepEqual(change.lastLanding.conflicts, ["r".repeat(32)]);
+    await store.transition("demo", 3, "landing");
+    const shipped = await store.completeLanding("demo", 3, { tip: "0123abcd" });
+    assert.equal(shipped.state, "shipped");
+    await store.recordCardComment("demo", 3, { ok: false, message: "fizzy was down" });
+    change = await store.get("demo", 3);
+    assert.equal(change.landed.tip, "0123abcd");
+    assert.equal(change.lastLanding.ok, true);
+    assert.equal(change.cardComment.ok, false);
+    assert.match(change.cardComment.message, /fizzy was down/);
+  });
+
   it("lists every change, newest activity first", async () => {
     const changes = await store.list();
     assert.deepEqual(
@@ -163,10 +217,10 @@ describe("change store", () => {
       [
         ["demo", 1],
         ["demo", 2],
+        ["demo", 3],
       ]
     );
-    // demo/2 was created after demo/1's lifecycle walk finished, so its
-    // activity is newer.
-    assert.equal(changes[0].card, 2);
+    // demo/3's landing walk is the most recent activity in this suite.
+    assert.equal(changes[0].card, 3);
   });
 });

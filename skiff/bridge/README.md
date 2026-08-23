@@ -127,7 +127,10 @@ Prompt text and the password are never logged.
 | `POST /change/{repo}/{card}/round` | `{"author":"agent"\|"you","changeId":…,"note":…}` → 201; the id must be a full jj change id resolving to one visible commit, and a child of the previous round; 409 while landing/shipped |
 | `POST /change/{repo}/{card}/annotation` | `{"round":…,"path":…,"line":…,"side":"old"\|"new","text":…}` → 201; the path must be one the round's diff touches |
 | `POST /change/{repo}/{card}/submit` | `working → in_review`; 409 from any other state or with no rounds |
-| `POST /change/{repo}/{card}/reopen` | `in_review → working` (request-changes takes the change back for another round) |
+| `POST /change/{repo}/{card}/reopen` | `in_review → working` (take the change back for another round without a note) |
+| `POST /change/{repo}/{card}/session` | `{"session":"<harness>:<id>"}` — bind (or rebind) the agent session request-changes notes go to; 400 for a harness this bridge does not know |
+| `POST /change/{repo}/{card}/request_changes` | `{"note":…}` — prompt the bound session with the note, then `in_review → working`; round *n+1* is the answer. 409 if not in_review or no session bound |
+| `POST /change/{repo}/{card}/approve` | → 202 with the change in `landing`; fetch→rebase→push runs async and ends `shipped` (plus the Fizzy card comment, land first) or back `in_review` carrying the reason (`lastLanding`). 409 unless in_review |
 
 All bodies are JSON; errors are `{"error":"..."}`.
 
@@ -138,8 +141,21 @@ All bodies are JSON; errors are `{"error":"..."}`.
 change, an ordered **additive** sequence of rounds (each round is one jj
 commit, identified by its stable change id), annotations positioned in a
 round's diff, and the `working → in_review → landing → shipped` lifecycle.
-The `landing`/`shipped` half is validated by the store but not reachable
-over HTTP — approve (rebase-and-push, then the Fizzy comment) is step 03.
+
+Approve is the entire landing mechanism (DW-002 §6): fetch `origin/main`,
+rebase the rounds onto it, push — the same artifact as merging a PR. jj
+records rebase conflicts inside commits, so a conflicted landing returns the
+change to review with the conflicted change ids in `lastLanding.conflicts`,
+material for the next round; a push that loses the race to a parallel land
+retries the whole loop three times and then concedes the same way. After a
+successful land — and strictly after, land first, card second — the bridge
+posts a comment to the Fizzy card (`lib/fizzy-cards.js`, token from
+`~/.config/fizzy/write-token` / `FIZZY_TOKEN_FILE`, origin `FIZZY_BASE`); a
+comment failure is recorded on the change (`cardComment`), never un-ships
+it. Closing the card stays a human act in the Fizzy UI. Approve's jj
+mutations run *without* `--ignore-working-copy` — they take part in normal
+snapshot/checkout discipline like a human's own jj commands, and every one
+of them is in the operation log and undoable.
 
 Division of storage follows the design: the jj repository holds the rounds
 (they are commits), Fizzy holds the card, and the bridge owns what has no
