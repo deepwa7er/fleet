@@ -1,0 +1,11 @@
+<idea-plugin>
+  <id>com.joemafrici.theme.dark2026</id>
+  <name>Dark 2026 Theme</name>
+  <version>1.0.0</version>
+  <vendor email="hello@joemafrici.com">Joe Mafrici</vendor>
+  <description>Dark 2026 UI theme and editor color scheme, ported from the VS Code built-in Dark 2026 theme.</description>
+  <depends>com.intellij.modules.platform</depends>
+  <extensions defaultExtensionNs="com.intellij">
+    <themeProvider id="com.joemafrici.theme.dark2026" path="/theme/dark2026.theme.json"/>
+  </extensions>
+</idea-plugin>
