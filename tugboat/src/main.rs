@@ -101,9 +101,10 @@ struct SelfDeployArgs {
     /// Where to install the binary the launchd agent runs.
     #[arg(long)]
     install_path: Option<PathBuf>,
-    /// launchd agent label to restart.
-    #[arg(long, default_value_t = selfdeploy::DEFAULT_LABEL.to_string())]
-    label: String,
+    /// launchd agent label / systemd unit name to restart. Defaults to the
+    /// platform's own service (see `selfdeploy::default_target`).
+    #[arg(long)]
+    label: Option<String>,
     /// Full `/health` URL to poll (default derived from `tailscale ip -4`).
     #[arg(long)]
     health_url: Option<String>,
