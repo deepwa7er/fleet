@@ -16,8 +16,20 @@ require "net/http"
 class BridgeClient
   # Raised for every client failure. The message always starts
   # "skiff bridge unreachable: <cause>" so logs and pages can treat all
-  # failures uniformly.
-  class Error < StandardError; end
+  # failures uniformly. An HTTP failure additionally carries `status` and
+  # the bridge's own {"error": …} text as `remote_message` — the review
+  # actions need to tell a meaningful 409 ("not in_review") from a dead
+  # socket (both nil there), while every existing caller keeps rescuing the
+  # one class and reading the one message shape.
+  class Error < StandardError
+    attr_reader :status, :remote_message
+
+    def initialize(message, status: nil, remote_message: nil)
+      super(message)
+      @status = status
+      @remote_message = remote_message
+    end
+  end
 
   USERNAME = "skiff"
   DEFAULT_BASE_URL = "http://127.0.0.1:4120"
@@ -93,6 +105,47 @@ class BridgeClient
       post("/session", { harness: harness, title: title }.compact)
     end
 
+    # The busy map for sessions with a live run the bridge itself drives:
+    # { "<harness>:<id>": { type: "busy" } }. Sessions absent here are idle
+    # (or opencode, whose working state only surfaces through the stream).
+    def session_statuses
+      get("/session/status")
+    end
+
+    # ---- The change object (DW-002 §4–6; bridge/lib/changes.js) ----
+
+    # Returns { changes: [...] } — every change in the bridge's store,
+    # newest activity first.
+    def changes
+      get("/change")
+    end
+
+    # One change with rounds enriched from the jj repository (commit is nil
+    # for a round whose change id no longer resolves) — plus `path`, the
+    # repository checkout, the single place a filesystem path surfaces.
+    def change(repo, card)
+      get("/change/#{repo}/#{card}")
+    end
+
+    # { diff: "<git format>" } — round n's diff, or the cumulative diff (the
+    # feature as it now stands) when round is nil.
+    def change_diff(repo, card, round: nil)
+      get(round ? "/change/#{repo}/#{card}/diff/#{round}" : "/change/#{repo}/#{card}/diff")
+    end
+
+    # Approve is a request, not an instant: the bridge answers 202 with the
+    # change in `landing` and lands async; poll #change until it leaves.
+    # 409 (surfaced via Error#status) when the change is not in review.
+    def approve_change(repo, card)
+      post("/change/#{repo}/#{card}/approve", nil)
+    end
+
+    # Deliver the note into the change's bound agent session and reopen the
+    # change; round n+1 is the answer. 409 when not in review or unbound.
+    def request_changes(repo, card, note)
+      post("/change/#{repo}/#{card}/request_changes", { note: note })
+    end
+
     # Open the session's SSE stream and yield each body chunk as it arrives.
     # The stream stays open for the page's lifetime; the bridge's heartbeat
     # is what keeps an idle session inside STREAM_READ_TIMEOUT, so a timeout
@@ -159,7 +212,20 @@ class BridgeClient
       snippet = response.body.to_s.strip[0, 120]
       detail = "HTTP #{response.code}"
       detail += ": #{snippet}" unless snippet.empty?
-      raise Error, "skiff bridge unreachable: #{detail}"
+      raise Error.new(
+        "skiff bridge unreachable: #{detail}",
+        status: response.code.to_i,
+        remote_message: remote_error_message(response.body)
+      )
+    end
+
+    # The bridge's own {"error": "..."} text, when the body carries one —
+    # the flash-worthy half of an HTTP failure. nil for anything else.
+    def remote_error_message(body)
+      parsed = JSON.parse(body.to_s)
+      parsed["error"] if parsed.is_a?(Hash) && parsed["error"].is_a?(String)
+    rescue JSON::ParserError
+      nil
     end
 
     # Deep-symbolized JSON; nil for empty bodies (e.g. a 204).

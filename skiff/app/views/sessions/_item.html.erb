@@ -1,0 +1,9 @@
+<%# One session in a register (M2's list item, extracted so the desk and the
+    sessions list render the identical unit — DW-002 §6 reuses it unchanged).
+    Locals: session. %>
+<li class="item">
+  <%= link_to session_title(session), session_path(session[:id]), class: "item-title" %>
+  <% if (instrumentation = session_instrumentation(session)).present? %>
+    <p class="instrumentation"><%= instrumentation %></p>
+  <% end %>
+</li>

@@ -18,14 +18,7 @@
       <p class="prose">No sessions yet. Your first message starts one.</p>
     <% else %>
       <ul class="list">
-        <% @sessions.each do |session| %>
-          <li class="item">
-            <%= link_to session_title(session), session_path(session[:id]), class: "item-title" %>
-            <% if (instrumentation = session_instrumentation(session)).present? %>
-              <p class="instrumentation"><%= instrumentation %></p>
-            <% end %>
-          </li>
-        <% end %>
+        <%= render partial: "sessions/item", collection: @sessions, as: :session %>
       </ul>
     <% end %>
   <% end %>

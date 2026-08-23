@@ -186,6 +186,7 @@ describe("the /change family", { skip: JJ ? false : "jj binary not found (set JJ
     const response = await get("/change/demo/81");
     assert.equal(response.status, 200);
     const change = await response.json();
+    assert.equal(change.path, path.join(tmp, "repos", "demo"), "the one place a filesystem path surfaces");
     assert.equal(change.rounds.length, 2);
     assert.equal(change.rounds[0].commit.description, "round 1: implementation");
     assert.equal(change.rounds[1].commit.description, "round 2: revision");
