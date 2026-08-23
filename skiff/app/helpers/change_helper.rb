@@ -82,6 +82,42 @@ module ChangeHelper
     Array(deploy[:services]).any? { |service| service[:jobId] && service[:outcome].nil? }
   end
 
+  # The one-line readout for the fleet deploy an approval triggered (card
+  # #122): "deploy in progress · n services" while any job is in flight,
+  # then the terminal "deploy complete" once every outcome is in — with a
+  # failure count when any service failed. nil when there is nothing to say
+  # (no deploy recorded, the trigger failed, or nothing was started): the
+  # trigger failure has its own line, and the per-service lines carry the
+  # detail beneath the summary.
+  def deploy_readout(change)
+    deploy = change[:deploy]
+    return nil if deploy.nil? || deploy[:error]
+
+    services = Array(deploy[:services])
+    return nil if services.empty?
+
+    if deploy_pending?(change)
+      { text: "deploy in progress · #{pluralize(services.length, "service")}", failed: false }
+    else
+      failed = services.count { |service| service[:outcome] && !service[:outcome][:ok] }
+      {
+        text: failed.zero? ? "deploy complete" : "deploy complete · #{pluralize(failed, "service")} failed",
+        failed: failed.positive?
+      }
+    end
+  end
+
+  # The GitHub commit approve pushed to main (DW-002 §6), once the push has
+  # actually happened. nil before the landing completes — and for the
+  # bridge's degraded "(unresolved)" tip — so a missing commit never links
+  # to a made-up URL.
+  def landed_commit_url(change)
+    tip = change.dig(:landed, :tip)
+    return nil if tip.blank? || tip == "(unresolved)"
+
+    "https://github.com/deepwa7er/#{change[:repo]}/commit/#{tip}"
+  end
+
   private
 
   def anchors_for(file, line)

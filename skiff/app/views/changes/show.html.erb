@@ -34,9 +34,13 @@
 
     <%# Landing outcomes read out where the header is — the state line above
         already says "landing"; these carry the reason when a landing came
-        back, and the card-comment gap after one landed. %>
+        back, the commit it pushed once the push is in, and the card-comment
+        gap after one landed. %>
     <% if (landing = @change[:lastLanding]) && !landing[:ok] %>
       <p class="instrumentation instrumentation--danger">landing failed — <%= landing[:reason] %></p>
+    <% end %>
+    <% if (commit_url = landed_commit_url(@change)) %>
+      <p class="instrumentation">landed as <%= link_to @change[:landed][:tip].slice(0, 12), commit_url, class: "link" %></p>
     <% end %>
     <% if (comment = @change[:cardComment]) && !comment[:ok] %>
       <p class="instrumentation instrumentation--danger">landed, but the card comment failed — <%= comment[:message] %></p>
@@ -44,12 +48,17 @@
 
     <%# The deploy an approval triggers (card #123): the per-service readout
         after the land, recorded by the bridge — never un-shipping anything.
-        A failed trigger (daemon down) is one danger line; otherwise each
-        started service gets a fact line as its outcome arrives. %>
+        A failed trigger (daemon down) is one danger line; otherwise a
+        one-line summary (card #122) — "deploy in progress" while jobs run,
+        the terminal "deploy complete" once every outcome is in — leads each
+        started service's fact line as its outcome arrives. %>
     <% if (deploy = @change[:deploy]) %>
       <% if deploy[:error] %>
         <p class="instrumentation instrumentation--danger">deploy not triggered — <%= deploy[:error] %></p>
       <% else %>
+        <% if (readout = deploy_readout(@change)) %>
+          <p class="instrumentation <%= "instrumentation--danger" if readout[:failed] %>"><%= readout[:text] %></p>
+        <% end %>
         <% Array(deploy[:services]).each do |service| %>
           <p class="instrumentation <%= "instrumentation--danger" if service[:outcome] && !service[:outcome][:ok] %>">
             deploy · <%= service[:name] %> · <%= deploy_service_state(service) %>

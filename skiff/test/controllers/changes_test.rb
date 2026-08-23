@@ -14,7 +14,7 @@ class ChangesTest < ActionDispatch::IntegrationTest
      end
   DIFF
 
-  def change_fixture(state: "in_review", session: nil, annotations: [], with_stranded: false)
+  def change_fixture(state: "in_review", session: nil, annotations: [], with_stranded: false, deploy: nil, landed: nil)
     all = annotations
     all += [ { id: "a2", path: "gone.rb", line: 9, side: "new", text: "stranded note" } ] if with_stranded
     {
@@ -27,6 +27,8 @@ class ChangesTest < ActionDispatch::IntegrationTest
       updatedAt: "2026-08-23T12:00:00Z",
       lastLanding: nil,
       cardComment: nil,
+      deploy: deploy,
+      landed: landed,
       rounds: [
         {
           n: 1, author: "agent", note: nil,
@@ -223,6 +225,95 @@ class ChangesTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_select "p.instrumentation.instrumentation--danger", text: /deploy not triggered — tugboat daemon unreachable/
+  end
+
+  test "show reads out deploy in progress while any job is in flight" do
+    stub_show(
+      change_fixture(state: "shipped").merge(
+        deploy: {
+          at: "2026-08-23T12:01:00Z", error: nil,
+          services: [
+            { name: "breakwater", jobId: "bw-1", status: "started", outcome: nil },
+            { name: "tugboat", jobId: "tb-2", status: "started", outcome: { ok: true } }
+          ]
+        }
+      )
+    ) do
+      get change_path("fleet", 81)
+    end
+
+    assert_response :success
+    assert_select "p.instrumentation", text: /deploy in progress · 2 services/
+    assert_select "p.instrumentation", text: /deploy · breakwater · deploying/
+  end
+
+  test "show reads out the terminal deploy complete state once every outcome is in" do
+    stub_show(
+      change_fixture(state: "shipped").merge(
+        deploy: {
+          at: "2026-08-23T12:01:00Z", error: nil,
+          services: [
+            { name: "breakwater", jobId: "bw-1", status: "started", outcome: { ok: true } },
+            { name: "tugboat", jobId: "tb-2", status: "started", outcome: { ok: true } }
+          ]
+        }
+      )
+    ) do
+      get change_path("fleet", 81)
+    end
+
+    assert_response :success
+    assert_select "p.instrumentation", text: /deploy complete/
+    assert_select "p.instrumentation", text: /deploy · tugboat · deployed/
+    refute_match(/deploy in progress/, response.body)
+  end
+
+  test "show counts failed services in the terminal readout and marks it danger" do
+    stub_show(
+      change_fixture(state: "shipped").merge(
+        deploy: {
+          at: "2026-08-23T12:01:00Z", error: nil,
+          services: [
+            { name: "breakwater", jobId: "bw-1", status: "started", outcome: { ok: true } },
+            { name: "tugboat", jobId: "tb-2", status: "started", outcome: { ok: false, message: "build failed" } }
+          ]
+        }
+      )
+    ) do
+      get change_path("fleet", 81)
+    end
+
+    assert_response :success
+    assert_select "p.instrumentation.instrumentation--danger", text: /deploy complete · 1 service failed/
+    assert_select "p.instrumentation.instrumentation--danger", text: /deploy · tugboat · failed — build failed/
+  end
+
+  test "show links the github commit once the push is in" do
+    stub_show(
+      change_fixture(state: "shipped").merge(
+        landed: { tip: "8f3b68b246b340c3812c5a11ceda90db27673be0", at: "2026-08-23T12:01:00Z" }
+      )
+    ) do
+      get change_path("fleet", 81)
+    end
+
+    assert_response :success
+    assert_select "a.link[href='https://github.com/deepwa7er/fleet/commit/8f3b68b246b340c3812c5a11ceda90db27673be0']",
+      text: "8f3b68b246b3"
+  end
+
+  test "no commit link before the landing, or for an unresolved tip" do
+    stub_show(change_fixture(state: "landing")) do
+      get change_path("fleet", 81)
+    end
+    assert_select "a.link", 0
+    assert_select ".instrumentation", text: /landed as/, count: 0
+
+    stub_show(change_fixture(state: "shipped").merge(landed: { tip: "(unresolved)", at: "2026-08-23T12:01:00Z" })) do
+      get change_path("fleet", 81)
+    end
+    assert_select "a.link", 0
+    assert_select ".instrumentation", text: /landed as/, count: 0
   end
 
   test "the page keeps polling while a shipped change's deploy is in flight" do
