@@ -456,7 +456,7 @@ This is **not** the host ledger, and the split is deliberate:
 | answers | what is this service running *now* | how did the deploy go |
 | written | inside the remote transaction, on the host | locally, after the deploy |
 | durability | must never be lost — a dashboard would lie | best-effort; a lost line costs a chart row |
-| read by | lighthouse | depot (the fleet data warehouse), eventually |
+| read by | lighthouse | warehouse (local ingest), eventually |
 
 The ledger's entry is composed *before* the deploy runs (both outcomes are baked
 into the remote script, so the host can pick one inside the same transaction as
