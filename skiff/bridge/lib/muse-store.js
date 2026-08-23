@@ -33,7 +33,7 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import os from "node:os";
+import { xdgDataDir } from "./xdg.js";
 
 // Tool output is joined into one part field; a hard cap keeps a single 1MB
 // tool dump from ballooning every transcript response (same cap as the pi
@@ -41,14 +41,11 @@ import os from "node:os";
 const TOOL_OUTPUT_TRUNCATION = 2000;
 
 // Muse resolves its data dir per the XDG spec: $XDG_DATA_HOME/muse, falling
-// back to ~/.local/share/muse. The bridge scans (and spawns) against the
-// same resolution so the phone sees exactly the sessions the muse CLI sees.
+// back to ~/.local/share/muse (lib/xdg.js). The bridge scans (and spawns)
+// against the same resolution so the phone sees exactly the sessions the
+// muse CLI sees.
 export function defaultMuseSessionDir() {
-  const dataHome =
-    process.env.XDG_DATA_HOME && process.env.XDG_DATA_HOME.trim() !== ""
-      ? process.env.XDG_DATA_HOME
-      : path.join(os.homedir(), ".local", "share");
-  return path.join(dataHome, "muse", "sessions");
+  return path.join(xdgDataDir(), "muse", "sessions");
 }
 
 export function parseLine(line) {
