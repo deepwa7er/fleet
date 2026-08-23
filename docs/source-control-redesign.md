@@ -5,7 +5,7 @@
 │ DOC. NO.  DW-002          REV. A          CLASSIFICATION: INTERNAL     │
 │ SUBJECT   Replacing git's ceremony without leaving its ecosystem       │
 │ ORIGIN    Design session 2026-08-22                                    │
-│ STATUS    Design settled. Step 01 adopted 2026-08-23.                  │
+│ STATUS    Steps 01–03 shipped 2026-08-23. Step 04: DW-003.             │
 │ SCOPE     fleet · fizzy · skiff                                        │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -499,7 +499,10 @@ convention rather than a coupling, and it is not the primary path.
   strategy gets designed once `.jj/` is large enough to be worth reacting to
   (§3). The trigger is a number on disk, not a date.
 
-- **Where the durable history lives — and it does not block this.** Warehouse
+- **Where the durable history lives — and it does not block this.**
+  *(Answered at step 04, as predicted: [DW-003](public-record.md) — a
+  dedicated record repository of ship-time exports; inert data, not a
+  resurrected depot.)* Warehouse
   answers *how does this repo work* for agents doing lookups; a depot would
   answer *what happened when*. Different shapes, different consumers, overlapping
   mainly in that both ingest git history — so "retire one" may be the wrong
