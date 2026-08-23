@@ -96,6 +96,7 @@ function replay(events) {
         lastLanding: null,
         cardComment: null,
         recordExport: null,
+        deploy: null,
       };
       continue;
     }
@@ -124,6 +125,28 @@ function replay(events) {
       change.cardComment = { ok: event.ok, ...(event.message ? { message: event.message } : {}), at: event.at };
     } else if (event.event === "recorded") {
       change.recordExport = { ok: event.ok, ...(event.message ? { message: event.message } : {}), at: event.at };
+    } else if (event.event === "deploy") {
+      // The fleet deploy the bridge triggered after the landing: either the
+      // whole thing failed to start (`error`) or each service's start was
+      // recorded (`triggered`). Outcomes arrive later as deploy_outcome
+      // events and update the matching entry.
+      change.deploy = {
+        at: event.at,
+        error: event.error ?? null,
+        services: (event.triggered ?? []).map((t) => ({
+          name: t.name,
+          jobId: t.jobId ?? null,
+          status: t.status === "in_progress" ? "in_progress" : "started",
+          outcome: null,
+        })),
+      };
+    } else if (event.event === "deploy_outcome") {
+      if (change.deploy) {
+        const entry = change.deploy.services.find((s) => s.jobId === event.jobId);
+        if (entry) {
+          entry.outcome = { ok: event.ok, ...(event.message ? { message: event.message } : {}) };
+        }
+      }
     } else if (event.event === "annotation") {
       const round = change.rounds.find((r) => r.n === event.round);
       if (round) {
@@ -446,6 +469,41 @@ export function createChangeStore({ dir }) {
         const change = await load(repo, card);
         if (change === null) return null;
         const event = { event: "card_comment", ok, ...(message ? { message } : {}), at: new Date().toISOString() };
+        await append(repo, card, event);
+        return { ...change, updatedAt: event.at };
+      });
+    },
+
+    // The fleet deploy triggered after a landing (approve = land + ship).
+    // Like the record export and the card comment it is recoverable
+    // metadata: the outcome is recorded either way, and a failed trigger
+    // never un-ships the change.
+    async recordDeploy(repo, card, { triggered = [], error = null }) {
+      if (!Array.isArray(triggered)) throw new Error("recordDeploy triggered must be an array");
+      if (error !== null && typeof error !== "string") throw new Error("recordDeploy error must be a string or null");
+      return serialize(filePath(repo, card), async () => {
+        const change = await load(repo, card);
+        if (change === null) return null;
+        const event = {
+          event: "deploy",
+          ...(error !== null ? { error } : {}),
+          ...(triggered.length > 0 ? { triggered } : {}),
+          at: new Date().toISOString(),
+        };
+        await append(repo, card, event);
+        return { ...change, updatedAt: event.at };
+      });
+    },
+
+    // One triggered job's terminal outcome, appended as the poll sees it.
+    async recordDeployOutcome(repo, card, { jobId, ok, message = null }) {
+      if (typeof jobId !== "string" || jobId === "") throw new Error("recordDeployOutcome requires a jobId");
+      if (typeof ok !== "boolean") throw new Error("recordDeployOutcome requires ok: boolean");
+      if (message !== null && typeof message !== "string") throw new Error("recordDeployOutcome message must be a string or null");
+      return serialize(filePath(repo, card), async () => {
+        const change = await load(repo, card);
+        if (change === null) return null;
+        const event = { event: "deploy_outcome", jobId, ok, ...(message ? { message } : {}), at: new Date().toISOString() };
         await append(repo, card, event);
         return { ...change, updatedAt: event.at };
       });

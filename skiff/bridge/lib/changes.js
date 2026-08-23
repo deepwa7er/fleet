@@ -26,6 +26,7 @@ import { createFizzyCards } from "./fizzy-cards.js";
 import { createRecord } from "./record.js";
 import { createJjClient, diffFilePaths, isFullChangeId } from "./jj.js";
 import { resolveBinary } from "./resolve-binary.js";
+import { createTugboatClient } from "./tugboat.js";
 import { xdgDataDir } from "./xdg.js";
 
 const REPO_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -34,6 +35,14 @@ const REPO_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 // to whoever keeps landing first (DW-002 §6: "retry the loop a few times;
 // if it still loses, make it a round").
 const PUSH_ATTEMPTS = 3;
+
+// How often the bridge polls a triggered deploy job for its outcome, and how
+// long it keeps polling before leaving the rest "in progress". The daemon
+// retains finished jobs (cap 64); these bounds are about the bridge, not the
+// daemon — a deploy that runs past the deadline stays visible on the change
+// as in_progress and its transcript lives on in lighthouse.
+const DEPLOY_POLL_INTERVAL_MS = 5_000;
+const DEPLOY_POLL_DEADLINE_MS = 10 * 60_000;
 
 export function defaultChangeDir() {
   return path.join(xdgDataDir(), "skiff-bridge", "changes");
@@ -64,6 +73,10 @@ export function createChanges(config, { defaultCwd }) {
   // in interactive shells would fail on the first round instead of at start.
   const jj = createJjClient(resolveBinary("jj", config.binary ?? process.env.JJ_BINARY));
   const store = createChangeStore({ dir });
+  const tugboat = createTugboatClient(config.tugboat ?? {});
+  // Tests shrink the poll cadence; production uses the defaults above.
+  const pollIntervalMs = config.tugboat?.pollIntervalMs ?? DEPLOY_POLL_INTERVAL_MS;
+  const pollDeadlineMs = config.tugboat?.pollDeadlineMs ?? DEPLOY_POLL_DEADLINE_MS;
   const fizzy = createFizzyCards(config.fizzy ?? {});
   // A host without git keeps its landings; every export then fails into
   // the change's recordExport readout with the boot error — visible, never
@@ -117,7 +130,18 @@ export function createChanges(config, { defaultCwd }) {
         return { ...round, commit, ...(divergent ? { divergent: true } : {}) };
       })
     );
-    return { ...change, path: repoPath, rounds };
+    // The desk's "approval will deploy the whole fleet" preview: how many
+    // deployables the daemon knows. Best-effort — an unreachable daemon (or
+    // no token) renders no preview rather than an error.
+    let willDeploy = null;
+    if (tugboat) {
+      try {
+        willDeploy = { services: await tugboat.serviceCount() };
+      } catch (err) {
+        console.error(`skiff-bridge: tugboat /services unreachable (deploy preview off): ${err.message}`);
+      }
+    }
+    return { ...change, path: repoPath, rounds, willDeploy };
   }
 
   // The landing itself: fetch → rebase → conflict check → push, retried on
@@ -159,6 +183,17 @@ export function createChanges(config, { defaultCwd }) {
         console.error(`skiff-bridge: landed ${repoName}/${card} but could not resolve its tip:`, err.message);
       }
       const landed = await store.completeLanding(repoName, card, { tip });
+      // Deploy comes straight after the land: approve means "land and ship"
+      // (card #123). The triggered jobs are recorded on the change and their
+      // outcomes polled in the background; a failed trigger (daemon down) is
+      // recorded on the change and never un-ships it — same discipline as the
+      // record export and card comment below.
+      if (tugboat) {
+        await triggerFleetDeploy(repoName, card).catch(async (err) => {
+          console.error(`skiff-bridge: deploy trigger for ${repoName}/${card} failed:`, err);
+          await store.recordDeploy(repoName, card, { error: err.message }).catch(() => {});
+        });
+      }
       // Land first, then the metadata — the export to the record (DW-003
       // §3: the entry is written after the push, beside the Fizzy comment)
       // and the card comment. Each failure is recorded on the change and
@@ -185,6 +220,59 @@ export function createChanges(config, { defaultCwd }) {
     await store.failLanding(repoName, card, {
       reason: `push lost the race ${PUSH_ATTEMPTS} times: ${lastPushError?.message ?? "unknown"}`,
     });
+  }
+
+  // Trigger the full fleet deploy for a landed change: record what started,
+  // then poll each job's outcome in the background and append it. Every
+  // failure here is recorded, never thrown to the lander — a deploy failure
+  // is visible on the change, and the change stays shipped either way.
+  async function triggerFleetDeploy(repoName, card) {
+    const result = await tugboat.deployAll();
+    const triggered = (result.jobs ?? []).map((job) => ({
+      name: job.name,
+      jobId: job.job_id ?? null,
+      status: job.status === "in_progress" ? "in_progress" : "started",
+    }));
+    await store.recordDeploy(repoName, card, { triggered });
+    pollDeployOutcomes(repoName, card, triggered).catch((err) => {
+      console.error(`skiff-bridge: deploy outcome polling for ${repoName}/${card} failed:`, err);
+    });
+  }
+
+  // Poll every started job until it reports a terminal outcome (or the
+  // deadline passes), recording each outcome on the change as it lands. A
+  // transient daemon error is retried on the next round, not treated as a
+  // job outcome.
+  async function pollDeployOutcomes(repoName, card, triggered) {
+    const pending = new Set(
+      triggered.filter((t) => t.jobId !== null).map((t) => t.jobId)
+    );
+    const deadline = Date.now() + pollDeadlineMs;
+    while (pending.size > 0) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return; // still in_progress; the daemon's job stream is the rest of the record
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(pollIntervalMs, remaining))
+      );
+      for (const jobId of [...pending]) {
+        let status;
+        try {
+          status = await tugboat.jobStatus(jobId);
+        } catch {
+          continue; // daemon hiccup — try again on the next round
+        }
+        if (status.outcome) {
+          await store
+            .recordDeployOutcome(repoName, card, {
+              jobId,
+              ok: status.outcome.ok,
+              message: status.outcome.error ?? null,
+            })
+            .catch(() => {});
+          pending.delete(jobId);
+        }
+      }
+    }
   }
 
   return {
