@@ -6,11 +6,18 @@
 // and asks this module for the volatile parts (commit id, description,
 // parents) on demand.
 //
-// Every command runs with --ignore-working-copy so a bridge read never
+// Every read runs with --ignore-working-copy so a bridge read never
 // snapshots the working copy or takes the operation lock out from under a
 // human (or an agent) mid-edit, and with --color never so output is data,
-// not terminal art. This module never mutates a repository: approve's
-// rebase-and-push is step 03 and does not live here.
+// not terminal art.
+//
+// The mutating verbs (fetch, rebase, bookmark set, push — approve's
+// mechanics, DW-002 §6) deliberately do NOT pass --ignore-working-copy:
+// they participate in jj's normal snapshot-and-checkout discipline, exactly
+// as if a human had run them. Skipping the snapshot would leave a stale
+// working copy behind whenever the rebase moves commits the checkout sits
+// on, which surfaces to the human as a "stale working copy" error later.
+// Every mutation lands in the operation log and is jj-undoable.
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -33,8 +40,9 @@ export function isFullChangeId(value) {
 }
 
 export function createJjClient(binaryPath) {
-  async function run(repoPath, args) {
-    return execFileAsync(binaryPath, ["--ignore-working-copy", "--color", "never", ...args], {
+  async function run(repoPath, args, { snapshot = false } = {}) {
+    const flags = snapshot ? [] : ["--ignore-working-copy"];
+    return execFileAsync(binaryPath, [...flags, "--color", "never", ...args], {
       cwd: repoPath,
       maxBuffer: 64 * 1024 * 1024, // a cumulative diff of a large round set is bigger than Node's 1 MiB default
     });
@@ -88,6 +96,76 @@ export function createJjClient(binaryPath) {
         return stdout;
       } catch (err) {
         throw new Error(`jj diff failed in ${repoPath}: ${err.stderr?.trim() || err.message}`);
+      }
+    },
+
+    // --- Mutating verbs: approve's mechanics (DW-002 §6) -------------------
+
+    // Refresh the remote-tracking view. Push safety depends on this being
+    // recent, but not on it being current — jj pushes with expected-old-
+    // value semantics, so a stale view fails the push rather than
+    // clobbering what someone else landed.
+    async fetch(repoPath, remote) {
+      try {
+        await run(repoPath, ["git", "fetch", "--remote", remote], { snapshot: true });
+      } catch (err) {
+        throw new Error(`jj git fetch failed in ${repoPath}: ${err.stderr?.trim() || err.message}`);
+      }
+    },
+
+    // Rebase the whole stack rooted at round 1 onto the fetched main. jj
+    // records conflicts inside the rebased commits instead of stopping, so
+    // this always completes — the caller inspects conflictedIn() next. -s
+    // moves the root and every descendant, so a stray child the agent left
+    // on the stack moves along with it instead of being orphaned.
+    async rebaseOnto(repoPath, rootChangeId, destination) {
+      if (!isFullChangeId(rootChangeId)) throw new Error(`not a full jj change id: ${rootChangeId}`);
+      try {
+        await run(repoPath, ["rebase", "-s", rootChangeId, "-d", destination], { snapshot: true });
+      } catch (err) {
+        throw new Error(`jj rebase failed in ${repoPath}: ${err.stderr?.trim() || err.message}`);
+      }
+    },
+
+    // The change ids in first::last whose commits carry conflicts.
+    async conflictedIn(repoPath, firstChangeId, lastChangeId) {
+      if (!isFullChangeId(firstChangeId)) throw new Error(`not a full jj change id: ${firstChangeId}`);
+      if (!isFullChangeId(lastChangeId)) throw new Error(`not a full jj change id: ${lastChangeId}`);
+      try {
+        const { stdout } = await run(repoPath, [
+          "log",
+          "--no-graph",
+          "-r",
+          `(${firstChangeId}::${lastChangeId}) & conflicts()`,
+          "-T",
+          'change_id ++ "\\n"',
+        ]);
+        return stdout.split("\n").filter((line) => line !== "");
+      } catch (err) {
+        throw new Error(`jj log failed in ${repoPath}: ${err.stderr?.trim() || err.message}`);
+      }
+    },
+
+    // Point the local bookmark at the tip round. --allow-backwards because a
+    // previous failed landing may have left it on a now-abandoned attempt;
+    // the local bookmark is scaffolding, the push is what is race-checked.
+    async setBookmark(repoPath, name, changeId) {
+      if (!isFullChangeId(changeId)) throw new Error(`not a full jj change id: ${changeId}`);
+      try {
+        await run(repoPath, ["bookmark", "set", name, "-r", changeId, "--allow-backwards"], { snapshot: true });
+      } catch (err) {
+        throw new Error(`jj bookmark set failed in ${repoPath}: ${err.stderr?.trim() || err.message}`);
+      }
+    },
+
+    // Push the bookmark. Throws on any failure — a concurrent land shows up
+    // here as jj's stale-info rejection, and jj refuses to push conflicted
+    // commits at all, which backstops the conflictedIn() check.
+    async push(repoPath, remote, bookmark) {
+      try {
+        await run(repoPath, ["git", "push", "--remote", remote, "--bookmark", bookmark], { snapshot: true });
+      } catch (err) {
+        throw new Error(`jj git push failed in ${repoPath}: ${err.stderr?.trim() || err.message}`);
       }
     },
 
