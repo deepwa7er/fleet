@@ -5,7 +5,7 @@
 │ DOC. NO.  DW-002          REV. A          CLASSIFICATION: INTERNAL     │
 │ SUBJECT   Replacing git's ceremony without leaving its ecosystem       │
 │ ORIGIN    Design session 2026-08-22                                    │
-│ STATUS    Design settled. Step 01 not started.                         │
+│ STATUS    Design settled. Step 01 adopted 2026-08-23.                  │
 │ SCOPE     fleet · fizzy · skiff                                        │
 └──────────────────────────────────────────────────────────────────────┘
 ```

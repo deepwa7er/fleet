@@ -13,7 +13,7 @@ Reference: [DW-001](docs/deepwater-style-guide.md) · [specimen](docs/deepwater-
 
 The workflow below (card → worktree → PR → human merges) is being replaced. Before working on `jj`, the `dw` CLI, the change/round/annotation model, or the review surface in `skiff`, read [DW-002](docs/source-control-redesign.md).
 
-It records alternatives that were tried and rejected — a capture daemon, a two-axis change model, closing Fizzy cards from `approve`, pre-land verification — and the reasoning is the point. Re-deriving it costs more than reading it. Design is settled; step 01 has not started. **Until it ships, the workflow below is still authoritative.**
+It records alternatives that were tried and rejected — a capture daemon, a two-axis change model, closing Fizzy cards from `approve`, pre-land verification — and the reasoning is the point. Re-deriving it costs more than reading it. Design is settled; step 01 (colocated `jj` on the desktop) was adopted 2026-08-23; steps 02–04 have not started. **Until it ships, the workflow below is still authoritative.**
 
 ## Workflow — one card = one branch = one PR
 
