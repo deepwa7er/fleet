@@ -12,20 +12,7 @@ class ChangesController < ApplicationController
   # have no coordinates in the cumulative one.
   def show
     @change = BridgeClient.change(params[:repo], params[:card])
-    rounds = Array(@change[:rounds])
-    @round =
-      if params[:round] == "all" || rounds.empty?
-        nil
-      else
-        requested = params[:round].to_i
-        rounds.find { |round| round[:n] == requested } || rounds.last
-      end
-    @diff_files =
-      if rounds.empty?
-        []
-      else
-        GitDiff.parse(BridgeClient.change_diff(params[:repo], params[:card], round: @round&.[](:n))[:diff])
-      end
+    @review = Review.for(@change, round: params[:round])
     load_bound_session
   rescue BridgeClient::Error => e
     @error = e.status ? (e.remote_message || "the bridge refused: HTTP #{e.status}") : "skiff bridge unreachable — start it and reload"
@@ -47,12 +34,14 @@ class ChangesController < ApplicationController
   end
 
   # Verb one. The bridge answers 202 and lands async; the page's poll shows
-  # the outcome (shipped, or back in review carrying the reason).
+  # the outcome (shipped, or back in review carrying the reason). A `session`
+  # param means the verb came from that session page's embedded review — the
+  # loop stays in the chat it started from, so the redirect goes back there.
   def approve
     BridgeClient.approve_change(params[:repo], params[:card])
-    redirect_to change_path(params[:repo], params[:card]), notice: "Landing — this page will follow the outcome."
+    redirect_to verb_target, notice: "Landing — this page will follow the outcome."
   rescue BridgeClient::Error => e
-    redirect_to change_path(params[:repo], params[:card]), alert: verb_failure(e, "Could not approve")
+    redirect_to verb_target, alert: verb_failure(e, "Could not approve")
   end
 
   # Verb two. The note goes to the bound agent session and the change
@@ -60,16 +49,28 @@ class ChangesController < ApplicationController
   def request_changes
     note = params[:note].to_s.strip
     if note.blank?
-      return redirect_to change_path(params[:repo], params[:card]), alert: "Type the note first — it becomes the agent's next round."
+      return redirect_to verb_target, alert: "Type the note first — it becomes the agent's next round."
     end
 
     BridgeClient.request_changes(params[:repo], params[:card], note)
-    redirect_to change_path(params[:repo], params[:card]), notice: "Sent — the agent is working; the next round will appear here."
+    redirect_to verb_target, notice: "Sent — the agent is working; the next round will appear here."
   rescue BridgeClient::Error => e
-    redirect_to change_path(params[:repo], params[:card]), alert: verb_failure(e, "Could not send the note")
+    redirect_to verb_target, alert: verb_failure(e, "Could not send the note")
   end
 
   private
+
+  # Where a verb returns the reader: the session page that embedded the
+  # review when the verb came from there (the loop closes in the chat),
+  # otherwise the change page itself.
+  def verb_target
+    session = params[:session].to_s
+    if session.present?
+      session_path(session)
+    else
+      change_path(params[:repo], params[:card])
+    end
+  end
 
   # The loop closes in one view: when the change has a bound session, the
   # review embeds its live transcript. A session fetch that fails degrades

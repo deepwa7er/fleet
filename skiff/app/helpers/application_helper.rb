@@ -12,6 +12,10 @@ module ApplicationHelper
   def session_instrumentation(session)
     [
       session[:harness],
+      # The bound change, when the bridge reports one (DW-002 §6): "fleet
+      # #81" marks the session that produced a change, so the desk's
+      # working register says which session is the agent on round n+1.
+      (change = session[:change]) ? "#{change[:repo]} ##{change[:card]}" : nil,
       relative_activity(session[:time]),
       directory_basename(session[:directory]),
       session.dig(:model, :id)

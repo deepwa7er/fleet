@@ -261,4 +261,45 @@ describe("the /change family", { skip: JJ ? false : "jj binary not found (set JJ
       await reopened.close();
     }
   });
+
+  it("session payloads carry the ref of the change bound to them", async () => {
+    // Newborn sessions from the fake pi harness get wire ids to bind to.
+    const created = await post("/session", { harness: "pi", title: "bound session" });
+    assert.equal(created.status, 201);
+    const { id } = await created.json();
+    assert.match(id, /^pi:/);
+    const other = await (await post("/session", { harness: "pi", title: "plain session" })).json();
+
+    assert.equal((await post("/change", { repo: "demo", card: 82, session: id })).status, 201);
+    assert.equal((await post("/change", { repo: "demo", card: 83 })).status, 201);
+
+    const list = await (await get("/session")).json();
+    const bound = list.sessions.find((s) => s.id === id);
+    assert.ok(bound, "the newborn session is listed");
+    // The bound change is the ref the session page renders (DW-002 §6):
+    // repo/card to fetch it, and the facts the list items show.
+    assert.equal(bound.change.repo, "demo");
+    assert.equal(bound.change.card, 82);
+    assert.equal(bound.change.state, "working");
+    assert.equal(bound.change.rounds, 0);
+    assert.equal(bound.change.title, null);
+    assert.ok(bound.change.updatedAt, "the ref carries an updatedAt");
+
+    // The show endpoint carries the same ref.
+    const show = await (await get(`/session/${id}`)).json();
+    assert.equal(show.change.repo, "demo");
+    assert.equal(show.change.card, 82);
+
+    // A session with no bound change carries no ref at all.
+    const plain = list.sessions.find((s) => s.id === other.id);
+    assert.ok(plain);
+    assert.equal(plain.change, undefined);
+
+    // Rebinding a session moves the ref (a card can outlive the session
+    // that started it, and the session can move to a newer card).
+    assert.equal((await post("/change/demo/83/session", { session: id })).status, 200);
+    const rebound = await (await get("/session")).json();
+    const moved = rebound.sessions.find((s) => s.id === id);
+    assert.equal(moved.change.card, 83);
+  });
 });

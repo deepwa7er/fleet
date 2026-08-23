@@ -229,6 +229,19 @@ function tagSession(harness, session) {
   };
 }
 
+// The change bound to a session, as the ref the pages need (DW-002 §6: the
+// session embeds its review). Best-effort: a change subsystem that cannot
+// answer (no jj on this host) leaves the session without the ref — the desk
+// names that gap, and the session page degrades to chat-only.
+async function withChangeRef(ctx, session) {
+  try {
+    const bound = await ctx.changes.boundTo(session.id);
+    return bound ? { ...session, change: bound } : session;
+  } catch {
+    return session;
+  }
+}
+
 // --- Routes -----------------------------------------------------------------
 
 async function handle(req, res, ctx) {
@@ -393,7 +406,10 @@ async function handleSessionList(res, ctx) {
     })
   );
   sessions.sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
-  return sendJson(res, 200, { sessions, errors });
+  // Attach each session's bound change ref (DW-002 §6); best-effort, so a
+  // change subsystem that cannot answer never costs the list.
+  const tagged = await Promise.all(sessions.map((session) => withChangeRef(ctx, session)));
+  return sendJson(res, 200, { sessions: tagged, errors });
 }
 
 async function handleSessionCreate(req, res, ctx) {
@@ -413,7 +429,7 @@ async function handleSessionShow(res, ctx, id) {
   const { harness, localId } = resolveHarness(ctx, id);
   const session = await harness.getSession(localId);
   if (!session) return sendJson(res, 404, { error: `session ${id} not found` });
-  return sendJson(res, 200, tagSession(harness, session));
+  return sendJson(res, 200, await withChangeRef(ctx, tagSession(harness, session)));
 }
 
 async function handleSessionMessages(res, ctx, id) {

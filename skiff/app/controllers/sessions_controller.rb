@@ -54,6 +54,12 @@ class SessionsController < ApplicationController
     # A failed fetch hides the picker rather than failing the page — the
     # transcript is the page's job; the picker is an extra.
     @models = models_for(@session)
+    # The embedded review (DW-002 §6: the session is the container — the
+    # change it produced comes back here). The bridge's session payload
+    # carries the bound change's ref; the change and its latest round's diff
+    # are fetched like any review. A failure degrades to chat-only with a
+    # named line — the transcript is the page's job; the review is an extra.
+    load_review
   rescue BridgeClient::Error
     @error = "skiff bridge unreachable — start it and reload"
   end
@@ -160,6 +166,24 @@ class SessionsController < ApplicationController
   end
 
   private
+
+  # The bound change's review for the session page. The ref the bridge
+  # attached was current when the session was fetched; the binding may have
+  # moved since (rebinding is deliberate — a card can outlive the session
+  # that started it), so the change's own binding decides: it renders only
+  # when it points back at this session.
+  def load_review
+    ref = @session[:change]
+    return unless ref
+
+    change = BridgeClient.change(ref[:repo], ref[:card])
+    return unless change[:session] == params[:id]
+
+    @review = Review.for(change)
+  rescue BridgeClient::Error => e
+    @review = nil
+    @review_error = e.message
+  end
 
   # Working state for first paint: a turn still in flight leaves the newest
   # assistant message without info.time.completed.

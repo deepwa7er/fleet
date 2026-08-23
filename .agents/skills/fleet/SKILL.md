@@ -69,14 +69,26 @@ Register the change and the round with the bridge (`skiff/bridge/README.md`
 is the endpoint contract). `gatesRan` is **only what you ran** — it is
 displayed as a claim, verified by nothing, and lying in it defeats the
 whole system. `worthKnowing` is the header's bullet list (new deps, config
-touched, breaking behavior):
+touched, breaking behavior). **Bind the change to this session** — the
+session's wire id is pi's session file basename (pi exposes it as
+`PI_SESSION_FILE` to your bash; the bridge ids are `pi:<basename>`), and
+binding is what makes the review return to the chat that asked for it
+(DW-002 §6). A run whose file never persisted has no binding — omit it
+and the review still works from the desk:
 
 ```bash
+SESSION_ID="pi:$(basename "$PI_SESSION_FILE" .jsonl)"
 curl -s -u "skiff:$PW" -X POST $BRIDGE/change -H 'content-type: application/json' \
-  -d '{"repo":"fleet","card":<card#>,"title":"<card title, humanized>"}'
+  -d "{\"repo\":\"fleet\",\"card\":<card#>,\"title\":\"<card title, humanized>\",\"session\":\"$SESSION_ID\"}"
 curl -s -u "skiff:$PW" -X POST $BRIDGE/change/fleet/<card#>/round -H 'content-type: application/json' \
   -d "{\"author\":\"agent\",\"changeId\":\"$R1\",\"gatesRan\":[\"cargo test\",\"clippy\",\"fleet gen --check\"],\"worthKnowing\":[\"…\"]}"
 ```
+
+If the change already exists (a card's change is created once — "one card =
+one change"), the create answers 409; **rebind it to this session** so the
+review follows the session you are working in: `curl -s -u "skiff:$PW" -X
+POST $BRIDGE/change/fleet/<card#>/session -H 'content-type:
+application/json' -d "{\"session\":\"$SESSION_ID\"}"`.
 
 **Annotate — your final act, not optional.** You did the work and know why;
 the review renders the code with your justifications at the point they

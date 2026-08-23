@@ -107,9 +107,9 @@ Prompt text and the password are never logged.
 | Endpoint | Behavior |
 | --- | --- |
 | `GET /global/health` | static `{"status":"ok"}` |
-| `GET /session` | `{"sessions":[…],"errors":{…}}` — every harness's sessions merged (tagged with `harness` + `capabilities`), plus per-harness failures by name |
+| `GET /session` | `{"sessions":[…],"errors":{…}}` — every harness's sessions merged (tagged with `harness` + `capabilities`), plus per-harness failures by name. Each session carries its bound change's ref as `change` (`{"repo","card","state","rounds","title","updatedAt"}`) when the change subsystem can answer, else absent — best-effort, never a dead list |
 | `POST /session` | `{"harness":"pi"\|"muse"\|"opencode","title":…}` → 201 `{"id":"<harness>:<id>"}`; 400 without a valid harness |
-| `GET /session/{id}` | one tagged session object (404 unknown) |
+| `GET /session/{id}` | one tagged session object, `change` ref like the list (404 unknown) |
 | `GET /session/{id}/message` | transcript + in-flight streaming overlay |
 | `GET /session/{id}/stream` | SSE: snapshot + append/replace/remove/working/orchestrator events, plus a `heartbeat` every 15s for liveness (see lib/stream-registry.js) |
 | `POST /session/{id}/prompt_async` | one text part → the harness's prompt surface; 200 accepted, 404 unknown, 409 a muse run already active, 502 harness failure |
@@ -120,7 +120,7 @@ Prompt text and the password are never logged.
 | `POST /session/{id}/abort` | 204; pi sends `abort`, muse SIGINTs the run's child, opencode POSTs its abort |
 | `GET /session/status` | `{"<harness>:<id>":{"type":"busy"}}` for runs the bridge itself drives (pi, muse); opencode's working state surfaces through the stream |
 | `GET /change` | `{"changes":[…]}` — every change in the store, newest activity first |
-| `POST /change` | `{"repo":…,"card":…}` → 201 the new change (state `working`); 409 if the card already has one, 404 for an unknown repo |
+| `POST /change` | `{"repo":…,"card":…,"session":…?}` → 201 the new change (state `working`); `session` (a harness-qualified id) binds the change to the session that asked for it, so the review returns there; 409 if the card already has one, 404 for an unknown repo |
 | `GET /change/{repo}/{card}` | the change with each round enriched from jj (`commit` is null for an abandoned or divergent change id, never a guess) |
 | `GET /change/{repo}/{card}/diff` | `{"diff":…}` — the cumulative diff, base of round 1 → tip round, git format |
 | `GET /change/{repo}/{card}/diff/{n}` | `{"diff":…}` — round *n* alone |

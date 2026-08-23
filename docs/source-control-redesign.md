@@ -301,7 +301,14 @@ watch it work in the view you were just reviewing in. When it finishes, round
 *n+1* appears in place.
 
 The review and the session transcript are the same page at different moments of
-its life.
+its life — and the embedding is bidirectional. The change carries the session
+that produced it (the agent binds it at create), the session payload carries the
+change back, and the session page renders the same review region the change page
+does: the header's claims, the latest round's annotated diff, and the verbs,
+which return to the session instead of navigating away. The change page keeps
+the full view — rounds navigation, the cumulative diff, and the bound session
+embedded below. One shared partial renders both, so the two views of a change
+can never disagree.
 
 > Diff highlighting goes through `TranscriptHelper`'s existing Rouge-to-palette
 > mapping. Skiff's own notes say its tokens map to the app's palette and "never a
