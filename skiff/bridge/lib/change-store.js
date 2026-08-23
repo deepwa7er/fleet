@@ -95,6 +95,7 @@ function replay(events) {
         landed: null,
         lastLanding: null,
         cardComment: null,
+        recordExport: null,
       };
       continue;
     }
@@ -121,6 +122,8 @@ function replay(events) {
       change.lastLanding = { ok: false, reason: event.reason, conflicts: event.conflicts ?? [], at: event.at };
     } else if (event.event === "card_comment") {
       change.cardComment = { ok: event.ok, ...(event.message ? { message: event.message } : {}), at: event.at };
+    } else if (event.event === "recorded") {
+      change.recordExport = { ok: event.ok, ...(event.message ? { message: event.message } : {}), at: event.at };
     } else if (event.event === "annotation") {
       const round = change.rounds.find((r) => r.n === event.round);
       if (round) {
@@ -417,6 +420,20 @@ export function createChangeStore({ dir }) {
         await append(repo, card, { event: "landing_failed", reason, conflicts, at });
         await append(repo, card, { event: "state", state: "in_review", at });
         return { ...change, state: "in_review", updatedAt: at };
+      });
+    },
+
+    // The record export (DW-003 §2): like the card comment, recoverable
+    // metadata whose outcome is recorded either way — a failed export is
+    // visible on the change instead of lost in a log.
+    async recordExport(repo, card, { ok, message = null }) {
+      if (typeof ok !== "boolean") throw new Error("recordExport requires ok: boolean");
+      return serialize(filePath(repo, card), async () => {
+        const change = await load(repo, card);
+        if (change === null) return null;
+        const event = { event: "recorded", ok, ...(message ? { message } : {}), at: new Date().toISOString() };
+        await append(repo, card, event);
+        return { ...change, updatedAt: event.at };
       });
     },
 
