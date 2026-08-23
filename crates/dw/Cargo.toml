@@ -1,0 +1,22 @@
+[package]
+name = "dw"
+version = "0.1.0"
+edition = "2021"
+description = "The one-noun CLI (DW-002 §7): dw shows what's happening, dw edit prints a path, dw ship takes the one sentence of ceremony left in the system. Everything else happens in skiff."
+license = "MIT"
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+clap = { workspace = true, features = ["derive", "env"] }
+# rustls rather than platform TLS, matching fizzy/mirror/sonar/trawler.
+reqwest = { workspace = true, features = ["rustls-tls", "json"] }
+# dw ship creates the card its change binds to — the fizzy crate's first
+# library consumer.
+fizzy = { path = "../fizzy" }
+
+[[bin]]
+name = "dw"
+path = "src/main.rs"
