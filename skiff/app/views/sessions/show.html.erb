@@ -57,15 +57,18 @@
     <%# M4: status, orchestrator readout, and transcript under one stable
         wrapper that carries the stream wiring. Only #session-status,
         #orchestrator-readout, and #transcript themselves are targeted by
-        streams — never the wrapper — so chat-scroll and user-jump survive
-        the transcript replacements that settle every reconnect. The wiring
-        lives here, not on #transcript, and only on the healthy path (no URL
-        to stream when the fetch already failed). chat-scroll shares the
-        wrapper: opening the chat lands at the newest message, and its
-        observer watches this element for appends and replacements alike.
-        The user-jump widget rides the same wrapper for the same reason.
+        streams — never the wrapper — so chat-scroll, user-jump, and
+        reasoning-state survive the transcript replacements that settle
+        every reconnect. The wiring lives here, not on #transcript, and only
+        on the healthy path (no URL to stream when the fetch already
+        failed). chat-scroll shares the wrapper: opening the chat lands at
+        the newest message, and its observer watches this element for
+        appends and replacements alike. The user-jump widget rides the same
+        wrapper for the same reason, and reasoning-state preserves each
+        reasoning disclosure's open state across the stream's whole-message
+        replaces (card #110).
         %>
-    <div data-controller="stream chat-scroll user-jump" data-stream-url="<%= session_stream_path(@session[:id]) %>">
+    <div data-controller="stream chat-scroll user-jump reasoning-state" data-stream-url="<%= session_stream_path(@session[:id]) %>">
       <%= render "sessions/status", working: @working, session_id: @session[:id] %>
 
       <%# The orchestrator is a pi extension; other harnesses have no mode to

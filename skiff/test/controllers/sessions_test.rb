@@ -210,6 +210,10 @@ class SessionsTest < ActionDispatch::IntegrationTest
     assert_select ".reasoning .prose", text: /Let me look at the layout first/
     # A settled reasoning block renders closed — the user opens it on tap.
     assert_select "details.reasoning[open]", count: 0
+    # It carries its positional key (message 1, part 0) so reasoning-state
+    # (card #110) can tell this disclosure from any other across the
+    # stream's whole-message replaces.
+    assert_select "details.reasoning[data-reasoning-state-key='1:0']", count: 1
     assert_select ".tool-line", text: /grep · completed · searching/
     assert_select ".tool-line", text: /file · plan\.md/
     assert_select "pre code.language-ruby", text: /puts 1/
@@ -235,13 +239,13 @@ class SessionsTest < ActionDispatch::IntegrationTest
     assert_select "div#orchestrator-readout"
     # M4: the stream wiring lives on the stable wrapper around the three
     # stream targets (never itself a stream target), so chat-scroll and
-    # user-jump survive the transcript replacements that settle every
-    # reconnect, and the user-jump widget (hidden until it has two messages
-    # to jump between) rides along untouched.
-    assert_select "div[data-controller='stream chat-scroll user-jump'][data-stream-url='/sessions/pi:ses_123/stream']"
-    assert_select "div[data-controller='stream chat-scroll user-jump'] #session-status"
-    assert_select "div[data-controller='stream chat-scroll user-jump'] #orchestrator-readout"
-    assert_select "div[data-controller='stream chat-scroll user-jump'] #transcript"
+    # user-jump and reasoning-state survive the transcript replacements that
+    # settle every reconnect, and the user-jump widget (hidden until it has
+    # two messages to jump between) rides along untouched.
+    assert_select "div[data-controller='stream chat-scroll user-jump reasoning-state'][data-stream-url='/sessions/pi:ses_123/stream']"
+    assert_select "div[data-controller='stream chat-scroll user-jump reasoning-state'] #session-status"
+    assert_select "div[data-controller='stream chat-scroll user-jump reasoning-state'] #orchestrator-readout"
+    assert_select "div[data-controller='stream chat-scroll user-jump reasoning-state'] #transcript"
     assert_select "nav.user-jump[hidden] .user-jump-button", count: 2
 
     assert_no_match(/auto-attached context/, response.body)
@@ -289,8 +293,10 @@ class SessionsTest < ActionDispatch::IntegrationTest
     end
 
     assert_response :success
-    # The overlay's reasoning renders open so the thinking is visible live.
-    assert_select "details.reasoning[open] .prose", text: /thinking out loud/
+    # The overlay's reasoning renders open so the thinking is visible live,
+    # at the same positional key the settled entry will render at — the key
+    # reasoning-state (card #110) uses to keep it open across settlement.
+    assert_select "details.reasoning[data-reasoning-state-key='1:0'][open] .prose", text: /thinking out loud/
     assert_select "#transcript .message", count: 2
   end
 
