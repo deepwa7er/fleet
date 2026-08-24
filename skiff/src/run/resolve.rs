@@ -20,8 +20,8 @@
 use std::path::{Path, PathBuf};
 
 /// Where a CLI installs itself, beyond `PATH`.
-fn home_candidates(name: &str) -> Vec<PathBuf> {
-    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+fn home_candidates(home: Option<&Path>, name: &str) -> Vec<PathBuf> {
+    let Some(home) = home else {
         return Vec::new();
     };
     vec![
@@ -31,6 +31,71 @@ fn home_candidates(name: &str) -> Vec<PathBuf> {
         // but not systemd's, exactly like ~/.local/bin.
         home.join(".cargo/bin").join(name),
     ]
+}
+
+/// The immutable environment used to resolve harness executables.
+///
+/// Keeping this as data, rather than consulting process-global environment
+/// variables throughout resolution, makes startup deterministic and lets the
+/// resolver be tested without mutating `PATH` or `HOME` underneath unrelated
+/// tests and child processes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinaryResolver {
+    path: Vec<PathBuf>,
+    home: Option<PathBuf>,
+}
+
+impl BinaryResolver {
+    pub fn from_env() -> Self {
+        Self {
+            path: std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect(),
+            home: std::env::var_os("HOME").map(PathBuf::from),
+        }
+    }
+
+    pub fn new(path: Vec<PathBuf>, home: Option<PathBuf>) -> Self {
+        Self { path, home }
+    }
+
+    pub fn binary(&self, requested: &Path) -> Result<PathBuf, String> {
+        let name = requested.to_string_lossy().into_owned();
+
+        if requested.components().count() > 1 {
+            return if requested.is_file() {
+                Ok(requested.to_path_buf())
+            } else {
+                Err(format!("{name} does not exist"))
+            };
+        }
+
+        let mut tried = Vec::new();
+        for dir in &self.path {
+            if dir.as_os_str().is_empty() {
+                continue;
+            }
+            let candidate = dir.join(&name);
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+            tried.push(candidate);
+        }
+        for candidate in home_candidates(self.home.as_deref(), &name) {
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+            tried.push(candidate);
+        }
+
+        Err(format!(
+            "{name} was not found. Tried: {}. Set SKIFF_{}_BINARY to its absolute path.",
+            tried
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            name.to_uppercase(),
+        ))
+    }
 }
 
 /// Resolve `requested` to an absolute path.
@@ -43,39 +108,7 @@ fn home_candidates(name: &str) -> Vec<PathBuf> {
 /// looked" is not something anyone can act on — which is precisely how this
 /// surfaced in the first place.
 pub fn binary(requested: &Path) -> Result<PathBuf, String> {
-    let name = requested.to_string_lossy().into_owned();
-
-    if requested.components().count() > 1 {
-        return if requested.is_file() {
-            Ok(requested.to_path_buf())
-        } else {
-            Err(format!("{name} does not exist"))
-        };
-    }
-
-    let mut tried = Vec::new();
-    for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
-        if dir.as_os_str().is_empty() {
-            continue;
-        }
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-        tried.push(candidate);
-    }
-    for candidate in home_candidates(&name) {
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-        tried.push(candidate);
-    }
-
-    Err(format!(
-        "{name} was not found. Tried: {}. Set SKIFF_{}_BINARY to its absolute path.",
-        tried.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "),
-        name.to_uppercase(),
-    ))
+    BinaryResolver::from_env().binary(requested)
 }
 
 #[cfg(test)]
@@ -89,18 +122,11 @@ mod tests {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    /// `PATH` and `HOME` are process-global, so these run under one lock rather
-    /// than racing each other.
-    fn with_env<T>(path: &str, home: &Path, f: impl FnOnce() -> T) -> T {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        // SAFETY: the lock serialises every mutation and read in this module's
-        // tests, and nothing else in the suite reads PATH or HOME.
-        unsafe {
-            std::env::set_var("PATH", path);
-            std::env::set_var("HOME", home);
-        }
-        f()
+    fn resolver(path: &[&Path], home: &Path) -> BinaryResolver {
+        BinaryResolver::new(
+            path.iter().map(|path| path.to_path_buf()).collect(),
+            Some(home.into()),
+        )
     }
 
     #[test]
@@ -108,9 +134,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("usr/bin/pi");
         executable(&bin);
-        let found = with_env(&dir.path().join("usr/bin").to_string_lossy(), dir.path(), || {
-            binary(Path::new("pi"))
-        });
+        let found = resolver(&[&dir.path().join("usr/bin")], dir.path()).binary(Path::new("pi"));
         assert_eq!(found.unwrap(), bin);
     }
 
@@ -121,7 +145,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join(".local/bin/pi");
         executable(&bin);
-        let found = with_env("/usr/local/bin:/usr/bin", dir.path(), || binary(Path::new("pi")));
+        let found = resolver(
+            &[Path::new("/usr/local/bin"), Path::new("/usr/bin")],
+            dir.path(),
+        )
+        .binary(Path::new("pi"));
         assert_eq!(found.unwrap(), bin);
     }
 
@@ -130,7 +158,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join(".cargo/bin/jj");
         executable(&bin);
-        let found = with_env("/nonexistent", dir.path(), || binary(Path::new("jj")));
+        let found = resolver(&[Path::new("/nonexistent")], dir.path()).binary(Path::new("jj"));
         assert_eq!(found.unwrap(), bin);
     }
 
@@ -140,10 +168,12 @@ mod tests {
         let on_path = dir.path().join("usr/bin/pi");
         executable(&on_path);
         executable(&dir.path().join(".local/bin/pi"));
-        let found = with_env(&dir.path().join("usr/bin").to_string_lossy(), dir.path(), || {
-            binary(Path::new("pi"))
-        });
-        assert_eq!(found.unwrap(), on_path, "an explicit PATH entry is the operator's choice");
+        let found = resolver(&[&dir.path().join("usr/bin")], dir.path()).binary(Path::new("pi"));
+        assert_eq!(
+            found.unwrap(),
+            on_path,
+            "an explicit PATH entry is the operator's choice"
+        );
     }
 
     #[test]
@@ -151,7 +181,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("somewhere/odd/pi");
         executable(&bin);
-        let found = with_env("/nonexistent", dir.path(), || binary(&bin));
+        let found = resolver(&[Path::new("/nonexistent")], dir.path()).binary(&bin);
         assert_eq!(found.unwrap(), bin);
     }
 
@@ -159,7 +189,9 @@ mod tests {
     fn an_explicit_path_that_does_not_exist_says_so_plainly() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("nope/pi");
-        let err = with_env("/nonexistent", dir.path(), || binary(&missing)).unwrap_err();
+        let err = resolver(&[Path::new("/nonexistent")], dir.path())
+            .binary(&missing)
+            .unwrap_err();
         assert!(err.contains("does not exist"), "{err}");
         assert!(err.contains("nope/pi"), "the error names the path: {err}");
     }
@@ -169,12 +201,19 @@ mod tests {
         // "not found" without "where I looked" is not actionable — which is
         // exactly how this bug reached a user.
         let dir = tempfile::tempdir().unwrap();
-        let err = with_env("/usr/local/bin:/usr/bin", dir.path(), || binary(Path::new("pi")))
-            .unwrap_err();
+        let err = resolver(
+            &[Path::new("/usr/local/bin"), Path::new("/usr/bin")],
+            dir.path(),
+        )
+        .binary(Path::new("pi"))
+        .unwrap_err();
         assert!(err.contains("/usr/local/bin/pi"), "{err}");
         assert!(err.contains("/usr/bin/pi"), "{err}");
         assert!(err.contains(".local/bin/pi"), "{err}");
         assert!(err.contains(".cargo/bin/pi"), "{err}");
-        assert!(err.contains("SKIFF_PI_BINARY"), "and how to override it: {err}");
+        assert!(
+            err.contains("SKIFF_PI_BINARY"),
+            "and how to override it: {err}"
+        );
     }
 }
