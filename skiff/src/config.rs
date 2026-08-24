@@ -44,6 +44,10 @@ pub struct Config {
     /// The muse binary. Resolved on PATH and common home-relative locations.
     #[arg(long, env = "SKIFF_MUSE_BINARY", default_value = "muse")]
     pub muse_binary: PathBuf,
+
+    /// Loopback URL of the sibling `opencode serve` process.
+    #[arg(long, env = "SKIFF_OPENCODE_URL", default_value = "http://127.0.0.1:4130")]
+    pub opencode_url: String,
 }
 
 impl Config {

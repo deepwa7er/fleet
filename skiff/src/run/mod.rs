@@ -18,6 +18,7 @@ pub mod overlay;
 pub mod pi_rpc;
 pub mod resolve;
 pub mod muse_exec;
+pub mod opencode;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -37,6 +38,7 @@ use crate::store::Store;
 use overlay::{Overlay, RunId};
 use pi_rpc::{COMMAND_TIMEOUT, PiConfig, PiProcess};
 use muse_exec::{MuseConfig, MuseRuns};
+use opencode::OpencodeRuns;
 
 /// How often overlay growth is announced.
 ///
@@ -140,6 +142,7 @@ pub struct Runs {
     next_run: AtomicU64,
     models: Mutex<Option<ModelsCache>>,
     muse: MuseRuns,
+    opencode: Arc<OpencodeRuns>,
 }
 
 impl Runs {
@@ -150,6 +153,7 @@ impl Runs {
         pi_dir: PathBuf,
         pi_dir_explicit: bool,
         muse_config: MuseConfig,
+        opencode_url: &str,
     ) -> Arc<Self> {
         let binary = resolve::binary(&binary);
         match &binary {
@@ -168,6 +172,10 @@ impl Runs {
             let _ = topics.send(Topic::SourceHealth);
         }
         let muse = MuseRuns::new(muse_config, store.clone(), topics.clone());
+        let opencode = OpencodeRuns::new(
+            crate::ingest::opencode::OpencodeClient::new(opencode_url),
+            topics.clone(),
+        );
         Arc::new(Self {
             sessions: Mutex::default(),
             store,
@@ -178,6 +186,7 @@ impl Runs {
             next_run: AtomicU64::new(0),
             models: Mutex::new(None),
             muse,
+            opencode,
         })
     }
 
@@ -186,6 +195,9 @@ impl Runs {
     pub async fn live(&self, session: &SessionKey) -> LiveState {
         if session.harness == Harness::Muse {
             return self.muse.live(session).await;
+        }
+        if session.harness == Harness::Opencode {
+            return self.opencode.live(session).await;
         }
         let run = self.sessions.lock().await.get(session).cloned();
         match run {
@@ -199,9 +211,7 @@ impl Runs {
         match session.harness {
             Harness::Pi => self.send_pi(session, text, client_id).await,
             Harness::Muse => self.muse.send(session, text, client_id).await,
-            Harness::Opencode => {
-                bail!("skiff cannot yet run opencode sessions — it can only read them")
-            }
+            Harness::Opencode => self.opencode.send(session, text, client_id).await,
         }
     }
 
@@ -258,9 +268,7 @@ impl Runs {
         match session.harness {
             Harness::Pi => self.abort_pi(session).await,
             Harness::Muse => self.muse.abort(session).await,
-            Harness::Opencode => {
-                bail!("skiff cannot yet abort opencode sessions — it can only read them")
-            }
+            Harness::Opencode => self.opencode.abort(session).await,
         }
     }
 
@@ -291,6 +299,9 @@ impl Runs {
     /// Rename a Pi session through Pi itself, which persists the corresponding
     /// `session_info` entry. No derived state is edited directly.
     pub async fn rename(&self, session: &SessionKey, name: &str) -> Result<()> {
+        if session.harness == Harness::Opencode {
+            return self.opencode.rename(session, name).await;
+        }
         pi_only(session, "rename")?;
         let name = name.trim();
         if name.is_empty() {
@@ -379,6 +390,10 @@ impl Runs {
         catalog
     }
 
+    pub fn opencode(&self) -> Arc<OpencodeRuns> {
+        self.opencode.clone()
+    }
+
     /// How many user messages the session's transcript currently holds.
     async fn user_count(&self, session: &SessionKey) -> usize {
         let store = self.store.clone();
@@ -404,6 +419,11 @@ impl Runs {
     pub async fn session_changed(&self, session: &SessionKey) {
         if session.harness == Harness::Muse {
             self.muse.session_changed(session).await;
+            return;
+        }
+        // OpenCode is observed through its HTTP event stream rather than a
+        // session file, so filesystem notifications cannot resolve its runs.
+        if session.harness == Harness::Opencode {
             return;
         }
         let run = self.sessions.lock().await.get(session).cloned();

@@ -13,6 +13,7 @@
 //! files, so skiffd restarting loses nothing durable — the next scan converges.
 
 pub mod muse;
+pub mod opencode;
 pub mod pi;
 pub mod pi_map;
 pub mod source;

@@ -3,6 +3,7 @@ use clap::Parser;
 use tokio::sync::broadcast;
 
 use skiff::config::Config;
+use skiff::ingest::opencode::OpencodeIngest;
 use skiff::ingest::{Ingest, Topic};
 use skiff::run::Runs;
 use skiff::run::muse_exec::MuseConfig;
@@ -43,7 +44,16 @@ async fn main() -> Result<()> {
             session_dir: config.muse_dir(),
             session_dir_explicit: config.muse_session_dir.is_some(),
         },
+        &config.opencode_url,
     );
+
+    OpencodeIngest::new(
+        runs.opencode().client(),
+        store.clone(),
+        runs.opencode(),
+        topics.clone(),
+    )
+    .spawn();
 
     // A finished reply is handed over to the transcript, and a sent prompt
     // retired, when the session's file actually changes — not when pi says so.

@@ -60,6 +60,7 @@ async fn start() -> Harness {
             session_dir: sessions.path().join("muse/sessions"),
             session_dir_explicit: true,
         },
+        "http://127.0.0.1:1",
     );
 
     let dist = tempfile::tempdir().unwrap();

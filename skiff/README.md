@@ -110,10 +110,12 @@ does not recognise. The hand-written barrel is `web/src/types.ts`, beside it.
 
 ### Status
 
-M1 of [DW-004 §13](../docs/skiff-architecture.md): the skeleton, and pi
-sessions end to end — ingest, store, the `sessions` live query, and a React
-shell that lists them. The transcript, the other two harnesses, changes, and
-the desk are M2–M6; the flip at breakwater is M7.
+M1–M3 of [DW-004 §13](../docs/skiff-architecture.md) are complete. Pi, Muse,
+and OpenCode sessions now flow through native Rust adapters into the same
+typed transcript and live-run protocol. Send and abort work across all three;
+capability-gated rename, Pi model selection, and Pi orchestrator control are
+available in React, and source failures remain isolated and visible. Changes,
+review, and the desk are M4–M6; the breakwater cutover remains M7.
 
 ---
 

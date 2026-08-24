@@ -97,4 +97,25 @@ describe("SessionControls", () => {
     )
     expect(container.innerHTML).toBe("")
   })
+
+  it("renders only the capability OpenCode advertises", () => {
+    render(
+      <SessionControls
+        view={{
+          ...view,
+          session: {
+            ...view.session!,
+            id: "opencode:ses_1",
+            harness: "opencode",
+            capabilities: { rename: true, orchestrator: false, model: false },
+          },
+          models: { options: [], error: null },
+        }}
+        command={command}
+      />,
+    )
+    expect(screen.getByLabelText("Session name")).toBeTruthy()
+    expect(screen.queryByLabelText("Model")).toBeNull()
+    expect(screen.queryByRole("button", { name: /orchestrator/i })).toBeNull()
+  })
 })

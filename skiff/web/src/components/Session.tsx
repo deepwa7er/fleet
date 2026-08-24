@@ -49,14 +49,9 @@ function Loaded({ view }: { view: SessionView }) {
       </header>
       <SessionControls view={view} command={(command) => client.command(command)} />
       <Transcript messages={view.messages} live={view.live} harness={session.harness} />
-      {/* Pi owns a long-lived RPC process; Muse owns one process per prompt.
-          Both are real command adapters now. OpenCode joins them once its
-          server/event-stream adapter is present. */}
-      {session.harness !== "opencode" ? (
-        <Composer session={session.id} working={view.live.working} />
-      ) : (
-        <p className="instrumentation">read only · opencode adapter pending</p>
-      )}
+      {/* All three harnesses expose the same typed send/abort intent here;
+          their incompatible process models end at Rust's adapter boundary. */}
+      <Composer session={session.id} working={view.live.working} />
     </>
   )
 }

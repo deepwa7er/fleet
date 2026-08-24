@@ -128,11 +128,31 @@ impl Store {
     /// this module free of harness knowledge: the adapter derives the summary
     /// from the same entries it just parsed, and the store only persists.
     pub fn ingest_session(&self, batch: SessionIngest<'_>) -> Result<()> {
+        self.write_session(batch, false)
+    }
+
+    /// Atomically replace one source's complete view of a session.
+    ///
+    /// Remote APIs such as OpenCode return whole message lists rather than an
+    /// append cursor. Deleting stale rows and writing the replacement in one
+    /// transaction ensures a concurrent view can observe either complete
+    /// version, never an empty or mixed transcript.
+    pub fn replace_session(&self, batch: SessionIngest<'_>) -> Result<()> {
+        self.write_session(batch, true)
+    }
+
+    fn write_session(&self, batch: SessionIngest<'_>, replace: bool) -> Result<()> {
         self.with(|conn| {
             let tx = conn.unchecked_transaction()?;
             // The summary row first: `entry` references it, and foreign keys
             // are on.
             upsert_summary(&tx, batch.summary, batch.state)?;
+            if replace {
+                tx.execute(
+                    "DELETE FROM entry WHERE session_id = ?1",
+                    params![batch.summary.id.to_string()],
+                )?;
+            }
             {
                 let mut insert = tx.prepare_cached(
                     "INSERT INTO entry (session_id, seq, id, parent_id, raw, mapped)

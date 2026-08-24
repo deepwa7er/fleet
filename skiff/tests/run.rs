@@ -128,6 +128,11 @@ while True:
         emit(type="message_update", assistantMessageEvent={
             "type": "text_delta", "contentIndex": 1, "delta": piece})
         time.sleep(0.02)
+    # Hold the complete streamed state open long enough to cross Skiff's
+    # deliberate overlay coalescing interval. Without this, the fixture can
+    # emit settlement before the subscriber is ever eligible to observe the
+    # intermediate `working` state that this test exists to verify.
+    time.sleep(0.1)
     append_entry({"id": next_id(), "type": "message",
                   "timestamp": "2026-08-23T10:00:02.000Z",
                   "message": {"role": "assistant", "model": "fake-1",
@@ -207,6 +212,7 @@ async fn start(script: &str) -> Harness {
             session_dir: sessions.path().join("muse/sessions"),
             session_dir_explicit: true,
         },
+        "http://127.0.0.1:1",
     );
 
     // The same handover wiring `main` installs: a finished reply moves from
@@ -721,9 +727,9 @@ async fn aborting_an_idle_session_is_not_an_error() {
 }
 
 #[tokio::test]
-async fn a_session_skiff_cannot_run_is_refused_by_name() {
-    // Without this, a prompt to a muse session would resolve a file through
-    // pi's layout and spawn pi against a muse log.
+async fn an_unknown_muse_session_is_refused_by_name() {
+    // Harness dispatch must happen before Pi resolution: an unknown Muse
+    // session should fail through the Muse adapter and name its own harness.
     let harness = start(FAKE_PI).await;
     let mut socket = connect(harness.addr).await;
     send(
