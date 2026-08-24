@@ -120,6 +120,7 @@ export function App() {
                 onPointerDown={() => setActivePane("session")}
               >
                 <Session
+                  key={workspace.session}
                   id={workspace.session}
                   onClose={() => navigate({ ...workspace, session: null })}
                   onOpenChange={openChange}
@@ -136,6 +137,7 @@ export function App() {
                 onPointerDown={() => setActivePane("change")}
               >
                 <ChangeReview
+                  key={`${workspace.change.repo}:${workspace.change.card}`}
                   {...workspace.change}
                   onClose={() => navigate({ ...workspace, change: null })}
                   onRound={(round) => navigate({ ...workspace, change: { ...workspace.change!, round } })}

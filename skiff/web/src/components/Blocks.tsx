@@ -33,9 +33,9 @@ function BlockView({ block }: { block: Block }) {
     case "table":
       return <TableView head={block.head} rows={block.rows} />
     case "rule":
-      // The one place a line is content rather than decoration: the author
-      // wrote a break, so it is not the divider rule 1 forbids.
-      return <hr className="border-0 border-t border-muted/30" />
+      // Preserve the authored semantic break without drawing the divider that
+      // DW-001 rule 1 forbids. The whitespace is the visible separator.
+      return <div role="separator" className="h-8" />
   }
 }
 
@@ -116,12 +116,11 @@ function CodeBlock({ lang, tokens }: { lang: string | null; tokens: Token[] }) {
 }
 
 /**
- * DW-001 §8: highlighting reuses the app's status palette rather than
- * introducing a second one — and anything that is not one of the five roles
- * stays the block's own ink, unspanned.
+ * Highlighting stays inside DW-001's existing semantic palette. The accent is
+ * interactive-only, so keywords use weight rather than blue.
  */
 const TOKEN_CLASS: Record<Exclude<TokenClass, "plain">, string> = {
-  keyword: "text-accent",
+  keyword: "font-semibold text-ink",
   str: "text-good",
   comment: "text-muted",
   deleted: "text-danger",

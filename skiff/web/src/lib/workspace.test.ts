@@ -18,4 +18,14 @@ describe("workspace URLs", () => {
   it("rejects invalid rounds", () => {
     expect(readWorkspace("/c/fleet/124", "?round=zero").change?.round).toBeNull()
   })
+
+  it("treats malformed percent escapes as an empty workspace", () => {
+    expect(readWorkspace("/s/pi:%zz")).toEqual({ session: null, change: null })
+    expect(readWorkspace("/c/%zz/124")).toEqual({ session: null, change: null })
+  })
+
+  it("rejects card numbers that are not positive safe integers", () => {
+    expect(readWorkspace("/c/fleet/0")).toEqual({ session: null, change: null })
+    expect(readWorkspace("/c/fleet/9007199254740992")).toEqual({ session: null, change: null })
+  })
 })

@@ -55,7 +55,7 @@ function Loaded({
           <span>{session.harness}</span>
           {session.model && <span>{session.model}</span>}
           {session.orchestratorActive && <span>orchestrator</span>}
-          {view.live.working && <span className="text-accent">working</span>}
+          {view.live.working && <span>working</span>}
         </p>
         {session.directory && (
           <p className="font-mono text-sm text-muted">{session.directory}</p>

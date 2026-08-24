@@ -8,25 +8,35 @@ export type Workspace = {
 export function readWorkspace(pathname = location.pathname, search = location.search): Workspace {
   const both = pathname.match(/^\/s\/([^/]+)\/c\/([^/]+)\/(\d+)$/)
   if (both?.[1] && both[2] && both[3]) {
+    const session = decodeSegment(both[1])
+    const repo = decodeSegment(both[2])
+    const card = readCard(both[3])
+    if (session === null || repo === null || card === null) return emptyWorkspace()
     return {
-      session: decodeURIComponent(both[1]),
+      session,
       change: {
-        repo: decodeURIComponent(both[2]),
-        card: Number(both[3]),
+        repo,
+        card,
         round: readRound(search),
       },
     }
   }
   const session = pathname.match(/^\/s\/(.+)$/)
-  if (session?.[1]) return { session: decodeURIComponent(session[1]), change: null }
+  if (session?.[1]) {
+    const id = decodeSegment(session[1])
+    return id === null ? emptyWorkspace() : { session: id, change: null }
+  }
   const change = pathname.match(/^\/c\/([^/]+)\/(\d+)$/)
   if (change?.[1] && change[2]) {
+    const repo = decodeSegment(change[1])
+    const card = readCard(change[2])
+    if (repo === null || card === null) return emptyWorkspace()
     return {
       session: null,
-      change: { repo: decodeURIComponent(change[1]), card: Number(change[2]), round: readRound(search) },
+      change: { repo, card, round: readRound(search) },
     }
   }
-  return { session: null, change: null }
+  return emptyWorkspace()
 }
 
 export function workspaceHref(workspace: Workspace): string {
@@ -42,4 +52,21 @@ function readRound(search: string): number | null {
   const value = new URLSearchParams(search).get("round")
   const round = value === null ? null : Number(value)
   return Number.isInteger(round) && (round ?? 0) > 0 ? round : null
+}
+
+function decodeSegment(value: string): string | null {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return null
+  }
+}
+
+function readCard(value: string): number | null {
+  const card = Number(value)
+  return Number.isSafeInteger(card) && card > 0 ? card : null
+}
+
+function emptyWorkspace(): Workspace {
+  return { session: null, change: null }
 }

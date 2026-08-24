@@ -136,8 +136,8 @@ button {
 }
 
 .palette {
-  background: var(--color-paper);
-  box-shadow: 0 1.2rem 4rem color-mix(in srgb, var(--color-hard) 28%, transparent);
+  background: var(--color-fill);
+  border-radius: 10px;
   max-width: 42rem;
   padding: 1.25rem;
   width: 100%;
@@ -213,14 +213,13 @@ button {
 
 .input-surface {
   background: var(--color-fill);
-  border: 1px solid color-mix(in srgb, var(--color-ink) 24%, transparent);
-  border-radius: 8px;
-  outline: 0;
+  border: 0;
+  border-radius: 10px;
 }
 
 .input-surface:focus {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 2px var(--color-accent);
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
 }
 
 .diff-scroll {
@@ -232,7 +231,7 @@ button {
 }
 
 .diff-hunk {
-  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  background: var(--color-fill);
   color: var(--color-muted);
   padding: 0.35rem 1rem;
 }
@@ -265,7 +264,7 @@ button {
 }
 
 .diff-note {
-  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-fill));
+  background: var(--color-fill);
   margin: 0.4rem 1rem 0.8rem 6.5rem;
   max-width: 50rem;
   padding: 0.65rem 0.9rem;
