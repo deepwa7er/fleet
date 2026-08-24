@@ -32,6 +32,35 @@ derivation, and consistency, React owns intent and presentation`.
 
 ### Run it
 
+Installed on the Fedora desktop as a systemd **user** unit, alongside the Rails
+stack it replaces:
+
+```sh
+skiff/deploy/install-skiffd.sh    # builds, installs, enables, starts — safe to re-run
+```
+
+Then, from any device on the tailnet:
+
+```
+https://desk.intern.deepwa7er.net     # through breakwater, TLS
+http://fedora.tailcfab97.ts.net:8121  # direct, no proxy
+```
+
+`systemctl --user status|restart|stop skiffd`, logs at
+`~/.local/state/skiff/skiffd.log`.
+
+**The hostname is `desk`, not `skiff`.** `skiff.intern.deepwa7er.net` still
+points at the Rails container on the VPS and `agent.` at the Rails app on the
+desktop; taking either would be the M7 cutover. When the flip comes, `skiff`
+moves to this upstream and both older routes are deleted.
+
+**It binds the tailnet IP, never `0.0.0.0`.** The app is unauthenticated and can
+drive a coding agent — effectively RCE on the desktop — so the tailnet is the
+whole boundary, and LAN exposure would be a real hole. Same posture as `agent`,
+which the breakwater route says out loud.
+
+For development instead:
+
 ```sh
 cd web && bun install && bun run build   # nothing else typechecks the client
 cargo run -p skiff

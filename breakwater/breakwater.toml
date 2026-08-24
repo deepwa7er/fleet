@@ -217,6 +217,31 @@ upstream = "fedora-1.tailcfab97.ts.net:8025"
 label = "agent"
 upstream = "fedora.tailcfab97.ts.net:8120"
 
+# desk — skiffd, the Rust + React rebuild of skiff (DW-004). Runs on the same
+# Fedora desktop as `agent`, on 8121, alongside the Rails stack it replaces:
+# both read the same harness session files, which is safe because everything
+# skiffd caches is derived from them.
+#
+# A SEPARATE HOSTNAME on purpose. DW-004 §13 runs the rebuild in parallel and
+# flips at breakwater only when it wins outright; pointing `skiff` here now
+# would be that cutover, months of milestones early. When the flip happens,
+# `skiff` moves to this upstream and both `agent` and this route are deleted.
+#
+# WebSocket: skiffd's whole read path is one WebSocket per client (there are no
+# REST reads by design), so this route depends on breakwater's `Upgrade`
+# tunnelling — the 101 handoff in proxy.rs. That is the one piece of DW-004's
+# transport choice that needed verifying against this proxy rather than
+# assuming.
+#
+# Same posture as `agent`, and worth being explicit because it now applies to a
+# second app: UNAUTHENTICATED, reachable from every device on the tailnet, and
+# able to drive a coding agent — which is effectively RCE on the desktop. The
+# tailnet is the whole boundary. The desktop is often powered off; while it is,
+# this route 502s.
+[[routes]]
+label = "desk"
+upstream = "fedora.tailcfab97.ts.net:8121"
+
 # Note: tidepool is intentionally NOT routed here. It runs as its own Tailscale
 # node (tsnet, `-tls`) and serves HTTPS itself at https://tidepool — there is no
 # plain-HTTP backend to proxy to.
