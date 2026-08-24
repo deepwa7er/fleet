@@ -13,6 +13,7 @@ use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
 use skiff::ingest::Ingest;
+use skiff::run::Runs;
 use skiff::server::{AppState, router};
 use skiff::store::Store;
 use skiff::wire::{ClientFrame, ServerFrame};
@@ -36,9 +37,20 @@ async fn start() -> Harness {
     let (topics, _) = tokio::sync::broadcast::channel(64);
     let ingest = Ingest::new(store.clone(), sessions.path().to_path_buf(), topics.clone());
 
+    let runs = Runs::new(
+        store.clone(),
+        topics.clone(),
+        // No pi is spawned by these tests; a name that does not resolve is
+        // the honest placeholder, and any test that did spawn would fail
+        // loudly rather than silently reaching a real pi.
+        "skiff-tests-have-no-pi".into(),
+        sessions.path().to_path_buf(),
+        true,
+    );
+
     let dist = tempfile::tempdir().unwrap();
     std::fs::write(dist.path().join("index.html"), "<!doctype html>").unwrap();
-    let app = router(AppState::new(store, topics), dist.path().to_path_buf());
+    let app = router(AppState::new(store, runs, topics), dist.path().to_path_buf());
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -160,7 +172,7 @@ async fn a_malformed_frame_is_answered_rather_than_dropping_the_connection() {
 
     socket.send(Message::text("{\"t\":\"nonsense\"}")).await.unwrap();
     match next_frame(&mut socket).await {
-        ServerFrame::Error { sub, error } => {
+        ServerFrame::Error { sub, error, .. } => {
             assert_eq!(sub, None, "a bad frame belongs to no subscription");
             assert!(error.contains("bad frame"), "got: {error}");
         }

@@ -15,6 +15,7 @@ pub mod config;
 pub mod content;
 pub mod ingest;
 pub mod model;
+pub mod run;
 pub mod server;
 pub mod store;
 pub mod views;

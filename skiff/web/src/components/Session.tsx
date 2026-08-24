@@ -1,5 +1,6 @@
 import type { SessionView } from "../types"
 import { useView } from "../lib/useView"
+import { Composer } from "./Composer"
 import { Transcript } from "./Transcript"
 
 export function Session({ id, onBack }: { id: string; onBack: () => void }) {
@@ -38,12 +39,14 @@ function Loaded({ view }: { view: SessionView }) {
           <span>{session.harness}</span>
           {session.model && <span>{session.model}</span>}
           {session.orchestratorActive && <span>orchestrator</span>}
+          {view.live.working && <span className="text-accent">working</span>}
         </p>
         {session.directory && (
           <p className="font-mono text-sm text-muted">{session.directory}</p>
         )}
       </header>
-      <Transcript messages={view.messages} harness={session.harness} />
+      <Transcript messages={view.messages} live={view.live} harness={session.harness} />
+      <Composer session={session.id} working={view.live.working} />
     </>
   )
 }

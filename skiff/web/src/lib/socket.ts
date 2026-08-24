@@ -1,4 +1,4 @@
-import type { ClientFrame, ServerFrame, ViewData, ViewSpec } from "../types"
+import type { ClientFrame, Command, ServerFrame, ViewData, ViewSpec } from "../types"
 
 /**
  * The client's whole data layer (DW-004 §10).
@@ -22,6 +22,9 @@ export type ViewState<S extends ViewSpec> =
   | { status: "ready"; data: DataFor<S> }
   | { status: "error"; error: string }
 
+/** A session view's data, with the live half kept current by `live` frames. */
+type SessionData = Extract<ViewData, { kind: "session" }>
+
 export type ConnectionState = "connecting" | "open" | "offline"
 
 /** Backoff between reconnect attempts: quick at first, then out of the way. */
@@ -33,6 +36,11 @@ type Slot = {
   notify: (state: ViewState<ViewSpec>) => void
   /** The wire id this slot currently holds, or null while disconnected. */
   sub: number | null
+  /**
+   * The last data delivered, so a `live` frame — which carries only the live
+   * half — has a transcript to merge into.
+   */
+  last: ViewData | null
 }
 
 function socketUrl(): string {
@@ -46,6 +54,8 @@ export class Client {
   #bySub = new Map<number, number>()
   #nextSlot = 1
   #nextSub = 1
+  #nextReq = 1
+  #commands = new Map<number, { resolve: () => void; reject: (e: Error) => void }>()
   #retries = 0
   #retryTimer: ReturnType<typeof setTimeout> | null = null
   #connection: ConnectionState = "connecting"
@@ -70,7 +80,7 @@ export class Client {
    */
   subscribe<S extends ViewSpec>(spec: S, notify: (state: ViewState<S>) => void): () => void {
     const slotId = this.#nextSlot++
-    const slot: Slot = { spec, notify: notify as Slot["notify"], sub: null }
+    const slot: Slot = { spec, notify: notify as Slot["notify"], sub: null, last: null }
     this.#slots.set(slotId, slot)
     notify({ status: "loading" })
     this.#register(slotId, slot)
@@ -82,6 +92,25 @@ export class Client {
       this.#send({ t: "unsubscribe", sub: slot.sub })
       slot.sub = null
     }
+  }
+
+  /**
+   * Run a command, resolving when the server acknowledges it.
+   *
+   * Rejects if the socket is down rather than queueing: a prompt that lands
+   * minutes later, after the user gave up and retyped it, is worse than one
+   * that visibly failed.
+   */
+  command(cmd: Command): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this.#socket?.readyState !== WebSocket.OPEN) {
+        reject(new Error("not connected"))
+        return
+      }
+      const req = this.#nextReq++
+      this.#commands.set(req, { resolve, reject })
+      this.#send({ t: "command", req, cmd })
+    })
   }
 
   #setConnection(state: ConnectionState) {
@@ -103,6 +132,9 @@ export class Client {
       this.#bySub.clear()
       for (const [slotId, slot] of this.#slots) {
         slot.sub = null
+        // The reconnect takes a fresh snapshot, so anything merged into the
+        // old one is worthless.
+        slot.last = null
         slot.notify({ status: "loading" })
         this.#register(slotId, slot)
       }
@@ -124,6 +156,9 @@ export class Client {
       this.#socket = null
       for (const slot of this.#slots.values()) slot.sub = null
       this.#bySub.clear()
+      // An in-flight command can never be answered now.
+      for (const { reject } of this.#commands.values()) reject(new Error("disconnected"))
+      this.#commands.clear()
       this.#setConnection("offline")
       this.#scheduleRetry()
     }
@@ -156,12 +191,36 @@ export class Client {
         return
       case "snapshot": {
         const slot = this.#slotFor(frame.sub)
-        slot?.notify({ status: "ready", data: frame.data as DataFor<ViewSpec> })
+        if (!slot) return
+        slot.last = frame.data
+        slot.notify({ status: "ready", data: frame.data as DataFor<ViewSpec> })
+        return
+      }
+      case "live": {
+        // The cheap, frequent frame: it replaces only the live half, leaving
+        // the transcript exactly as it was. A `live` frame that arrives before
+        // any snapshot has nothing to merge into and is dropped — the snapshot
+        // that follows carries the same state.
+        const slot = this.#slotFor(frame.sub)
+        if (!slot?.last || slot.last.kind !== "session") return
+        const next: SessionData = { ...slot.last, live: frame.live }
+        slot.last = next
+        slot.notify({ status: "ready", data: next as DataFor<ViewSpec> })
+        return
+      }
+      case "ack": {
+        this.#commands.get(frame.req)?.resolve()
+        this.#commands.delete(frame.req)
         return
       }
       case "error": {
-        // A `sub`-less error is a protocol-level complaint about a frame this
-        // client sent; it belongs in the console, not in a pane.
+        if (frame.req !== null) {
+          this.#commands.get(frame.req)?.reject(new Error(frame.error))
+          this.#commands.delete(frame.req)
+          return
+        }
+        // A `sub`-less, `req`-less error is a protocol-level complaint about a
+        // frame this client sent; it belongs in the console, not in a pane.
         if (frame.sub === null) {
           console.error("skiff: protocol error", frame.error)
           return

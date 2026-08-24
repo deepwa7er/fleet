@@ -32,6 +32,10 @@ pub struct Config {
     /// pi's session directory. Defaults to pi's own resolution order.
     #[arg(long, env = "SKIFF_PI_SESSION_DIR")]
     pub pi_session_dir: Option<PathBuf>,
+
+    /// The pi binary. Resolved on PATH by default.
+    #[arg(long, env = "SKIFF_PI_BINARY", default_value = "pi")]
+    pub pi_binary: PathBuf,
 }
 
 impl Config {
@@ -47,6 +51,10 @@ impl Config {
 
     pub fn pi_dir(&self) -> PathBuf {
         self.pi_session_dir.clone().unwrap_or_else(pi::default_session_dir)
+    }
+
+    pub fn pi_binary(&self) -> PathBuf {
+        self.pi_binary.clone()
     }
 }
 

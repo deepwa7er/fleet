@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::model::{Message, Part, SessionKey, SessionSummary, ToolStatus};
+use crate::run::LiveState;
 use crate::store::Store;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -30,16 +31,19 @@ pub struct SessionView {
     /// transcript that looks like a session with nothing in it.
     pub session: Option<SessionSummary>,
     /// The conversation, oldest first. Every message here is finished;
-    /// liveness lives in `pending`, never in a missing timestamp.
+    /// liveness lives in `live`, never in a missing timestamp.
     pub messages: Vec<Message>,
+    /// The in-flight reply, whether the harness is working, and any prompt
+    /// that has been sent but has not yet reached the transcript.
+    pub live: LiveState,
 }
 
-pub fn compute(store: &Store, id: &SessionKey) -> Result<SessionView> {
+pub fn compute(store: &Store, id: &SessionKey, live: LiveState) -> Result<SessionView> {
     let session = store.sessions()?.into_iter().find(|s| s.id == *id);
     if session.is_none() {
-        return Ok(SessionView { session: None, messages: Vec::new() });
+        return Ok(SessionView { session: None, messages: Vec::new(), live });
     }
-    Ok(SessionView { session, messages: transcript(&store.entries(id)?) })
+    Ok(SessionView { session, messages: transcript(&store.entries(id)?), live })
 }
 
 /// The conversation: the leaf branch, rendered, with tool results folded into
@@ -285,7 +289,8 @@ mod tests {
     #[test]
     fn an_unknown_session_is_named_as_absent_rather_than_empty() {
         let store = Store::in_memory().unwrap();
-        let view = compute(&store, &"pi:nope".parse().unwrap()).unwrap();
+        let view =
+            compute(&store, &"pi:nope".parse().unwrap(), LiveState::default()).unwrap();
         assert_eq!(view.session, None);
         assert!(view.messages.is_empty());
     }

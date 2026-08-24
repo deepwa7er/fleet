@@ -16,6 +16,9 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::model::SessionKey;
+
+use crate::run::LiveState;
 use crate::views::{ViewData, ViewSpec};
 
 /// A subscription's id, chosen by the client.
@@ -32,6 +35,24 @@ pub enum ClientFrame {
     /// error, because a client tearing down a pane should not have to know
     /// whether its subscribe had been processed yet.
     Unsubscribe { sub: SubId },
+    /// Do something. Answered with `ack` or `err` carrying the same `req`.
+    Command { req: ReqId, cmd: Command },
+}
+
+/// A command's id, chosen by the client so it can match the answer.
+pub type ReqId = u32;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
+pub enum Command {
+    /// Send a prompt. `clientId` comes back on the resulting pending prompt,
+    /// so the pane that sent it can match its optimistic bubble by identity
+    /// rather than by comparing text.
+    #[serde(rename_all = "camelCase")]
+    Send { session: SessionKey, text: String, client_id: String },
+    /// Stop the run in flight. Aborting an idle session is not an error.
+    Abort { session: SessionKey },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -57,9 +78,27 @@ pub enum ServerFrame {
         seq: u64,
         data: ViewData,
     },
-    /// A subscription could not be served, or a frame could not be understood.
-    /// `sub` is absent when the failure was not attributable to one.
-    Error { sub: Option<SubId>, error: String },
+    /// A session's live state changed: the reply grew, or a run started or
+    /// settled. Carries only what changed — the transcript is untouched, and
+    /// re-sending it many times a second is the mistake this avoids.
+    Live {
+        sub: SubId,
+        #[ts(type = "number")]
+        seq: u64,
+        live: LiveState,
+    },
+    /// A command succeeded.
+    Ack { req: ReqId },
+    /// A subscription could not be served, a command failed, or a frame could
+    /// not be understood. Exactly one of `sub` and `req` identifies it; both
+    /// are absent when the failure was not attributable to either.
+    Error {
+        #[serde(default)]
+        sub: Option<SubId>,
+        #[serde(default)]
+        req: Option<ReqId>,
+        error: String,
+    },
 }
 
 #[cfg(test)]
@@ -95,8 +134,39 @@ mod tests {
         assert_eq!(hello["readModel"], 1);
 
         let error =
-            serde_json::to_value(ServerFrame::Error { sub: None, error: "nope".into() }).unwrap();
+            serde_json::to_value(ServerFrame::Error { sub: None, req: None, error: "nope".into() })
+                .unwrap();
         assert_eq!(error["t"], "error");
         assert_eq!(error["sub"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn a_send_command_round_trips() {
+        let frame = ClientFrame::Command {
+            req: 3,
+            cmd: Command::Send {
+                session: "pi:abc".parse().unwrap(),
+                text: "go".into(),
+                client_id: "c-1".into(),
+            },
+        };
+        let json = serde_json::to_string(&frame).unwrap();
+        assert_eq!(
+            json,
+            r#"{"t":"command","req":3,"cmd":{"kind":"send","session":"pi:abc","text":"go","clientId":"c-1"}}"#
+        );
+        assert_eq!(serde_json::from_str::<ClientFrame>(&json).unwrap(), frame);
+    }
+
+    #[test]
+    fn an_abort_command_round_trips() {
+        let json = r#"{"t":"command","req":4,"cmd":{"kind":"abort","session":"pi:abc"}}"#;
+        assert_eq!(
+            serde_json::from_str::<ClientFrame>(json).unwrap(),
+            ClientFrame::Command {
+                req: 4,
+                cmd: Command::Abort { session: "pi:abc".parse().unwrap() }
+            }
+        );
     }
 }

@@ -33,8 +33,14 @@ use crate::store::{SessionIngest, Store};
 pub enum Topic {
     /// A session was added, removed, or its summary changed.
     SessionList,
-    /// A specific session's entries changed.
+    /// A specific session's entries changed. Rare: pi persists a message
+    /// once per reply.
     Session(SessionKey),
+    /// A session's *live* state changed — the in-flight reply grew, a run
+    /// started or settled. Frequent, and deliberately separate: this path
+    /// touches no SQLite and carries only the live message, where
+    /// `Session` costs a whole transcript.
+    Run(SessionKey),
     /// A source's reachability changed.
     SourceHealth,
 }

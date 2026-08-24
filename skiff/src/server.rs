@@ -22,19 +22,21 @@ use tokio::sync::broadcast;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::ingest::Topic;
+use crate::run::{LiveState, Runs};
 use crate::store::{SCHEMA_VERSION, Store};
-use crate::views::{ViewData, ViewSpec};
-use crate::wire::{ClientFrame, ServerFrame, SubId};
+use crate::views::{Update, ViewData, ViewSpec};
+use crate::wire::{ClientFrame, Command, ServerFrame, SubId};
 
 #[derive(Clone)]
 pub struct AppState {
     store: Store,
+    runs: Arc<Runs>,
     topics: broadcast::Sender<Topic>,
 }
 
 impl AppState {
-    pub fn new(store: Store, topics: broadcast::Sender<Topic>) -> Self {
-        Self { store, topics }
+    pub fn new(store: Store, runs: Arc<Runs>, topics: broadcast::Sender<Topic>) -> Self {
+        Self { store, runs, topics }
     }
 }
 
@@ -130,7 +132,8 @@ async fn handle_message(
     let frame = match serde_json::from_str::<ClientFrame>(&text) {
         Ok(frame) => frame,
         Err(err) => {
-            let error = ServerFrame::Error { sub: None, error: format!("bad frame: {err}") };
+            let error =
+                ServerFrame::Error { sub: None, req: None, error: format!("bad frame: {err}") };
             return send(socket, &error).await.is_ok();
         }
     };
@@ -144,6 +147,27 @@ async fn handle_message(
             subs.remove(&sub);
             true
         }
+        ClientFrame::Command { req, cmd } => {
+            let frame = match run_command(state, cmd).await {
+                Ok(()) => ServerFrame::Ack { req },
+                // The error carries pi's own reason. It never echoes the
+                // prompt text, which is the user's and has no business in a
+                // log line or an error banner.
+                Err(err) => {
+                    ServerFrame::Error { sub: None, req: Some(req), error: format!("{err:#}") }
+                }
+            };
+            send(socket, &frame).await.is_ok()
+        }
+    }
+}
+
+async fn run_command(state: &AppState, cmd: Command) -> anyhow::Result<()> {
+    match cmd {
+        Command::Send { session, text, client_id } => {
+            state.runs.send(&session, &text, &client_id).await
+        }
+        Command::Abort { session } => state.runs.abort(&session).await,
     }
 }
 
@@ -154,17 +178,39 @@ async fn refresh(
     subs: &mut HashMap<SubId, Subscription>,
     topic: &Topic,
 ) -> bool {
-    let affected: Vec<SubId> = subs
+    let affected: Vec<(SubId, Update)> = subs
         .iter()
-        .filter(|(_, sub)| sub.view.affected_by(topic))
-        .map(|(id, _)| *id)
+        .filter_map(|(id, sub)| sub.view.update_for(topic).map(|update| (*id, update)))
         .collect();
-    for id in affected {
-        if !snapshot(socket, state, subs, id).await {
+    for (id, update) in affected {
+        let sent = match update {
+            Update::Snapshot => snapshot(socket, state, subs, id).await,
+            Update::Live => live(socket, state, subs, id).await,
+        };
+        if !sent {
             return false;
         }
     }
     true
+}
+
+/// Send one subscription's live state. Deliberately cheap: no SQLite, no
+/// transcript.
+async fn live(
+    socket: &mut WebSocket,
+    state: &AppState,
+    subs: &mut HashMap<SubId, Subscription>,
+    id: SubId,
+) -> bool {
+    let Some(sub) = subs.get(&id) else { return true };
+    let Some(session) = sub.view.session().cloned() else { return true };
+    let live = state.runs.live(&session).await;
+
+    // Re-fetch after the await: an unsubscribe may have landed.
+    let Some(sub) = subs.get_mut(&id) else { return true };
+    sub.seq += 1;
+    let frame = ServerFrame::Live { sub: id, seq: sub.seq, live };
+    send(socket, &frame).await.is_ok()
 }
 
 async fn refresh_all(
@@ -190,7 +236,14 @@ async fn snapshot(
     let Some(sub) = subs.get(&id) else { return true };
     let view = sub.view.clone();
 
-    match compute(state.store.clone(), view).await {
+    // The live state comes from the run registry, which is async; the view
+    // computation is blocking. Fetching here keeps the two apart.
+    let live = match view.session() {
+        Some(session) => state.runs.live(session).await,
+        None => LiveState::default(),
+    };
+
+    match compute(state.store.clone(), view, live).await {
         Ok(data) => {
             // Re-fetch: the await above yielded, and an unsubscribe may have
             // landed in the meantime. Sending a snapshot for a closed
@@ -201,7 +254,8 @@ async fn snapshot(
             send(socket, &frame).await.is_ok()
         }
         Err(err) => {
-            let frame = ServerFrame::Error { sub: Some(id), error: format!("{err:#}") };
+            let frame =
+                ServerFrame::Error { sub: Some(id), req: None, error: format!("{err:#}") };
             send(socket, &frame).await.is_ok()
         }
     }
@@ -209,8 +263,8 @@ async fn snapshot(
 
 /// Views read SQLite, which is blocking, so they never run on the runtime's
 /// worker threads.
-async fn compute(store: Store, view: ViewSpec) -> Result<ViewData> {
-    tokio::task::spawn_blocking(move || view.compute(&store))
+async fn compute(store: Store, view: ViewSpec, live: LiveState) -> Result<ViewData> {
+    tokio::task::spawn_blocking(move || view.compute(&store, live))
         .await
         .context("the view task panicked")?
 }

@@ -3,7 +3,8 @@ use clap::Parser;
 use tokio::sync::broadcast;
 
 use skiff::config::Config;
-use skiff::ingest::Ingest;
+use skiff::ingest::{Ingest, Topic};
+use skiff::run::Runs;
 use skiff::server::{AppState, router, serve};
 use skiff::store::Store;
 
@@ -30,6 +31,34 @@ async fn main() -> Result<()> {
     // shut down that outliving the process would help.
     Ingest::new(store.clone(), config.pi_dir(), topics.clone()).spawn();
 
-    let router = router(AppState::new(store, topics), config.web_dist_path());
+    let runs = Runs::new(
+        store.clone(),
+        topics.clone(),
+        config.pi_binary(),
+        config.pi_dir(),
+        config.pi_session_dir.is_some(),
+    );
+
+    // A finished reply is handed over to the transcript, and a sent prompt
+    // retired, when the session's file actually changes — not when pi says so.
+    // See `Runs::session_changed`.
+    tokio::spawn({
+        let runs = runs.clone();
+        let mut topics = topics.subscribe();
+        async move {
+            loop {
+                match topics.recv().await {
+                    Ok(Topic::Session(id)) => runs.session_changed(&id).await,
+                    Ok(_) => {}
+                    // Falling behind only delays a handover; the next file
+                    // change resolves it.
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    });
+
+    let router = router(AppState::new(store, runs, topics), config.web_dist_path());
     serve(config.addr, router).await
 }
