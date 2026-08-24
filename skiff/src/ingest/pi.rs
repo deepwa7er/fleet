@@ -107,12 +107,17 @@ pub fn parse_lines(lines: &[String], first_line: i64) -> Parsed {
             continue;
         }
         let Some(id) = value.get("id").and_then(Value::as_str) else { continue };
-        parsed.entries.push(Entry {
+        let mut entry = Entry {
             seq,
             id: id.to_owned(),
             parent_id: value.get("parentId").and_then(Value::as_str).map(str::to_owned),
             raw: value,
-        });
+            mapped: None,
+        };
+        // Rendered here, once, because this is the only moment the entry is
+        // new. See `Entry::mapped`.
+        entry.mapped = super::pi_map::map_entry(&entry);
+        parsed.entries.push(entry);
     }
     parsed
 }
@@ -184,7 +189,7 @@ fn latest<T>(path: &[&Entry], f: impl Fn(&Entry) -> Option<T>) -> Option<T> {
 
 /// Entry timestamps are ISO-8601 strings in the file; a Unix-ms number is
 /// tolerated because the message payload carries one in that form.
-fn timestamp_ms(value: &Value) -> Option<i64> {
+pub(super) fn timestamp_ms(value: &Value) -> Option<i64> {
     match value.get("timestamp")? {
         Value::Number(n) => n.as_i64(),
         Value::String(s) => iso8601_ms(s),
@@ -299,7 +304,7 @@ mod tests {
     }
 
     fn entry(seq: i64, id: &str, parent: Option<&str>, raw: Value) -> Entry {
-        Entry { seq, id: id.to_owned(), parent_id: parent.map(str::to_owned), raw }
+        Entry { seq, id: id.to_owned(), parent_id: parent.map(str::to_owned), raw, mapped: None }
     }
 
     #[test]

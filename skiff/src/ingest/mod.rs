@@ -13,6 +13,7 @@
 //! files, so skiffd restarting loses nothing durable — the next scan converges.
 
 pub mod pi;
+pub mod pi_map;
 mod tail;
 
 use std::collections::HashSet;

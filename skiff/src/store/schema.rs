@@ -9,7 +9,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 const DDL: &str = r#"
 CREATE TABLE session (
@@ -39,6 +39,9 @@ CREATE TABLE entry (
     id         TEXT    NOT NULL,
     parent_id  TEXT,
     raw        TEXT    NOT NULL,
+    -- The message this entry renders as, derived once at ingest, or NULL when
+    -- it renders nothing. Derived and immutable — see `model::Entry::mapped`.
+    mapped     TEXT,
     PRIMARY KEY (session_id, seq)
 ) WITHOUT ROWID;
 

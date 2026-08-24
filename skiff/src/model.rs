@@ -20,6 +20,8 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::content::Block;
+
 /// Which agent CLI owns a session. Session ids are harness-qualified on the
 /// wire (`pi:abc`), because two harnesses may hand out the same local id and
 /// an unqualified id would silently resolve to the wrong session.
@@ -190,11 +192,103 @@ pub struct SourceHealth {
     pub checked_ms: i64,
 }
 
-/// One entry as it sits in a harness's session file: opaque payload, plus the
-/// structural fields the tree walk needs.
+/// Who produced a message. The client labels these; it never sees a harness's
+/// own role literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
+pub enum Role {
+    User,
+    Assistant,
+    /// A tool result with no call to fold into — the call is on an abandoned
+    /// branch, or the file is mid-write. Surfaced rather than dropped.
+    Tool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
+pub enum ToolStatus {
+    Running,
+    Completed,
+    Error,
+}
+
+impl ToolStatus {
+    /// DW-001 §2: `--danger` marks a failed state, not a mood. A tool line
+    /// turns bad only when the call did not complete.
+    pub fn is_failure(self) -> bool {
+        matches!(self, ToolStatus::Error)
+    }
+}
+
+/// One part of a message. Harness-specific control parts (step markers) and
+/// auto-attached synthetic context are dropped **at ingest** and never reach
+/// this type — carrying them further would make every layer know about a
+/// concept only one layer acts on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
+pub enum Part {
+    Text { blocks: Vec<Block> },
+    Reasoning { blocks: Vec<Block> },
+    Tool {
+        /// The harness's own call id, used to fold a result into its call.
+        #[serde(rename = "callId")]
+        call_id: String,
+        name: String,
+        status: ToolStatus,
+        /// Program output, kept as text. Monospace is DW-001's voice for "a
+        /// machine produced this"; parsing it as markdown would be a category
+        /// error.
+        output: Option<String>,
+    },
+    /// A file or image referenced by the transcript. Display-only: there is no
+    /// image transport here, only the name.
+    File { filename: String },
+}
+
+/// One message in a transcript.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
+pub struct Message {
+    /// Stable for the message's whole life, **including while it streams**.
+    /// The old bridge named an in-flight message `<pending>` and swapped in the
+    /// real id at settlement, which is exactly why the reasoning disclosure
+    /// needed a positional key to survive settling (card #110). A live message
+    /// carries its run's id from the moment it opens, so nothing remounts.
+    pub id: String,
+    pub role: Role,
+    /// The model behind an assistant message, when the harness records it.
+    pub agent: Option<String>,
+    #[ts(type = "number | null")]
+    pub created_ms: Option<i64>,
+    /// When the harness recorded the message as finished, if it records that
+    /// at all.
+    ///
+    /// This is a fact about the message, **not** a liveness signal. The old
+    /// bridge inferred "still streaming" from a missing completion, which
+    /// silently reclassified any entry the harness dated loosely — a
+    /// compaction summary with no timestamp read as a live reply. Liveness is
+    /// structural instead: a live message is the session view's `pending`
+    /// overlay, never a member of the finished transcript.
+    #[ts(type = "number | null")]
+    pub completed_ms: Option<i64>,
+    pub parts: Vec<Part>,
+}
+
+/// One entry as it sits in a harness's session file: opaque payload, the
+/// structural fields the tree walk needs, and the message it renders as.
 ///
 /// The raw line is kept so the store can re-derive any projection without
 /// re-reading (or re-finding) the file it came from.
+///
+/// `mapped` is derived — the adapter computes it once, at ingest. That is safe
+/// precisely because a session file is append-only: an entry never changes, so
+/// its rendering never needs invalidating. Doing it here rather than per view
+/// recompute is what keeps a streaming session from re-parsing its whole
+/// history several times a second.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
     /// Position in the file. Monotonic per session, assigned at ingest — the
@@ -203,6 +297,8 @@ pub struct Entry {
     pub id: String,
     pub parent_id: Option<String>,
     pub raw: serde_json::Value,
+    /// `None` when the entry renders nothing (metadata, control entries).
+    pub mapped: Option<Message>,
 }
 
 /// The conversation: the chain from the newest entry back to the root, in
@@ -245,6 +341,7 @@ mod tests {
             id: id.to_owned(),
             parent_id: parent.map(str::to_owned),
             raw: serde_json::Value::Null,
+            mapped: None,
         }
     }
 

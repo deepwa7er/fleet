@@ -9,6 +9,12 @@ anyhow = { workspace = true }
 axum = { workspace = true, features = ["ws"] }
 clap = { workspace = true, features = ["derive", "env"] }
 notify = "7"
+# Markdown to typed blocks (DW-004 §8). Already a workspace dependency.
+pulldown-cmark = { workspace = true }
+# Syntax highlighting. Only the parser is used — scopes, not colours — so the
+# `highlighting` module and its themes are left out entirely, and `regex-fancy`
+# keeps oniguruma's C dependency out of the build.
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "regex-fancy"] }
 # Bundled SQLite (compiled in, so a static musl build needs no system
 # libsqlite) for the derived read model. Matches the fleet's version.
 rusqlite = { workspace = true, features = ["bundled"] }

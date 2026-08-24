@@ -4,7 +4,13 @@ import type { SessionSummary, SourceHealth } from "../types"
  * The session list. DW-001 rule 1: whitespace separates rows — the gap is the
  * divider, and there is no border anywhere.
  */
-export function SessionList({ sessions }: { sessions: SessionSummary[] }) {
+export function SessionList({
+  sessions,
+  onOpen,
+}: {
+  sessions: SessionSummary[]
+  onOpen: (id: string) => void
+}) {
   if (sessions.length === 0) {
     return <p className="text-muted">No sessions yet.</p>
   }
@@ -12,18 +18,25 @@ export function SessionList({ sessions }: { sessions: SessionSummary[] }) {
     <ul className="flex flex-col gap-6">
       {sessions.map((session) => (
         <li key={session.id}>
-          <Session session={session} />
+          <Row session={session} onOpen={onOpen} />
         </li>
       ))}
     </ul>
   )
 }
 
-function Session({ session }: { session: SessionSummary }) {
+function Row({ session, onOpen }: { session: SessionSummary; onOpen: (id: string) => void }) {
   return (
     <article className="flex flex-col gap-1">
       <h2 className="font-heading text-xl tracking-tight">
-        {session.title ?? <span className="text-muted">untitled</span>}
+        {/* DW-001 rule 4: the accent is reserved for interaction. */}
+        <button
+          type="button"
+          onClick={() => onOpen(session.id)}
+          className="cursor-pointer text-left text-accent"
+        >
+          {session.title ?? <span className="text-muted">untitled</span>}
+        </button>
       </h2>
       <p className="instrumentation flex flex-wrap gap-x-3">
         <span>{session.harness}</span>

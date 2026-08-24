@@ -135,21 +135,29 @@ impl Store {
             upsert_summary(&tx, batch.summary, batch.header)?;
             {
                 let mut insert = tx.prepare_cached(
-                    "INSERT INTO entry (session_id, seq, id, parent_id, raw)
-                     VALUES (?1, ?2, ?3, ?4, ?5)
+                    "INSERT INTO entry (session_id, seq, id, parent_id, raw, mapped)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                      ON CONFLICT(session_id, seq) DO UPDATE
                        SET id = excluded.id,
                            parent_id = excluded.parent_id,
-                           raw = excluded.raw",
+                           raw = excluded.raw,
+                           mapped = excluded.mapped",
                 )?;
                 let id = batch.summary.id.to_string();
                 for entry in batch.entries {
+                    let mapped = entry
+                        .mapped
+                        .as_ref()
+                        .map(serde_json::to_string)
+                        .transpose()
+                        .context("serialising a rendered message")?;
                     insert.execute(params![
                         id,
                         entry.seq,
                         entry.id,
                         entry.parent_id,
                         entry.raw.to_string(),
+                        mapped,
                     ])?;
                 }
             }
@@ -186,19 +194,22 @@ impl Store {
     pub fn entries(&self, session: &SessionKey) -> Result<Vec<Entry>> {
         self.with(|conn| {
             let mut stmt = conn.prepare_cached(
-                "SELECT seq, id, parent_id, raw FROM entry WHERE session_id = ?1 ORDER BY seq",
+                "SELECT seq, id, parent_id, raw, mapped FROM entry
+                 WHERE session_id = ?1 ORDER BY seq",
             )?;
             let rows = stmt.query_map(params![session.to_string()], |row| {
                 let raw: String = row.get(3)?;
+                let mapped: Option<String> = row.get(4)?;
                 Ok(Entry {
                     seq: row.get(0)?,
                     id: row.get(1)?,
                     parent_id: row.get(2)?,
                     // A row this process wrote as JSON is not expected to fail
-                    // to parse; if it does the store is corrupt, and Null is a
-                    // truthful "this entry carries nothing" rather than a
-                    // crash that takes the whole session list down.
+                    // to parse; if it does the store is corrupt, and an empty
+                    // value is a truthful "this entry carries nothing" rather
+                    // than a crash that takes the whole session list down.
                     raw: serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null),
+                    mapped: mapped.and_then(|m| serde_json::from_str(&m).ok()),
                 })
             })?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -383,6 +394,7 @@ mod tests {
             id: id.to_owned(),
             parent_id: parent.map(str::to_owned),
             raw: serde_json::json!({ "id": id }),
+            mapped: None,
         }
     }
 
