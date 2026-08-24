@@ -66,6 +66,24 @@ Breakwater, or directly at `http://fedora.tailcfab97.ts.net:8120` on the
 tailnet. Breakwater must preserve HTTP Upgrade because all reads use the one
 WebSocket.
 
+## Complete the Rails cutover
+
+The desktop installer deliberately leaves the old VPS deployment alone. Keep
+that rollback copy until the installer has committed **and** Breakwater has
+been deployed with its `skiff` route pointing at the desktop. Then retire the
+VPS copy from a machine with the `vps` SSH alias:
+
+```sh
+ssh vps 'bash -s' < skiff/deploy/retire-vps.sh
+```
+
+The retirement script is idempotent and guarded. It requires the canonical
+`/healthz` endpoint to return Skiffd's exact `ok` response, refuses an unknown
+unit or any unexpected file under `/opt/skiff`, removes the Rails container,
+image tag, systemd unit, bridge resolver, runtime environment, secrets and
+Lighthouse enrollment, and preserves the Tugboat deployment ledger as
+historical evidence.
+
 ## Security and failure behavior
 
 - The production wrapper resolves the Tailscale IPv4 address at every start
