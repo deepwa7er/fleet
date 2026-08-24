@@ -1,4 +1,0 @@
-{"type":"session","version":3,"id":"019fed00-0000-7000-8000-000000000003","timestamp":"2026-08-10T21:20:00.000Z","cwd":"/home/deepwater/code/skiff"}
-{"type":"message","id":"aaaa0001","parentId":null,"timestamp":"2026-08-10T21:20:05.000Z","message":{"role":"user","content":[{"type":"text","text":"hello before the crash"}],"timestamp":1786396805000}}
-{"type":"message","id":"aaaa0002","parentId":"aaaa0001","timestamp":"2026-08-10T21:20:08.000Z","message":{"role":"assistant","content":[{"type":"text","text":"a complete reply"}],"api":"openai-completions","provider":"deepseek","model":"deepseek-v4-flash","usage":{"input":5,"output":5,"totalTokens":10},"stopReason":"stop","timestamp":1786396808000}}
-{"type":"message","id":"aaaa0003","par

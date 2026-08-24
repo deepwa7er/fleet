@@ -12,7 +12,7 @@ a zero-dependency static generator over the record repository
   one blue on links only, `--good`/`--danger` washes on diff lines — the
   diff precedent, never a second color set). Every interpolated string is
   escaped; the privacy boundary itself lives upstream in
-  `skiff/bridge/lib/record.js`.
+  `crates/change/src/record.rs` (`build_public_change`).
 - `publish.sh` — pull the record, no-op if HEAD matches the last-shipped
   stamp, rebuild, rsync + staged swap to `vps:/opt/record/web` (the
   `[docs]` pipeline's shape; breakwater serves the directory via a

@@ -1,0 +1,272 @@
+@import "tailwindcss";
+
+/* DW-001 §2. The tokens are the guide's, verbatim; Tailwind's @theme makes
+   them available as utilities (bg-paper, text-ink, …) without a config file. */
+@theme {
+  --color-paper: #f7f2e9;
+  --color-fill: #fffdf8;
+  --color-ink: #1f1a12;
+  --color-muted: #6f675a;
+  --color-accent: #0066b1;
+  --color-accent-contrast: #ffffff;
+  --color-danger: #c81e1e;
+  --color-good: #2f6f3e;
+  --color-hard: #1f1a12;
+
+  --font-prose: system-ui, sans-serif;
+  --font-heading: ui-serif, Georgia, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* DW-001 §2 rule 6: dark mode is not the warm palette inverted — it is cool
+   charcoal with a blue undertone, so the backlight blue reads as backlight. */
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-paper: #121316;
+    --color-fill: #1c1e22;
+    --color-ink: #eceef1;
+    --color-muted: #8b9199;
+    --color-accent: #4d9de0;
+    --color-accent-contrast: #141311;
+    --color-danger: #f87171;
+    --color-good: #5cb974;
+    --color-hard: #000000;
+  }
+}
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-prose);
+  line-height: 1.6;
+}
+
+button {
+  cursor: pointer;
+}
+
+.desk-shell {
+  min-height: 100dvh;
+}
+
+.desk-rail {
+  background: var(--color-paper);
+  display: flex;
+  flex-direction: column;
+  inset: 0 auto 0 0;
+  overflow-y: auto;
+  padding: 2rem 1.5rem;
+  position: fixed;
+  transform: translateX(-100%);
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  width: min(21rem, 88vw);
+  z-index: 30;
+}
+
+.desk-rail-open {
+  transform: translateX(0);
+}
+
+.desk-scrim,
+.palette-scrim {
+  background: color-mix(in srgb, var(--color-hard) 48%, transparent);
+  border: 0;
+  inset: 0;
+  position: fixed;
+  z-index: 20;
+}
+
+.rail-row,
+.palette-row {
+  display: flex;
+  flex-direction: column;
+  padding: 0.55rem 0.65rem;
+  text-align: left;
+  width: 100%;
+}
+
+.rail-row-selected,
+.palette-row-selected {
+  background: color-mix(in srgb, var(--color-accent) 11%, transparent);
+  color: var(--color-accent);
+}
+
+.desk-main {
+  min-width: 0;
+  padding: 1.25rem;
+}
+
+.desk-toolbar {
+  align-items: baseline;
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2.25rem;
+}
+
+.desk-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  margin: min(18vh, 10rem) auto;
+  max-width: 48rem;
+}
+
+.desk-panes {
+  display: grid;
+  gap: 3rem;
+  margin: 0 auto;
+  max-width: 110rem;
+}
+
+.desk-pane {
+  min-width: 0;
+  outline: 0;
+}
+
+.palette-scrim {
+  align-items: flex-start;
+  display: flex;
+  justify-content: center;
+  padding: 14vh 1rem 1rem;
+  z-index: 40;
+}
+
+.palette {
+  background: var(--color-fill);
+  border-radius: 10px;
+  max-width: 42rem;
+  padding: 1.25rem;
+  width: 100%;
+}
+
+@media (max-width: 63.999rem) {
+  .desk-panes[data-count="two"] .desk-pane[data-active="false"] {
+    display: none;
+  }
+}
+
+@media (min-width: 64rem) {
+  .desk-shell {
+    display: grid;
+    grid-template-columns: 21rem minmax(0, 1fr);
+  }
+
+  .desk-rail {
+    height: 100dvh;
+    position: sticky;
+    transform: none;
+    width: auto;
+  }
+
+  .desk-main {
+    padding: 2rem 3rem 4rem;
+  }
+
+  .desk-panes[data-count="two"] {
+    grid-template-columns: minmax(22rem, 0.8fr) minmax(32rem, 1.2fr);
+  }
+}
+
+/* DW-001 §3, rule 5: the readout voice. One recipe, applied identically
+   everywhere — column headers, timestamps, units, settings labels. Never
+   prose. */
+@utility instrumentation {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-muted);
+}
+
+/* DW-001 §5: only interactive controls get hard edges and depth. The active
+   displacement exactly consumes the shadow, so the control behaves like a
+   physical key rather than floating decoratively. */
+.physical-key {
+  border: 2px solid var(--color-hard);
+  border-radius: 10px;
+  box-shadow: 3px 3px 0 var(--color-hard);
+  cursor: pointer;
+  font-weight: 600;
+  transition:
+    transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.physical-key:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.physical-key:active:not(:disabled) {
+  box-shadow: 0 0 0 var(--color-hard);
+  transform: translate(3px, 3px);
+}
+
+.physical-key:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.input-surface {
+  background: var(--color-fill);
+  border: 0;
+  border-radius: 10px;
+}
+
+.input-surface:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.diff-scroll {
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  scrollbar-gutter: stable;
+}
+
+.diff-hunk {
+  background: var(--color-fill);
+  color: var(--color-muted);
+  padding: 0.35rem 1rem;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 3.25rem 3.25rem 1.5rem minmax(max-content, 1fr) auto;
+  min-height: 1.55rem;
+}
+
+.diff-addition {
+  background: color-mix(in srgb, var(--color-good) 11%, transparent);
+}
+
+.diff-deletion {
+  background: color-mix(in srgb, var(--color-danger) 9%, transparent);
+}
+
+.diff-number {
+  color: var(--color-muted);
+  padding-right: 0.75rem;
+  text-align: right;
+  user-select: none;
+}
+
+.diff-sign {
+  color: var(--color-muted);
+  text-align: center;
+  user-select: none;
+}
+
+.diff-note {
+  background: var(--color-fill);
+  margin: 0.4rem 1rem 0.8rem 6.5rem;
+  max-width: 50rem;
+  padding: 0.65rem 0.9rem;
+  white-space: normal;
+}

@@ -1,0 +1,40 @@
+[package]
+name = "skiff"
+version = "0.1.0"
+edition = "2024"
+description = "The agent desk (DW-004): one service that ingests harness sessions and fleet changes into a derived read model and serves it as live queries over one socket."
+
+[dependencies]
+anyhow = { workspace = true }
+axum = { workspace = true, features = ["ws"] }
+change = { path = "../crates/change" }
+clap = { workspace = true, features = ["derive", "env"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+notify = "7"
+libc = "0.2"
+# Markdown to typed blocks (DW-004 §8). Already a workspace dependency.
+pulldown-cmark = { workspace = true }
+# Syntax highlighting. Only the parser is used — scopes, not colours — so the
+# `highlighting` module and its themes are left out entirely, and `regex-fancy`
+# keeps oniguruma's C dependency out of the build.
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "regex-fancy"] }
+# Bundled SQLite (compiled in, so a static musl build needs no system
+# libsqlite) for the derived read model. Matches the fleet's version.
+rusqlite = { workspace = true, features = ["bundled"] }
+reqwest = { workspace = true, features = ["json", "stream"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time", "fs", "process", "signal"] }
+tower-http = { workspace = true, features = ["fs", "trace"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+# The wire types are the client's contract; ts-rs emits them into
+# web/src/gen and a test fails the build on drift (DW-004 §10).
+ts-rs = "10"
+tempfile = "3"
+
+[dev-dependencies]
+# A real WebSocket client for the end-to-end test: the protocol is the
+# contract, and testing it through the router rather than the socket would
+# leave the part the browser actually speaks unexercised.
+tokio-tungstenite = "0.29"

@@ -1,9 +1,0 @@
-{
-  "name": "skiff-bridge",
-  "private": true,
-  "type": "module",
-  "description": "Multi-harness HTTP bridge for skiff: pi, Muse Code, and opencode sessions behind one API",
-  "engines": {
-    "node": ">=22"
-  }
-}

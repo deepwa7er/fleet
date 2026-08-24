@@ -9,6 +9,7 @@ resolver = "2"
 exclude = ["ide"]
 members = [
     "breakwater",
+    "crates/change",
     "crates/dw",
     "crates/fizzy",
     "crates/fleet-api",
@@ -22,6 +23,7 @@ members = [
     "mirror",
     "recipes",
     "shutter-relay",
+    "skiff",
     "sonar",
     "trawler",
     "tugboat",

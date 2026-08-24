@@ -1,0 +1,26 @@
+# systemd user unit for skiffd — the Rust + React agent desk (DW-004).
+#
+# deploy/install-skiffd.sh installs this to the user unit directory. ExecStart
+# references the installed wrapper, not a checkout, so the unit keeps working
+# when a development worktree moves or is removed.
+#
+# Restart=always: a stray
+# external SIGTERM makes a clean exit, and under on-failure a clean exit looks
+# intentional and the unit stays dead. That took the site down once
+# (2026-08-10). systemd never auto-restarts a stop it initiated, so
+# `systemctl --user stop` still stops.
+[Unit]
+Description=skiffd — the agent desk (tailnet, port 8120)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=%h/.config/skiff/skiffd.sh
+Restart=always
+RestartSec=3
+StandardOutput=append:%h/.local/state/skiff/skiffd.log
+StandardError=append:%h/.local/state/skiff/skiffd.log
+
+[Install]
+WantedBy=default.target

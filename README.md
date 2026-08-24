@@ -43,6 +43,7 @@ checks, monitoring, and backups all attach automatically.
 | **spyglass** | Federated search that fans one query across the other services. |
 | **harness** | A minimal coding-agent harness — durable sessions, self-compacting context, terminal REPL and web UI. |
 | **ferry** | Turns the browser address bar into a command line for tailnet services. |
+| **skiff** | Rust + React agent desk for Pi, Muse, and OpenCode sessions, durable change review, and supervised landing. Runs as a user service on the Fedora desktop and is routed through Breakwater. |
 | **warehouse** | Dev data warehouse — crawls `~/code`, git, and shell history into SQLite+Parquet, heuristic integrations, MCP for agents (`get_repo_context`/`search_build_knowledge`). Hourly `systemd --user` on Fedora, not VPS routed. |
 | **clothes**, **recipes**, **regatta**, **driftword** | Smaller applications riding the same platform. |
 
@@ -86,8 +87,10 @@ automated gate on `origin/main`; see `ci.ARCHIVED.md`.
 
 ## Threat model
 
-The tailnet is the security boundary. Services bind **loopback** and are
-reachable only through breakwater on the Tailscale interface — nothing listens
+The tailnet is the security boundary. VPS services bind **loopback** and are
+reachable only through breakwater on the Tailscale interface. A small number
+of desktop services, including Skiff, bind their host's Tailscale address so
+Breakwater can reach them across the tailnet; nothing listens
 on a public address, and there is no per-service authentication. This is a
 deliberate trade: device authentication happens once, at the network layer,
 rather than being reimplemented badly in a dozen small services.

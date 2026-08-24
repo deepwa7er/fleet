@@ -5,10 +5,14 @@
 │ DOC. NO.  DW-003          REV. A          CLASSIFICATION: INTERNAL     │
 │ SUBJECT   The timeline — DW-002 step 04, designed before built         │
 │ ORIGIN    Design session 2026-08-23                                    │
-│ STATUS    Proposed. Nothing built.                                     │
-│ SCOPE     skiff/bridge · a new record repository · a static renderer   │
+│ STATUS    Implemented. Export lives in crates/change.                  │
+│ SCOPE     crates/change · record repository · timeline renderer       │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+References to the bridge below record the original design vocabulary. DW-004
+moved the export and its exclusion-by-default privacy boundary into the shared
+Rust change crate before the Rails/Node cutover.
 
 DW-002 §12 calls step 04 "mostly a rendering job once the layers above
 exist" — and the rendering half is. But §11 deliberately left one question

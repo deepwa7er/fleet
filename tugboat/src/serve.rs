@@ -784,8 +784,8 @@ struct FleetDeployStarted {
 /// `GET /jobs/{id}` — one deploy job's terminal outcome, or `null` while it
 /// runs. The live transcript stays on `/jobs/{id}/stream`; this is the
 /// poll-friendly half, for a caller that only needs to know whether the deploy
-/// finished and how (the skiff bridge records outcomes on the change it
-/// approved).
+/// finished and how (the shared change landing tail records outcomes on the
+/// approved change).
 async fn job_status(
     State(state): State<Arc<ServeState>>,
     Path(id): Path<String>,

@@ -8,7 +8,8 @@
 // record alone; there is no server and no state.
 //
 // Everything rendered here is already public by construction — the privacy
-// boundary is buildEntry in skiff/bridge/lib/record.js, enforced at export.
+// boundary is build_public_change in crates/change/src/record.rs, enforced at
+// export.
 // This file still escapes every string it interpolates, because "already
 // filtered" is a provenance claim, not an HTML-safety property.
 //

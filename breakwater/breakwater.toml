@@ -51,10 +51,10 @@ cache_dir = "/var/lib/breakwater/acme"
 # Use the Let's Encrypt staging directory while testing to avoid rate limits:
 #   directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
 
-# `upstream` is wherever the service actually listens — every fleet service binds
-# loopback (127.0.0.1:<port>), so breakwater is their only tailnet-facing entry
-# point. (tidepool is the exception: not routed here at all — it's its own
-# Tailscale node and serves HTTPS itself.)
+# Generated VPS services bind loopback, so breakwater is their only
+# tailnet-facing entry point. Hand-written routes may point at a service on a
+# different tailnet node by MagicDNS name; tidepool is not routed here because
+# it is its own Tailscale node and serves HTTPS itself.
 # ── BEGIN GENERATED ROUTES (tugboat fleet gen) ──
 # One route per fleet service declaring `port` in its deploy.toml — derived
 # by `tugboat fleet gen`; `--check` verifies. Don't edit inside the
@@ -93,10 +93,6 @@ upstream = "127.0.0.1:8101"
 [[routes]]
 label = "recipes"
 upstream = "127.0.0.1:8097"
-
-[[routes]]
-label = "skiff"
-upstream = "127.0.0.1:8120"
 
 # ── END GENERATED ROUTES ──
 
@@ -201,20 +197,18 @@ upstream = "fedora-1.tailcfab97.ts.net:80"
 label = "mail"
 upstream = "fedora-1.tailcfab97.ts.net:8025"
 
-# agent — skiff, the phone web UI over a headless opencode server. The FIRST
-# service on the fedora DESKTOP behind breakwater: like `harness` (the dev box)
-# and `fizzy`/`mail` (the laptop), the upstream is the host's MagicDNS name
-# over the tailnet, never a raw 100.x IP (a node's tailnet IP is not a
-# constant). skiff binds the desktop's tailnet IP on 8120 — breakwater cannot
-# reach a loopback listener on a remote host, so the app stays reachable on
-# that port directly; the tailnet is the boundary either way.
+# skiff — the Rust + React agent desk (DW-004). This is hand-written rather
+# than generated because skiffd is a systemd user service on the Fedora
+# desktop, not a VPS service with a tugboat deploy.toml. The upstream uses the
+# machine's MagicDNS name, never its mutable 100.x address.
 #
-# The app is deliberately UNAUTHENTICATED: driving opencode is effectively RCE
-# on that box, and this is the same posture breakwater flags for `harness` —
-# reachable from every device on the tailnet. The desktop is often powered
-# off; while it is, this route 502s.
+# Skiff's entire read path uses a multiplexed WebSocket, so this route depends
+# on breakwater's Upgrade tunnel. The service is deliberately unauthenticated
+# and can drive coding agents (effectively RCE); it binds only the desktop's
+# tailnet address, and breakwater itself is tailnet-only. The desktop being off
+# produces an honest 502.
 [[routes]]
-label = "agent"
+label = "skiff"
 upstream = "fedora.tailcfab97.ts.net:8120"
 
 # Note: tidepool is intentionally NOT routed here. It runs as its own Tailscale

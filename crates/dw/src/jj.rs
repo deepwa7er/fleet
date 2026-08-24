@@ -25,7 +25,29 @@ pub fn containing_repo(dir: &Path) -> Option<Repo> {
         return None;
     }
     let root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    let name = root.file_name()?.to_string_lossy().to_string();
+    // In an added workspace `jj root` is `.workspaces/<slug>`, but the
+    // change repository is still `fleet`. The original workspace is named
+    // `default`; asking jj for that root keeps the stable repository name
+    // while mutations below continue to run in the current workspace.
+    let default = Command::new("jj")
+        .args([
+            "--ignore-working-copy",
+            "workspace",
+            "root",
+            "--name",
+            "default",
+        ])
+        .current_dir(dir)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()));
+    let name = default
+        .as_deref()
+        .unwrap_or(&root)
+        .file_name()?
+        .to_string_lossy()
+        .to_string();
     Some(Repo { root, name })
 }
 
@@ -37,7 +59,11 @@ impl Repo {
             .output()
             .context("running jj — is it installed?")?;
         if !output.status.success() {
-            bail!("jj {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr).trim());
+            bail!(
+                "jj {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
         }
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
@@ -51,7 +77,15 @@ impl Repo {
     /// Give the working-copy commit its sentence and return its change id.
     pub fn describe_working_copy(&self, sentence: &str) -> Result<String> {
         self.run(&["describe", "-m", sentence])?;
-        let id = self.run(&["--ignore-working-copy", "log", "--no-graph", "-r", "@", "-T", "change_id"])?;
+        let id = self.run(&[
+            "--ignore-working-copy",
+            "log",
+            "--no-graph",
+            "-r",
+            "@",
+            "-T",
+            "change_id",
+        ])?;
         Ok(id.trim().to_string())
     }
 
@@ -59,5 +93,44 @@ impl Repo {
     /// not the commit you are still typing into.
     pub fn new_working_copy(&self) -> Result<()> {
         self.run(&["new"]).map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn jj(dir: &Path, args: &[&str]) {
+        let output = Command::new("jj")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "jj {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn added_workspaces_keep_the_repository_name() {
+        if Command::new("jj").arg("--version").output().is_err() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let main = temp.path().join("fleet");
+        let workspace = temp.path().join("round-one");
+        std::fs::create_dir_all(&main).unwrap();
+        jj(&main, &["git", "init", "--colocate"]);
+        jj(&main, &["workspace", "add", workspace.to_str().unwrap()]);
+
+        let found = containing_repo(&workspace).unwrap();
+        assert_eq!(found.name, "fleet");
+        assert_eq!(
+            found.root.canonicalize().unwrap(),
+            workspace.canonicalize().unwrap()
+        );
     }
 }
