@@ -19,13 +19,8 @@ history and `archive/*` tags; do not resurrect it.)
 - Read `~/.claude/CLAUDE.md` (NO HACKS — authoritative; overrides summaries).
 - Read `docs/deepwater-style-guide.md` (DW-001) if the change touches UI.
 - `cargo run -p fizzy -- stream --board Playground` to see open cards before creating new ones (fizzy skill is the CLI contract).
-- The bridge is the change API, loopback on the desktop. Auth, used by every call below — parse, never source, never echo:
-
-```bash
-BRIDGE=http://127.0.0.1:4120
-PW=$(awk -F= '/^SKIFF_BRIDGE_PASSWORD=/{print $2}' ~/.config/skiff/secrets)
-# usage: curl -s -u "skiff:$PW" $BRIDGE/...
-```
+- `dw` links the change crate and authors the local log directly. No daemon,
+  loopback request, or password is involved in change curation.
 
 ## 1. Discover → Card
 
@@ -65,8 +60,7 @@ R1=$(jj log --no-graph -r @ -T change_id)
 jj new                                    # move off; round 2 grows here
 ```
 
-Register the change and the round with the bridge (`skiff/bridge/README.md`
-is the endpoint contract). `gatesRan` is **only what you ran** — it is
+Register the change and round with `dw`. `gatesRan` is **only what you ran** — it is
 displayed as a claim, verified by nothing, and lying in it defeats the
 whole system. `worthKnowing` is the header's bullet list (new deps, config
 touched, breaking behavior). **Bind the change to this session** — the
@@ -78,17 +72,15 @@ and the review still works from the desk:
 
 ```bash
 SESSION_ID="pi:$(basename "$PI_SESSION_FILE" .jsonl)"
-curl -s -u "skiff:$PW" -X POST $BRIDGE/change -H 'content-type: application/json' \
-  -d "{\"repo\":\"fleet\",\"card\":<card#>,\"title\":\"<card title, humanized>\",\"session\":\"$SESSION_ID\"}"
-curl -s -u "skiff:$PW" -X POST $BRIDGE/change/fleet/<card#>/round -H 'content-type: application/json' \
-  -d "{\"author\":\"agent\",\"changeId\":\"$R1\",\"gatesRan\":[\"cargo test\",\"clippy\",\"fleet gen --check\"],\"worthKnowing\":[\"…\"]}"
+dw start <card#> --title "<card title, humanized>" --session "$SESSION_ID"
+dw round <card#> --revision "$R1" \
+  --gate "cargo test" --gate "clippy" --gate "fleet gen --check" \
+  --worth-knowing "…"
 ```
 
 If the change already exists (a card's change is created once — "one card =
-one change"), the create answers 409; **rebind it to this session** so the
-review follows the session you are working in: `curl -s -u "skiff:$PW" -X
-POST $BRIDGE/change/fleet/<card#>/session -H 'content-type:
-application/json' -d "{\"session\":\"$SESSION_ID\"}"`.
+one change"), **rebind it to this session** with `dw bind <card#>
+"$SESSION_ID"` so the review follows the session you are working in.
 
 **Annotate — your final act, not optional.** You did the work and know why;
 the review renders the code with your justifications at the point they
@@ -98,14 +90,14 @@ in that round's diff; the bridge rejects files the round never touched.
 **Never write review commentary into source comments instead** (DW-002 §5):
 
 ```bash
-curl -s -u "skiff:$PW" -X POST $BRIDGE/change/fleet/<card#>/annotation -H 'content-type: application/json' \
-  -d '{"round":1,"path":"skiff/app/x.rb","line":12,"side":"new","text":"cached because …"}'
+dw annotate <card#> --round 1 --path skiff/app/x.rb --line 12 --side new \
+  --text "cached because …"
 ```
 
 Then submit — this is your "PR is up" moment:
 
 ```bash
-curl -s -u "skiff:$PW" -X POST $BRIDGE/change/fleet/<card#>/submit
+dw submit <card#>
 ```
 
 **Revisions arrive as round n+1** (a child of round n — the bridge enforces

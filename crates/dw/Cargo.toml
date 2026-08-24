@@ -7,15 +7,15 @@ license = "MIT"
 
 [dependencies]
 anyhow = { workspace = true }
+change = { path = "../change" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
-# rustls rather than platform TLS, matching fizzy/mirror/sonar/trawler.
-reqwest = { workspace = true, features = ["rustls-tls", "json"] }
 # dw ship creates the card its change binds to — the fizzy crate's first
 # library consumer.
 fizzy = { path = "../fizzy" }
+
+[dev-dependencies]
+tempfile = "3"
 
 [[bin]]
 name = "dw"
