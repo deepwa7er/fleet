@@ -154,6 +154,11 @@ async fn handle_message(
                 // prompt text, which is the user's and has no business in a
                 // log line or an error banner.
                 Err(err) => {
+                    // Logged as well as answered: a command that fails for an
+                    // environmental reason (a harness that is not installed, a
+                    // session file that vanished) leaves no other trace, and
+                    // "it just says no" is not something anyone can debug.
+                    tracing::warn!(error = format!("{err:#}"), "command failed");
                     ServerFrame::Error { sub: None, req: Some(req), error: format!("{err:#}") }
                 }
             };

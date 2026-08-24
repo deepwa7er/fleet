@@ -16,6 +16,7 @@
 
 pub mod overlay;
 pub mod pi_rpc;
+pub mod resolve;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -111,7 +112,11 @@ pub struct Runs {
     sessions: Mutex<HashMap<SessionKey, Arc<Mutex<SessionRun>>>>,
     store: Store,
     topics: broadcast::Sender<Topic>,
-    binary: PathBuf,
+    /// Resolved once at startup, so a missing harness is discovered when the
+    /// service starts rather than on the first prompt someone sends. The
+    /// failure is carried rather than fatal: skiffd reads sessions from files
+    /// and stays useful with no harness installed — it simply cannot run one.
+    binary: Result<PathBuf, String>,
     pi_dir: PathBuf,
     pi_dir_explicit: bool,
     next_run: AtomicU64,
@@ -125,6 +130,12 @@ impl Runs {
         pi_dir: PathBuf,
         pi_dir_explicit: bool,
     ) -> Arc<Self> {
+        let binary = resolve::binary(&binary);
+        match &binary {
+            Ok(path) => tracing::info!(pi = %path.display(), "pi resolved"),
+            // Warned at startup, not swallowed until someone sends a prompt.
+            Err(err) => tracing::warn!("{err} — pi sessions can be read but not run"),
+        }
         Arc::new(Self {
             sessions: Mutex::default(),
             store,
@@ -270,10 +281,13 @@ impl Runs {
             return Ok(run.clone());
         }
 
+        // Reported here rather than at startup, because this is the moment it
+        // actually matters and the moment a person is watching.
+        let binary = self.binary.clone().map_err(|err| anyhow::anyhow!(err))?;
         let file = self.session_file(session).await?;
         let cwd = self.cwd(session).await;
         let (process, events) = PiProcess::spawn(&PiConfig {
-            binary: self.binary.clone(),
+            binary,
             session_file: file,
             cwd,
             session_dir_override: self.pi_dir_explicit.then(|| self.pi_dir.clone()),
