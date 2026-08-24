@@ -1,5 +1,12 @@
 # skiff
 
+> **Being rebuilt.** Skiff is becoming one Rust binary plus a React client
+> ([DW-004](../docs/skiff-architecture.md)); the Rails app and the Node bridge
+> below are both deleted at cutover. Both stacks live here and run side by side
+> until then — the live one on **8120**, `skiffd` on **8121** — which is safe
+> because everything skiffd caches is derived from the same files. See
+> [The rebuild](#the-rebuild) before changing anything in `src/` or `web/`.
+
 A phone-optimized web UI for coding-agent sessions across three harnesses —
 pi, Meta's Muse Code, and opencode — behind one bridge. Browse sessions from
 every harness in one list, read transcripts, send messages, watch replies
@@ -7,6 +14,84 @@ stream live, and abort a run — all from a phone browser over the tailnet.
 The app is deployable to either of two tailnet hosts: the Fedora desktop
 (`fedora`, the current home) and the Mac (`deepwater-1`, still running until
 retired).
+
+---
+
+## The rebuild
+
+`src/` (Rust) and `web/` (React) are the replacement for `app/` (Rails) and
+`bridge/` (Node). The design, including the alternatives that were rejected and
+why, is [DW-004](../docs/skiff-architecture.md) — read it before building any
+of it.
+
+The one-sentence version: **skiff is a live read model over state that other
+processes own, plus a small set of commands.** Harness formats die in `ingest`;
+a derived SQLite store is the only thing views query; every read the client
+performs is a subscription over one WebSocket; and `Rust owns truth,
+derivation, and consistency, React owns intent and presentation`.
+
+### Run it
+
+```sh
+cd web && bun install && bun run build   # nothing else typechecks the client
+cargo run -p skiff
+```
+
+Then open `http://127.0.0.1:8121`. Everything has a working default: the read
+model lands in `$XDG_STATE_HOME/skiff`, and the pi session directory resolves
+the way pi itself resolves it. `--help` lists the overrides.
+
+For client work, `cd web && bun run dev` serves the client with hot reload and
+proxies `/ws` to a `cargo run -p skiff` on 8121.
+
+The read model is **derived, and safe to delete at any time** — it is rebuilt
+on the next scan. There are no migrations: the schema carries a version, and a
+mismatch drops every table and re-ingests.
+
+### Gates
+
+```sh
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+(cd skiff/web && bun run build)
+```
+
+The client's types are generated from the Rust wire types, and drift is a
+failing test. To accept a protocol change:
+
+```sh
+SKIFF_WRITE_TYPES=1 cargo test -p skiff --test types
+```
+
+`web/src/gen/` holds **nothing that was not generated** — the test compares its
+whole contents against a fresh export, and regenerating deletes anything it
+does not recognise. The hand-written barrel is `web/src/types.ts`, beside it.
+
+### Where things are
+
+| | |
+|---|---|
+| `src/model.rs` | the domain vocabulary; the leaf-path walk that makes a tree a transcript |
+| `src/ingest/` | one adapter per source, the watermark, the scan loop, the topics |
+| `src/store/` | the derived SQLite read model, and the rebuild that replaces migrations |
+| `src/views/` | the closed set of live queries and what invalidates each |
+| `src/wire.rs` | the client protocol; every type here is exported to TypeScript |
+| `src/server.rs` | one task per connection: the socket, its subscriptions, its topics |
+| `web/src/lib/socket.ts` | the whole client data layer — subscriptions, reconnect, resubscribe |
+
+### Status
+
+M1 of [DW-004 §13](../docs/skiff-architecture.md): the skeleton, and pi
+sessions end to end — ingest, store, the `sessions` live query, and a React
+shell that lists them. The transcript, the other two harnesses, changes, and
+the desk are M2–M6; the flip at breakwater is M7.
+
+---
+
+## The stack being replaced
+
+Everything below describes the Rails + Node bridge stack, which is still the
+one serving `agent.intern.deepwa7er.net`.
 
 ## Architecture
 

@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+/* DW-001 §2. The tokens are the guide's, verbatim; Tailwind's @theme makes
+   them available as utilities (bg-paper, text-ink, …) without a config file. */
+@theme {
+  --color-paper: #f7f2e9;
+  --color-fill: #fffdf8;
+  --color-ink: #1f1a12;
+  --color-muted: #6f675a;
+  --color-accent: #0066b1;
+  --color-accent-contrast: #ffffff;
+  --color-danger: #c81e1e;
+  --color-good: #2f6f3e;
+  --color-hard: #1f1a12;
+
+  --font-prose: system-ui, sans-serif;
+  --font-heading: ui-serif, Georgia, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* DW-001 §2 rule 6: dark mode is not the warm palette inverted — it is cool
+   charcoal with a blue undertone, so the backlight blue reads as backlight. */
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-paper: #121316;
+    --color-fill: #1c1e22;
+    --color-ink: #eceef1;
+    --color-muted: #8b9199;
+    --color-accent: #4d9de0;
+    --color-accent-contrast: #141311;
+    --color-danger: #f87171;
+    --color-good: #5cb974;
+    --color-hard: #000000;
+  }
+}
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-prose);
+  line-height: 1.6;
+}
+
+/* DW-001 §3, rule 5: the readout voice. One recipe, applied identically
+   everywhere — column headers, timestamps, units, settings labels. Never
+   prose. */
+@utility instrumentation {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-muted);
+}

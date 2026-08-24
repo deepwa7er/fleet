@@ -26,3 +26,8 @@
 # Ignore key files for decrypting credentials and more.
 /config/*.key
 
+
+# The Rust + React rebuild (DW-004). Build artefacts, not sources: `bun run
+# build` produces web/dist, and the binary serves whatever is there.
+/web/node_modules
+/web/dist
