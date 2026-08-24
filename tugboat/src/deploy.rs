@@ -128,6 +128,47 @@ struct Prepared {
     guard: WorktreeGuard,
 }
 
+/// What `{workspace}` expands to for a working-tree deploy.
+///
+/// **The cargo workspace root first**, because that is where `target/` lives —
+/// and `{workspace}/target/...` is what almost every Rust manifest ships from.
+///
+/// Resolving this from the *git* toplevel instead breaks every working-tree
+/// deploy run from a **jj workspace**, which is the isolation the fleet's own
+/// workflow mandates: jj workspaces share one colocated git repo, so
+/// `git rev-parse --show-toplevel` answers with the main checkout while cargo
+/// builds into `.workspaces/<slug>/target/`. The build then succeeds and the
+/// ship fails, looking for an artifact in a directory nothing wrote to.
+///
+/// Non-Rust services (container builds, static directories) have no cargo
+/// workspace, and fall back to the git toplevel exactly as before.
+fn working_tree_workspace(project_dir: &Path) -> PathBuf {
+    cargo_workspace_root(project_dir)
+        .or_else(|| git::toplevel(project_dir).ok())
+        .unwrap_or_else(|| project_dir.to_path_buf())
+}
+
+/// The nearest ancestor holding a `Cargo.toml` with a `[workspace]` table.
+///
+/// Walks up rather than shelling out to `cargo locate-project`: this runs
+/// before any build, on machines where the manifest may not even be a Rust
+/// project, and a missing or slow cargo should not decide where artifacts are
+/// looked for.
+fn cargo_workspace_root(from: &Path) -> Option<PathBuf> {
+    for dir in from.ancestors() {
+        let manifest = dir.join("Cargo.toml");
+        let Ok(text) = std::fs::read_to_string(&manifest) else { continue };
+        // Parsed, not string-matched: `[workspace]` also appears inside
+        // strings and comments, and `workspace = true` on a dependency is a
+        // different thing entirely.
+        let Ok(parsed) = text.parse::<toml::Table>() else { continue };
+        if parsed.contains_key("workspace") {
+            return Some(dir.to_path_buf());
+        }
+    }
+    None
+}
+
 /// Serializes `git fetch` across concurrent deploys. Monorepo members share one
 /// repository, and concurrent fetches of the same remote can contend on git's
 /// ref locks; a fetch is brief next to a build, so taking them one at a time
@@ -219,10 +260,11 @@ pub fn run(
     let workdir_str = workdir.to_string_lossy().into_owned();
 
     if dry_run {
-        // For display, expand {workspace} against the on-disk checkout; a real
-        // default-branch deploy expands it to the corresponding path inside its
-        // throwaway worktree.
-        let checkout = git::toplevel(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+        // For display, expand {workspace} exactly as the real deploy will —
+        // through the one resolver, not a second copy of the rule. They were
+        // duplicated, and duplicated is how they drifted: the plan printed an
+        // artifact path the deploy would never look at.
+        let checkout = working_tree_workspace(project_dir);
         print_plan(manifest, project_dir, &source, &workdir_str, &checkout, log);
         return Ok(());
     }
@@ -277,9 +319,7 @@ fn run_measured(
     // worktree guard lives to the end of this function, removing it after the ship.
     let (build_dir, checkout_root, stamp, skip_build, _worktree) = match &source {
         Source::WorkingTree { skip_build } => {
-            // {workspace} in a working-tree deploy is the on-disk repository
-            // root (the directory itself for a non-git deploy).
-            let root = git::toplevel(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+            let root = working_tree_workspace(project_dir);
             (project_dir.to_path_buf(), root, build_stamp(project_dir, at), *skip_build, None)
         }
         Source::DefaultBranch => {
@@ -902,6 +942,133 @@ fn note(log: &dyn LogSink, msg: &str) {
 
 #[cfg(test)]
 mod tests {
+    use super::{cargo_workspace_root, working_tree_workspace};
+
+    /// A cargo workspace root, a member inside it, and a nested directory.
+    fn cargo_workspace(root: &std::path::Path) {
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"svc\"]\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("svc/src")).unwrap();
+        std::fs::write(
+            root.join("svc/Cargo.toml"),
+            "[package]\nname = \"svc\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn the_workspace_root_is_found_from_a_member() {
+        let dir = tempfile::tempdir().unwrap();
+        // The temp dir may be a symlink (/tmp on macOS); compare resolved.
+        let root = dir.path().canonicalize().unwrap();
+        cargo_workspace(&root);
+        assert_eq!(cargo_workspace_root(&root.join("svc")), Some(root.clone()));
+        assert_eq!(cargo_workspace_root(&root), Some(root));
+    }
+
+    #[test]
+    fn a_member_manifest_alone_is_not_a_workspace_root() {
+        // `[package]` is not `[workspace]`. Returning the member would put
+        // `target/` one level too deep.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("svc")).unwrap();
+        std::fs::write(
+            root.join("svc/Cargo.toml"),
+            "[package]\nname = \"svc\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        assert_eq!(cargo_workspace_root(&root.join("svc")), None);
+    }
+
+    #[test]
+    fn a_dependency_marked_workspace_true_is_not_a_workspace_root() {
+        // `workspace = true` on a dependency is a different thing entirely,
+        // and a string match for "workspace" would be fooled by it.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"svc\"\nversion = \"0.1.0\"\n\n             [dependencies]\nserde = { workspace = true }\n",
+        )
+        .unwrap();
+        assert_eq!(cargo_workspace_root(&root), None);
+    }
+
+    #[test]
+    fn an_unparseable_manifest_does_not_stop_the_walk() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        cargo_workspace(&root);
+        std::fs::write(root.join("svc/Cargo.toml"), "this is not toml {{{").unwrap();
+        assert_eq!(cargo_workspace_root(&root.join("svc")), Some(root));
+    }
+
+    #[test]
+    fn the_nearest_workspace_root_wins() {
+        // A vendored sub-workspace builds into its own target dir.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        cargo_workspace(&root);
+        let inner = root.join("svc/inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        std::fs::write(inner.join("Cargo.toml"), "[workspace]\n").unwrap();
+        assert_eq!(cargo_workspace_root(&inner), Some(inner));
+    }
+
+    #[test]
+    fn a_cargo_workspace_beats_the_git_toplevel() {
+        // The bug this fixes. A jj workspace lives INSIDE the git checkout and
+        // has its own cargo workspace root; resolving from git would answer
+        // with the outer checkout, whose target/ the build never writes to.
+        let dir = tempfile::tempdir().unwrap();
+        let outer = dir.path().canonicalize().unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&outer)
+            .status()
+            .unwrap()
+            .success());
+        cargo_workspace(&outer);
+
+        let nested = outer.join(".workspaces/slug");
+        std::fs::create_dir_all(&nested).unwrap();
+        cargo_workspace(&nested);
+
+        assert_eq!(
+            working_tree_workspace(&nested.join("svc")),
+            nested,
+            "the artifact path must follow cargo, not git"
+        );
+    }
+
+    #[test]
+    fn a_non_rust_project_still_falls_back_to_the_git_toplevel() {
+        // Container builds and static-directory services have no cargo
+        // workspace, and must keep behaving exactly as before.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success());
+        let svc = root.join("svc");
+        std::fs::create_dir_all(&svc).unwrap();
+        assert_eq!(working_tree_workspace(&svc), root);
+    }
+
+    #[test]
+    fn a_directory_that_is_neither_answers_with_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        assert_eq!(working_tree_workspace(&root), root);
+    }
+
     use super::*;
 
     /// A build that doesn't target musl needs no toolchain — and must not fail
