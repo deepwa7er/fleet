@@ -75,7 +75,10 @@ pub struct SessionKey {
 
 impl SessionKey {
     pub fn new(harness: Harness, local: impl Into<String>) -> Self {
-        Self { harness, local: local.into() }
+        Self {
+            harness,
+            local: local.into(),
+        }
     }
 }
 
@@ -94,7 +97,10 @@ impl FromStr for SessionKey {
         if local.is_empty() {
             return Err(());
         }
-        Ok(SessionKey { harness: prefix.parse()?, local: local.to_owned() })
+        Ok(SessionKey {
+            harness: prefix.parse()?,
+            local: local.to_owned(),
+        })
     }
 }
 
@@ -107,7 +113,8 @@ impl Serialize for SessionKey {
 impl<'de> Deserialize<'de> for SessionKey {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let raw = String::deserialize(d)?;
-        raw.parse().map_err(|()| serde::de::Error::custom(format!("not a session id: {raw}")))
+        raw.parse()
+            .map_err(|()| serde::de::Error::custom(format!("not a session id: {raw}")))
     }
 }
 
@@ -147,6 +154,31 @@ pub struct Capabilities {
     pub rename: bool,
     pub orchestrator: bool,
     pub model: bool,
+}
+
+/// One model Pi reports as available to the current user.
+///
+/// Both fields are required to switch models: model ids are unique only
+/// within a provider, and the harness protocol deliberately carries both.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
+pub struct ModelOption {
+    pub provider: String,
+    pub id: String,
+}
+
+/// The model picker readout for a session.
+///
+/// Failure to enumerate models degrades this one control; it must not make a
+/// transcript unreadable. Keeping the error beside the options lets every
+/// client present the same truthful state without inventing fallback models.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
+pub struct ModelCatalog {
+    pub options: Vec<ModelOption>,
+    pub error: Option<String>,
 }
 
 /// One row of the session list: everything the desk and the session list need
@@ -230,8 +262,12 @@ impl ToolStatus {
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[ts(export_to = "gen/")]
 pub enum Part {
-    Text { blocks: Vec<Block> },
-    Reasoning { blocks: Vec<Block> },
+    Text {
+        blocks: Vec<Block>,
+    },
+    Reasoning {
+        blocks: Vec<Block>,
+    },
     Tool {
         /// The harness's own call id, used to fold a result into its call.
         #[serde(rename = "callId")]
@@ -245,7 +281,9 @@ pub enum Part {
     },
     /// A file or image referenced by the transcript. Display-only: there is no
     /// image transport here, only the name.
-    File { filename: String },
+    File {
+        filename: String,
+    },
 }
 
 /// One message in a transcript.
@@ -325,7 +363,10 @@ pub fn leaf_path(entries: &[Entry]) -> Vec<&Entry> {
             break;
         }
         chain.push(entry);
-        current = entry.parent_id.as_deref().and_then(|p| by_id.get(p).copied());
+        current = entry
+            .parent_id
+            .as_deref()
+            .and_then(|p| by_id.get(p).copied());
     }
     chain.reverse();
     chain
@@ -371,8 +412,11 @@ mod tests {
 
     #[test]
     fn leaf_path_is_the_chain_from_the_newest_entry() {
-        let entries =
-            vec![entry(1, "a", None), entry(2, "b", Some("a")), entry(3, "c", Some("b"))];
+        let entries = vec![
+            entry(1, "a", None),
+            entry(2, "b", Some("a")),
+            entry(3, "c", Some("b")),
+        ];
         assert_eq!(ids(leaf_path(&entries)), ["a", "b", "c"]);
     }
 
@@ -380,8 +424,11 @@ mod tests {
     fn leaf_path_excludes_abandoned_branches() {
         // `b` was abandoned; `c` branched from `a` instead. The transcript is
         // a → c, and `b` must not surface even though it is still in the file.
-        let entries =
-            vec![entry(1, "a", None), entry(2, "b", Some("a")), entry(3, "c", Some("a"))];
+        let entries = vec![
+            entry(1, "a", None),
+            entry(2, "b", Some("a")),
+            entry(3, "c", Some("a")),
+        ];
         assert_eq!(ids(leaf_path(&entries)), ["a", "c"]);
     }
 

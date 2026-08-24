@@ -1,6 +1,8 @@
 import type { SessionView } from "../types"
+import { client } from "../lib/socket"
 import { useView } from "../lib/useView"
 import { Composer } from "./Composer"
+import { SessionControls } from "./SessionControls"
 import { Transcript } from "./Transcript"
 
 export function Session({ id, onBack }: { id: string; onBack: () => void }) {
@@ -45,6 +47,7 @@ function Loaded({ view }: { view: SessionView }) {
           <p className="font-mono text-sm text-muted">{session.directory}</p>
         )}
       </header>
+      <SessionControls view={view} command={(command) => client.command(command)} />
       <Transcript messages={view.messages} live={view.live} harness={session.harness} />
       {/* Only pi can be driven from here yet: muse has no long-lived RPC
           mode, and opencode is its own server. Offering a composer that

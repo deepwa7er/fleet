@@ -50,9 +50,25 @@ pub enum Command {
     /// so the pane that sent it can match its optimistic bubble by identity
     /// rather than by comparing text.
     #[serde(rename_all = "camelCase")]
-    Send { session: SessionKey, text: String, client_id: String },
+    Send {
+        session: SessionKey,
+        text: String,
+        client_id: String,
+    },
     /// Stop the run in flight. Aborting an idle session is not an error.
     Abort { session: SessionKey },
+    /// Change the display name where the harness advertises rename support.
+    Rename { session: SessionKey, name: String },
+    /// Switch Pi's active model. Both coordinates are required by Pi's RPC
+    /// protocol; model ids are not globally unique.
+    #[serde(rename_all = "camelCase")]
+    SetModel {
+        session: SessionKey,
+        provider: String,
+        model_id: String,
+    },
+    /// Toggle Pi's orchestrator extension through its own command surface.
+    SetOrchestrator { session: SessionKey, active: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -107,9 +123,15 @@ mod tests {
 
     #[test]
     fn a_subscribe_frame_round_trips() {
-        let frame = ClientFrame::Subscribe { sub: 7, view: ViewSpec::Sessions };
+        let frame = ClientFrame::Subscribe {
+            sub: 7,
+            view: ViewSpec::Sessions,
+        };
         let json = serde_json::to_string(&frame).unwrap();
-        assert_eq!(json, r#"{"t":"subscribe","sub":7,"view":{"kind":"sessions"}}"#);
+        assert_eq!(
+            json,
+            r#"{"t":"subscribe","sub":7,"view":{"kind":"sessions"}}"#
+        );
         assert_eq!(serde_json::from_str::<ClientFrame>(&json).unwrap(), frame);
     }
 
@@ -133,9 +155,12 @@ mod tests {
         assert_eq!(hello["t"], "hello");
         assert_eq!(hello["readModel"], 1);
 
-        let error =
-            serde_json::to_value(ServerFrame::Error { sub: None, req: None, error: "nope".into() })
-                .unwrap();
+        let error = serde_json::to_value(ServerFrame::Error {
+            sub: None,
+            req: None,
+            error: "nope".into(),
+        })
+        .unwrap();
         assert_eq!(error["t"], "error");
         assert_eq!(error["sub"], serde_json::Value::Null);
     }
@@ -165,8 +190,23 @@ mod tests {
             serde_json::from_str::<ClientFrame>(json).unwrap(),
             ClientFrame::Command {
                 req: 4,
-                cmd: Command::Abort { session: "pi:abc".parse().unwrap() }
+                cmd: Command::Abort {
+                    session: "pi:abc".parse().unwrap()
+                }
             }
         );
+    }
+
+    #[test]
+    fn capability_commands_round_trip() {
+        let cases = [
+            r#"{"t":"command","req":4,"cmd":{"kind":"rename","session":"pi:abc","name":"A name"}}"#,
+            r#"{"t":"command","req":4,"cmd":{"kind":"setModel","session":"pi:abc","provider":"deepseek","modelId":"v4"}}"#,
+            r#"{"t":"command","req":4,"cmd":{"kind":"setOrchestrator","session":"pi:abc","active":true}}"#,
+        ];
+        for json in cases {
+            let frame = serde_json::from_str::<ClientFrame>(json).unwrap();
+            assert_eq!(serde_json::to_string(&frame).unwrap(), json);
+        }
     }
 }

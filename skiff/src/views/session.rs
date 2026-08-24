@@ -18,7 +18,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::model::{Message, Part, Role, SessionKey, SessionSummary, ToolStatus};
+use crate::model::{Message, ModelCatalog, Part, Role, SessionKey, SessionSummary, ToolStatus};
 use crate::run::LiveState;
 use crate::store::Store;
 
@@ -36,14 +36,33 @@ pub struct SessionView {
     /// The in-flight reply, whether the harness is working, and any prompt
     /// that has been sent but has not yet reached the transcript.
     pub live: LiveState,
+    /// Available models for the picker. Empty for harnesses without the model
+    /// capability; an enumeration failure is isolated here rather than
+    /// failing the transcript subscription.
+    pub models: ModelCatalog,
 }
 
-pub fn compute(store: &Store, id: &SessionKey, live: LiveState) -> Result<SessionView> {
+pub fn compute(
+    store: &Store,
+    id: &SessionKey,
+    live: LiveState,
+    models: ModelCatalog,
+) -> Result<SessionView> {
     let session = store.sessions()?.into_iter().find(|s| s.id == *id);
     if session.is_none() {
-        return Ok(SessionView { session: None, messages: Vec::new(), live });
+        return Ok(SessionView {
+            session: None,
+            messages: Vec::new(),
+            live,
+            models,
+        });
     }
-    Ok(SessionView { session, messages: transcript(&store.entries(id)?), live })
+    Ok(SessionView {
+        session,
+        messages: transcript(&store.entries(id)?),
+        live,
+        models,
+    })
 }
 
 /// The conversation: the leaf branch, rendered, with tool results folded into
@@ -54,7 +73,9 @@ pub fn transcript(entries: &[crate::model::Entry]) -> Vec<Message> {
     let mut awaiting: HashMap<String, (usize, usize)> = HashMap::new();
 
     for entry in crate::model::leaf_path(entries) {
-        let Some(mut message) = entry.mapped.clone() else { continue };
+        let Some(mut message) = entry.mapped.clone() else {
+            continue;
+        };
 
         if message.role == Role::Tool {
             message.parts = fold(&mut messages, &mut awaiting, message.parts);
@@ -66,7 +87,11 @@ pub fn transcript(entries: &[crate::model::Entry]) -> Vec<Message> {
 
         let index = messages.len();
         for (part_index, part) in message.parts.iter().enumerate() {
-            if let Part::Tool { call_id, status: ToolStatus::Running, .. } = part
+            if let Part::Tool {
+                call_id,
+                status: ToolStatus::Running,
+                ..
+            } = part
                 && !call_id.is_empty()
             {
                 awaiting.insert(call_id.clone(), (index, part_index));
@@ -97,17 +122,33 @@ fn fold(
     parts
         .into_iter()
         .filter(|part| {
-            let Part::Tool { call_id, status, output, .. } = part else { return true };
-            if *status == ToolStatus::Running {
-                return true;
-            }
-            let Some((message_index, part_index)) = awaiting.remove(call_id) else { return true };
-            let Some(target) =
-                messages.get_mut(message_index).and_then(|m| m.parts.get_mut(part_index))
+            let Part::Tool {
+                call_id,
+                status,
+                output,
+                ..
+            } = part
             else {
                 return true;
             };
-            let Part::Tool { status: call_status, output: call_output, .. } = target else {
+            if *status == ToolStatus::Running {
+                return true;
+            }
+            let Some((message_index, part_index)) = awaiting.remove(call_id) else {
+                return true;
+            };
+            let Some(target) = messages
+                .get_mut(message_index)
+                .and_then(|m| m.parts.get_mut(part_index))
+            else {
+                return true;
+            };
+            let Part::Tool {
+                status: call_status,
+                output: call_output,
+                ..
+            } = target
+            else {
                 return true;
             };
             *call_status = *status;
@@ -165,7 +206,12 @@ mod tests {
     fn the_transcript_is_the_leaf_branch_in_order() {
         let entries = vec![
             entry(1, "a", None, Some(message("a", Role::User, vec![]))),
-            entry(2, "b", Some("a"), Some(message("b", Role::Assistant, vec![]))),
+            entry(
+                2,
+                "b",
+                Some("a"),
+                Some(message("b", Role::Assistant, vec![])),
+            ),
         ];
         let ids: Vec<_> = transcript(&entries).iter().map(|m| m.id.clone()).collect();
         assert_eq!(ids, ["a", "b"]);
@@ -176,7 +222,12 @@ mod tests {
         let entries = vec![
             entry(1, "a", None, Some(message("a", Role::User, vec![]))),
             entry(2, "meta", Some("a"), None),
-            entry(3, "c", Some("meta"), Some(message("c", Role::Assistant, vec![]))),
+            entry(
+                3,
+                "c",
+                Some("meta"),
+                Some(message("c", Role::Assistant, vec![])),
+            ),
         ];
         let ids: Vec<_> = transcript(&entries).iter().map(|m| m.id.clone()).collect();
         assert_eq!(ids, ["a", "c"]);
@@ -185,17 +236,28 @@ mod tests {
     #[test]
     fn a_tool_result_folds_into_the_call_that_asked_for_it() {
         let entries = vec![
-            entry(1, "a", None, Some(message("a", Role::Assistant, vec![call("c1")]))),
+            entry(
+                1,
+                "a",
+                None,
+                Some(message("a", Role::Assistant, vec![call("c1")])),
+            ),
             entry(
                 2,
                 "r",
                 Some("a"),
-                Some(message("r", Role::Tool, vec![result("c1", ToolStatus::Completed, "done")])),
+                Some(message(
+                    "r",
+                    Role::Tool,
+                    vec![result("c1", ToolStatus::Completed, "done")],
+                )),
             ),
         ];
         let messages = transcript(&entries);
         assert_eq!(messages.len(), 1, "the result is not a message of its own");
-        let Part::Tool { status, output, .. } = &messages[0].parts[0] else { panic!() };
+        let Part::Tool { status, output, .. } = &messages[0].parts[0] else {
+            panic!()
+        };
         assert_eq!(*status, ToolStatus::Completed);
         assert_eq!(output.as_deref(), Some("done"));
     }
@@ -203,15 +265,26 @@ mod tests {
     #[test]
     fn a_failed_result_marks_its_call_failed() {
         let entries = vec![
-            entry(1, "a", None, Some(message("a", Role::Assistant, vec![call("c1")]))),
+            entry(
+                1,
+                "a",
+                None,
+                Some(message("a", Role::Assistant, vec![call("c1")])),
+            ),
             entry(
                 2,
                 "r",
                 Some("a"),
-                Some(message("r", Role::Tool, vec![result("c1", ToolStatus::Error, "boom")])),
+                Some(message(
+                    "r",
+                    Role::Tool,
+                    vec![result("c1", ToolStatus::Error, "boom")],
+                )),
             ),
         ];
-        let Part::Tool { status, .. } = &transcript(&entries)[0].parts[0] else { panic!() };
+        let Part::Tool { status, .. } = &transcript(&entries)[0].parts[0] else {
+            panic!()
+        };
         assert_eq!(*status, ToolStatus::Error);
     }
 
@@ -223,7 +296,11 @@ mod tests {
             1,
             "r",
             None,
-            Some(message("r", Role::Tool, vec![result("orphan", ToolStatus::Completed, "out")])),
+            Some(message(
+                "r",
+                Role::Tool,
+                vec![result("orphan", ToolStatus::Completed, "out")],
+            )),
         )];
         let messages = transcript(&entries);
         assert_eq!(messages.len(), 1);
@@ -243,14 +320,22 @@ mod tests {
                 2,
                 "r2",
                 Some("a"),
-                Some(message("r2", Role::Tool, vec![result("c2", ToolStatus::Completed, "two")])),
+                Some(message(
+                    "r2",
+                    Role::Tool,
+                    vec![result("c2", ToolStatus::Completed, "two")],
+                )),
             ),
         ];
         let messages = transcript(&entries);
         assert_eq!(messages.len(), 1);
-        let Part::Tool { status, .. } = &messages[0].parts[0] else { panic!() };
+        let Part::Tool { status, .. } = &messages[0].parts[0] else {
+            panic!()
+        };
         assert_eq!(*status, ToolStatus::Running, "c1 has not answered yet");
-        let Part::Tool { output, .. } = &messages[0].parts[1] else { panic!() };
+        let Part::Tool { output, .. } = &messages[0].parts[1] else {
+            panic!()
+        };
         assert_eq!(output.as_deref(), Some("two"));
     }
 
@@ -259,22 +344,37 @@ mod tests {
         // Only the first result claims the call; a duplicate is surfaced
         // rather than silently replacing what the reader already saw.
         let entries = vec![
-            entry(1, "a", None, Some(message("a", Role::Assistant, vec![call("c1")]))),
+            entry(
+                1,
+                "a",
+                None,
+                Some(message("a", Role::Assistant, vec![call("c1")])),
+            ),
             entry(
                 2,
                 "r",
                 Some("a"),
-                Some(message("r", Role::Tool, vec![result("c1", ToolStatus::Completed, "first")])),
+                Some(message(
+                    "r",
+                    Role::Tool,
+                    vec![result("c1", ToolStatus::Completed, "first")],
+                )),
             ),
             entry(
                 3,
                 "r2",
                 Some("r"),
-                Some(message("r2", Role::Tool, vec![result("c1", ToolStatus::Error, "second")])),
+                Some(message(
+                    "r2",
+                    Role::Tool,
+                    vec![result("c1", ToolStatus::Error, "second")],
+                )),
             ),
         ];
         let messages = transcript(&entries);
-        let Part::Tool { output, .. } = &messages[0].parts[0] else { panic!() };
+        let Part::Tool { output, .. } = &messages[0].parts[0] else {
+            panic!()
+        };
         assert_eq!(output.as_deref(), Some("first"));
         assert_eq!(messages.len(), 2, "the duplicate surfaces on its own");
     }
@@ -282,18 +382,33 @@ mod tests {
     #[test]
     fn a_result_on_an_abandoned_branch_does_not_fold_into_a_live_call() {
         let entries = vec![
-            entry(1, "a", None, Some(message("a", Role::Assistant, vec![call("c1")]))),
+            entry(
+                1,
+                "a",
+                None,
+                Some(message("a", Role::Assistant, vec![call("c1")])),
+            ),
             entry(
                 2,
                 "abandoned",
                 Some("a"),
-                Some(message("x", Role::Tool, vec![result("c1", ToolStatus::Completed, "no")])),
+                Some(message(
+                    "x",
+                    Role::Tool,
+                    vec![result("c1", ToolStatus::Completed, "no")],
+                )),
             ),
             entry(3, "c", Some("a"), Some(message("c", Role::User, vec![]))),
         ];
         let messages = transcript(&entries);
-        let Part::Tool { status, .. } = &messages[0].parts[0] else { panic!() };
-        assert_eq!(*status, ToolStatus::Running, "the abandoned result must not fold");
+        let Part::Tool { status, .. } = &messages[0].parts[0] else {
+            panic!()
+        };
+        assert_eq!(
+            *status,
+            ToolStatus::Running,
+            "the abandoned result must not fold"
+        );
     }
 
     #[test]
@@ -324,9 +439,13 @@ mod tests {
         ];
         let messages = transcript(&entries);
         assert_eq!(messages.len(), 1, "the whole batch folded");
-        let Part::Tool { output, .. } = &messages[0].parts[0] else { panic!() };
+        let Part::Tool { output, .. } = &messages[0].parts[0] else {
+            panic!()
+        };
         assert_eq!(output.as_deref(), Some("one"));
-        let Part::Tool { status, output, .. } = &messages[0].parts[1] else { panic!() };
+        let Part::Tool { status, output, .. } = &messages[0].parts[1] else {
+            panic!()
+        };
         assert_eq!(*status, ToolStatus::Error);
         assert_eq!(output.as_deref(), Some("two"));
     }
@@ -334,7 +453,12 @@ mod tests {
     #[test]
     fn a_partly_matched_batch_keeps_only_what_did_not_fold() {
         let entries = vec![
-            entry(1, "a", None, Some(message("a", Role::Assistant, vec![call("c1")]))),
+            entry(
+                1,
+                "a",
+                None,
+                Some(message("a", Role::Assistant, vec![call("c1")])),
+            ),
             entry(
                 2,
                 "r",
@@ -351,10 +475,18 @@ mod tests {
         ];
         let messages = transcript(&entries);
         assert_eq!(messages.len(), 2);
-        let Part::Tool { output, .. } = &messages[0].parts[0] else { panic!() };
+        let Part::Tool { output, .. } = &messages[0].parts[0] else {
+            panic!()
+        };
         assert_eq!(output.as_deref(), Some("matched"));
-        assert_eq!(messages[1].parts.len(), 1, "only the orphan survives on its own");
-        let Part::Tool { call_id, .. } = &messages[1].parts[0] else { panic!() };
+        assert_eq!(
+            messages[1].parts.len(),
+            1,
+            "only the orphan survives on its own"
+        );
+        let Part::Tool { call_id, .. } = &messages[1].parts[0] else {
+            panic!()
+        };
         assert_eq!(call_id, "orphan");
     }
 
@@ -366,8 +498,13 @@ mod tests {
     #[test]
     fn an_unknown_session_is_named_as_absent_rather_than_empty() {
         let store = Store::in_memory().unwrap();
-        let view =
-            compute(&store, &"pi:nope".parse().unwrap(), LiveState::default()).unwrap();
+        let view = compute(
+            &store,
+            &"pi:nope".parse().unwrap(),
+            LiveState::default(),
+            ModelCatalog::default(),
+        )
+        .unwrap();
         assert_eq!(view.session, None);
         assert!(view.messages.is_empty());
     }

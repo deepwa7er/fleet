@@ -57,8 +57,12 @@ export function Composer({ session, working }: { session: string; working: boole
   return (
     <div className="flex flex-col gap-2">
       {error && <p className="text-danger text-sm">{error}</p>}
+      <label htmlFor={`prompt-${session}`} className="instrumentation">
+        Prompt
+      </label>
       <div className="flex items-end gap-2">
         <textarea
+          id={`prompt-${session}`}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
@@ -71,13 +75,13 @@ export function Composer({ session, working }: { session: string; working: boole
           }}
           rows={2}
           placeholder="Say something…"
-          className="flex-1 resize-y bg-fill px-3 py-2 outline-1 outline-ink/20 focus:outline-2 focus:outline-accent"
+          className="input-surface flex-1 resize-y px-3 py-2"
         />
         {working ? (
           <button
             type="button"
             onClick={() => void abort()}
-            className="cursor-pointer bg-fill px-3 py-2 text-danger outline-1 outline-ink/20"
+            className="physical-key bg-fill px-3 py-2 text-danger"
           >
             Stop
           </button>
@@ -86,7 +90,7 @@ export function Composer({ session, working }: { session: string; working: boole
             type="button"
             onClick={() => void send()}
             disabled={text.trim() === "" || sending}
-            className="cursor-pointer bg-accent px-3 py-2 text-accent-contrast disabled:opacity-40"
+            className="physical-key bg-accent px-3 py-2 text-accent-contrast"
           >
             Send
           </button>

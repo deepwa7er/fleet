@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::ingest::Topic;
-use crate::model::SessionKey;
+use crate::model::{ModelCatalog, SessionKey};
 use crate::run::LiveState;
 use crate::store::Store;
 
@@ -91,12 +91,17 @@ impl ViewSpec {
     /// `live` is passed in rather than fetched here because it comes from the
     /// run registry, which is async; keeping this function blocking-only is
     /// what lets it run on a blocking task without a runtime handle.
-    pub fn compute(&self, store: &Store, live: LiveState) -> Result<ViewData> {
+    pub fn compute(
+        &self,
+        store: &Store,
+        live: LiveState,
+        models: ModelCatalog,
+    ) -> Result<ViewData> {
         match self {
             ViewSpec::Sessions => Ok(ViewData::Sessions(sessions::compute(store)?)),
-            ViewSpec::Session { id } => {
-                Ok(ViewData::Session(Box::new(session::compute(store, id, live)?)))
-            }
+            ViewSpec::Session { id } => Ok(ViewData::Session(Box::new(session::compute(
+                store, id, live, models,
+            )?))),
         }
     }
 
@@ -137,7 +142,10 @@ mod tests {
     fn the_sessions_view_wakes_for_the_list_and_for_source_health() {
         let view = ViewSpec::Sessions;
         assert_eq!(view.update_for(&Topic::SessionList), Some(Update::Snapshot));
-        assert_eq!(view.update_for(&Topic::SourceHealth), Some(Update::Snapshot));
+        assert_eq!(
+            view.update_for(&Topic::SourceHealth),
+            Some(Update::Snapshot)
+        );
     }
 
     #[test]
@@ -153,7 +161,10 @@ mod tests {
     #[test]
     fn a_session_view_snapshots_for_its_transcript_and_deltas_for_its_run() {
         let view = ViewSpec::Session { id: a() };
-        assert_eq!(view.update_for(&Topic::Session(a())), Some(Update::Snapshot));
+        assert_eq!(
+            view.update_for(&Topic::Session(a())),
+            Some(Update::Snapshot)
+        );
         assert_eq!(view.update_for(&Topic::Run(a())), Some(Update::Live));
     }
 

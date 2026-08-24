@@ -16,8 +16,8 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
-use skiff::ingest::{Ingest, pi};
 use skiff::ingest::source::Source;
+use skiff::ingest::{Ingest, pi};
 use skiff::run::Runs;
 use skiff::server::{AppState, router};
 use skiff::store::Store;
@@ -36,6 +36,12 @@ const DEADLINE: Duration = Duration::from_secs(5);
 /// flight.
 const FAKE_PI: &str = r#"
 import sys, json, time, threading, queue
+
+if "--list-models" in sys.argv:
+    print("provider model context")
+    print("deepseek deepseek-v4-flash 128k")
+    print("anthropic claude-sonnet-4 200k")
+    sys.exit(0)
 
 session = sys.argv[sys.argv.index("--session") + 1]
 lock = threading.Lock()
@@ -78,7 +84,23 @@ def next_id():
 
 while True:
     cmd = commands.get()
+    if cmd["type"] == "set_session_name":
+        append_entry({"id": next_id(), "type": "session_info", "name": cmd["name"]})
+        emit(type="response", id=cmd["id"], success=True)
+        continue
+    if cmd["type"] == "set_model":
+        append_entry({"id": next_id(), "type": "model_change",
+                      "provider": cmd["provider"], "modelId": cmd["modelId"]})
+        emit(type="response", id=cmd["id"], success=True)
+        continue
     if cmd["type"] != "prompt":
+        continue
+
+    if cmd["message"].startswith("/orchestrator "):
+        active = cmd["message"].endswith(" on")
+        append_entry({"id": next_id(), "type": "custom",
+                      "customType": "orchestrator-mode", "data": {"active": active}})
+        emit(type="response", id=cmd["id"], success=True)
         continue
 
     aborted.clear()
@@ -197,25 +219,37 @@ async fn start(script: &str) -> Harness {
 
     let dist = tempfile::tempdir().unwrap();
     std::fs::write(dist.path().join("index.html"), "<!doctype html>").unwrap();
-    let app = router(AppState::new(store, runs, topics), dist.path().to_path_buf());
+    let app = router(
+        AppState::new(store, runs, topics),
+        dist.path().to_path_buf(),
+    );
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-    Harness { addr, _sessions: sessions, _dist: dist }
+    Harness {
+        addr,
+        _sessions: sessions,
+        _dist: dist,
+    }
 }
 
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn connect(addr: SocketAddr) -> Socket {
-    let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws")).await.unwrap();
+    let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+        .await
+        .unwrap();
     socket
 }
 
 async fn send(socket: &mut Socket, frame: ClientFrame) {
-    socket.send(Message::text(serde_json::to_string(&frame).unwrap())).await.unwrap();
+    socket
+        .send(Message::text(serde_json::to_string(&frame).unwrap()))
+        .await
+        .unwrap();
 }
 
 async fn next_frame(socket: &mut Socket) -> ServerFrame {
@@ -237,7 +271,14 @@ fn session() -> skiff::model::SessionKey {
 
 /// Subscribe and consume the greeting and the first snapshot.
 async fn subscribe(socket: &mut Socket) {
-    send(socket, ClientFrame::Subscribe { sub: 1, view: ViewSpec::Session { id: session() } }).await;
+    send(
+        socket,
+        ClientFrame::Subscribe {
+            sub: 1,
+            view: ViewSpec::Session { id: session() },
+        },
+    )
+    .await;
     loop {
         match next_frame(socket).await {
             ServerFrame::Hello { .. } => continue,
@@ -254,7 +295,10 @@ async fn live_until(
 ) -> skiff::run::LiveState {
     let deadline = tokio::time::Instant::now() + DEADLINE;
     loop {
-        assert!(tokio::time::Instant::now() < deadline, "the condition never held");
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the condition never held"
+        );
         match next_frame(socket).await {
             ServerFrame::Live { live, .. } if want(&live) => return live,
             ServerFrame::Error { error, .. } => panic!("server error: {error}"),
@@ -266,7 +310,9 @@ async fn live_until(
 fn reply_text(live: &skiff::run::LiveState) -> String {
     use skiff::content::{Block, Inline};
     use skiff::model::Part;
-    let Some(message) = &live.pending else { return String::new() };
+    let Some(message) = &live.pending else {
+        return String::new();
+    };
     message
         .parts
         .iter()
@@ -318,8 +364,15 @@ async fn a_prompt_streams_a_reply_and_then_settles() {
     assert_eq!(reply_text(&live), "Hello from a fake");
 
     let pending = live.pending.as_ref().unwrap();
-    assert!(pending.id.starts_with("run:"), "the overlay carries a run id: {}", pending.id);
-    assert_eq!(pending.completed_ms, None, "a live reply is not recorded as finished");
+    assert!(
+        pending.id.starts_with("run:"),
+        "the overlay carries a run id: {}",
+        pending.id
+    );
+    assert_eq!(
+        pending.completed_ms, None,
+        "a live reply is not recorded as finished"
+    );
     assert_eq!(pending.agent.as_deref(), Some("fake-1"));
 
     // The handover: the overlay is released only once the persisted entry is
@@ -327,7 +380,10 @@ async fn a_prompt_streams_a_reply_and_then_settles() {
     // finished reply vanish and reappear a moment later.
     let live = live_until(&mut socket, |l| !l.working && l.pending.is_none()).await;
     assert_eq!(live.pending, None);
-    assert_eq!(live.pending_prompt, None, "the sent prompt is in the transcript now");
+    assert_eq!(
+        live.pending_prompt, None,
+        "the sent prompt is in the transcript now"
+    );
 }
 
 #[tokio::test]
@@ -342,7 +398,11 @@ async fn a_finished_reply_is_never_absent_from_both_the_overlay_and_the_transcri
         &mut socket,
         ClientFrame::Command {
             req: 1,
-            cmd: Command::Send { session: session(), text: "go".into(), client_id: "c".into() },
+            cmd: Command::Send {
+                session: session(),
+                text: "go".into(),
+                client_id: "c".into(),
+            },
         },
     )
     .await;
@@ -350,7 +410,10 @@ async fn a_finished_reply_is_never_absent_from_both_the_overlay_and_the_transcri
     let deadline = tokio::time::Instant::now() + DEADLINE;
     let mut seen_reply = false;
     loop {
-        assert!(tokio::time::Instant::now() < deadline, "the reply never reached the transcript");
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the reply never reached the transcript"
+        );
         match next_frame(&mut socket).await {
             ServerFrame::Live { live, .. } => {
                 if reply_text(&live).contains("a fake") {
@@ -363,8 +426,14 @@ async fn a_finished_reply_is_never_absent_from_both_the_overlay_and_the_transcri
                 }
             }
             ServerFrame::Snapshot { data, .. } => {
-                let skiff::views::ViewData::Session(view) = data else { continue };
-                if view.messages.iter().any(|m| m.role == skiff::model::Role::Assistant) {
+                let skiff::views::ViewData::Session(view) = data else {
+                    continue;
+                };
+                if view
+                    .messages
+                    .iter()
+                    .any(|m| m.role == skiff::model::Role::Assistant)
+                {
                     seen_reply = true;
                 }
             }
@@ -382,14 +451,20 @@ async fn reasoning_streams_as_reasoning_not_as_the_reply() {
         &mut socket,
         ClientFrame::Command {
             req: 1,
-            cmd: Command::Send { session: session(), text: "go".into(), client_id: "c".into() },
+            cmd: Command::Send {
+                session: session(),
+                text: "go".into(),
+                client_id: "c".into(),
+            },
         },
     )
     .await;
 
     let live = live_until(&mut socket, |l| {
         l.pending.as_ref().is_some_and(|m| {
-            m.parts.iter().any(|p| matches!(p, skiff::model::Part::Reasoning { .. }))
+            m.parts
+                .iter()
+                .any(|p| matches!(p, skiff::model::Part::Reasoning { .. }))
         })
     })
     .await;
@@ -406,7 +481,11 @@ async fn a_command_is_acknowledged_by_its_request_id() {
         &mut socket,
         ClientFrame::Command {
             req: 42,
-            cmd: Command::Send { session: session(), text: "go".into(), client_id: "c".into() },
+            cmd: Command::Send {
+                session: session(),
+                text: "go".into(),
+                client_id: "c".into(),
+            },
         },
     )
     .await;
@@ -416,6 +495,91 @@ async fn a_command_is_acknowledged_by_its_request_id() {
         if let ServerFrame::Ack { req } = next_frame(&mut socket).await {
             assert_eq!(req, 42);
             return;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_session_snapshot_carries_pis_authoritative_model_catalog() {
+    let harness = start(FAKE_PI).await;
+    let mut socket = connect(harness.addr).await;
+    send(
+        &mut socket,
+        ClientFrame::Subscribe {
+            sub: 1,
+            view: ViewSpec::Session { id: session() },
+        },
+    )
+    .await;
+
+    loop {
+        if let ServerFrame::Snapshot { data, .. } = next_frame(&mut socket).await {
+            let skiff::views::ViewData::Session(view) = data else {
+                panic!("expected a session view")
+            };
+            assert_eq!(view.models.error, None);
+            assert_eq!(view.models.options.len(), 2);
+            assert_eq!(view.models.options[0].provider, "deepseek");
+            assert_eq!(view.models.options[0].id, "deepseek-v4-flash");
+            return;
+        }
+    }
+}
+
+#[tokio::test]
+async fn pi_capability_commands_are_acknowledged_and_persist_through_ingest() {
+    let harness = start(FAKE_PI).await;
+    let mut socket = connect(harness.addr).await;
+    subscribe(&mut socket).await;
+
+    let commands = [
+        Command::Rename {
+            session: session(),
+            name: "Renamed here".into(),
+        },
+        Command::SetModel {
+            session: session(),
+            provider: "anthropic".into(),
+            model_id: "claude-sonnet-4".into(),
+        },
+        Command::SetOrchestrator {
+            session: session(),
+            active: true,
+        },
+    ];
+    for (index, cmd) in commands.into_iter().enumerate() {
+        let req = 50 + index as u32;
+        send(&mut socket, ClientFrame::Command { req, cmd }).await;
+        loop {
+            match next_frame(&mut socket).await {
+                ServerFrame::Ack { req: answer } if answer == req => break,
+                ServerFrame::Error { error, .. } => panic!("capability command failed: {error}"),
+                _ => {}
+            }
+        }
+    }
+
+    let deadline = tokio::time::Instant::now() + DEADLINE;
+    loop {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the file-backed summary never converged"
+        );
+        match next_frame(&mut socket).await {
+            ServerFrame::Snapshot { data, .. } => {
+                let skiff::views::ViewData::Session(view) = data else {
+                    continue;
+                };
+                let summary = view.session.expect("the session still exists");
+                if summary.title.as_deref() == Some("Renamed here")
+                    && summary.model.as_deref() == Some("claude-sonnet-4")
+                    && summary.orchestrator_active
+                {
+                    return;
+                }
+            }
+            ServerFrame::Error { error, .. } => panic!("command failed: {error}"),
+            _ => {}
         }
     }
 }
@@ -465,18 +629,31 @@ async fn abort_ends_the_run_and_drops_a_reply_that_will_never_be_persisted() {
         &mut socket,
         ClientFrame::Command {
             req: 1,
-            cmd: Command::Send { session: session(), text: "hang".into(), client_id: "c".into() },
+            cmd: Command::Send {
+                session: session(),
+                text: "hang".into(),
+                client_id: "c".into(),
+            },
         },
     )
     .await;
     live_until(&mut socket, |l| l.working && l.pending.is_some()).await;
 
-    send(&mut socket, ClientFrame::Command { req: 2, cmd: Command::Abort { session: session() } })
-        .await;
+    send(
+        &mut socket,
+        ClientFrame::Command {
+            req: 2,
+            cmd: Command::Abort { session: session() },
+        },
+    )
+    .await;
 
     let live = live_until(&mut socket, |l| !l.working && l.pending.is_none()).await;
     assert!(!live.working);
-    assert_eq!(live.pending, None, "an aborted reply is never persisted, so it must not linger");
+    assert_eq!(
+        live.pending, None,
+        "an aborted reply is never persisted, so it must not linger"
+    );
 }
 
 #[tokio::test]
@@ -491,13 +668,21 @@ async fn a_blocking_dialog_is_cancelled_rather_than_wedging_the_session() {
         &mut socket,
         ClientFrame::Command {
             req: 1,
-            cmd: Command::Send { session: session(), text: "go".into(), client_id: "c".into() },
+            cmd: Command::Send {
+                session: session(),
+                text: "go".into(),
+                client_id: "c".into(),
+            },
         },
     )
     .await;
 
     let live = live_until(&mut socket, |l| reply_text(l).contains("cancelled")).await;
-    assert_eq!(reply_text(&live), "cancelled=True", "the dialog was declined, not answered");
+    assert_eq!(
+        reply_text(&live),
+        "cancelled=True",
+        "the dialog was declined, not answered"
+    );
 }
 
 #[tokio::test]
@@ -506,8 +691,14 @@ async fn aborting_an_idle_session_is_not_an_error() {
     let harness = start(FAKE_PI).await;
     let mut socket = connect(harness.addr).await;
     subscribe(&mut socket).await;
-    send(&mut socket, ClientFrame::Command { req: 3, cmd: Command::Abort { session: session() } })
-        .await;
+    send(
+        &mut socket,
+        ClientFrame::Command {
+            req: 3,
+            cmd: Command::Abort { session: session() },
+        },
+    )
+    .await;
 
     let deadline = tokio::time::Instant::now() + DEADLINE;
     loop {
@@ -546,7 +737,10 @@ async fn a_session_skiff_cannot_run_is_refused_by_name() {
         assert!(tokio::time::Instant::now() < deadline, "no error arrived");
         if let ServerFrame::Error { req, error, .. } = next_frame(&mut socket).await {
             assert_eq!(req, Some(8));
-            assert!(error.contains("muse"), "the refusal names the harness: {error}");
+            assert!(
+                error.contains("muse"),
+                "the refusal names the harness: {error}"
+            );
             return;
         }
     }
@@ -561,7 +755,11 @@ async fn an_empty_prompt_is_refused_before_pi_is_involved() {
         &mut socket,
         ClientFrame::Command {
             req: 5,
-            cmd: Command::Send { session: session(), text: "   ".into(), client_id: "c".into() },
+            cmd: Command::Send {
+                session: session(),
+                text: "   ".into(),
+                client_id: "c".into(),
+            },
         },
     )
     .await;

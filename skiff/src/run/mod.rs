@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -31,7 +31,7 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 use ts_rs::TS;
 
 use crate::ingest::{Topic, pi};
-use crate::model::{Harness, Message, SessionKey};
+use crate::model::{Harness, Message, ModelCatalog, ModelOption, SessionKey};
 use crate::store::Store;
 use overlay::{Overlay, RunId};
 use pi_rpc::{COMMAND_TIMEOUT, PiConfig, PiProcess};
@@ -46,6 +46,18 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 /// Abort is answered quickly or not at all — a pi that will not stop is a
 /// problem to surface, not to keep waiting on.
 const ABORT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Model enumeration starts a short-lived Pi process. Cache it so transcript
+/// refreshes never turn into process churn, while still allowing an auth or
+/// provider change to appear without restarting skiffd.
+const MODELS_CACHE_TTL: Duration = Duration::from_secs(60);
+const MODELS_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Clone)]
+struct ModelsCache {
+    checked: Instant,
+    catalog: ModelCatalog,
+}
 
 /// A prompt the user has sent that has not yet appeared in the transcript.
 ///
@@ -102,7 +114,11 @@ impl SessionRun {
     fn live(&self) -> LiveState {
         LiveState {
             working: self.working,
-            pending: self.overlay.as_ref().filter(|o| !o.is_empty()).and_then(Overlay::message),
+            pending: self
+                .overlay
+                .as_ref()
+                .filter(|o| !o.is_empty())
+                .and_then(Overlay::message),
             pending_prompt: self.pending_prompt.clone(),
         }
     }
@@ -120,6 +136,7 @@ pub struct Runs {
     pi_dir: PathBuf,
     pi_dir_explicit: bool,
     next_run: AtomicU64,
+    models: Mutex<Option<ModelsCache>>,
 }
 
 impl Runs {
@@ -144,6 +161,7 @@ impl Runs {
             pi_dir,
             pi_dir_explicit,
             next_run: AtomicU64::new(0),
+            models: Mutex::new(None),
         })
     }
 
@@ -185,7 +203,11 @@ impl Runs {
             .await
             .context("sending the prompt to pi")?;
 
-        if !response.get("success").and_then(Value::as_bool).unwrap_or(false) {
+        if !response
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             let mut state = run.lock().await;
             state.pending_prompt = None;
             drop(state);
@@ -193,7 +215,10 @@ impl Runs {
             // pi's own reason, never an echo of the prompt text.
             bail!(
                 "pi rejected the prompt: {}",
-                response.get("error").and_then(Value::as_str).unwrap_or("no reason given")
+                response
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("no reason given")
             );
         }
         Ok(())
@@ -210,13 +235,111 @@ impl Runs {
             .command("abort", json!({}), ABORT_TIMEOUT)
             .await
             .context("asking pi to abort")?;
-        if !response.get("success").and_then(Value::as_bool).unwrap_or(false) {
+        if !response
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             bail!(
                 "pi rejected abort: {}",
-                response.get("error").and_then(Value::as_str).unwrap_or("no reason given")
+                response
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("no reason given")
             );
         }
         Ok(())
+    }
+
+    /// Rename a Pi session through Pi itself, which persists the corresponding
+    /// `session_info` entry. No derived state is edited directly.
+    pub async fn rename(&self, session: &SessionKey, name: &str) -> Result<()> {
+        pi_only(session, "rename")?;
+        let name = name.trim();
+        if name.is_empty() {
+            bail!("a session name cannot be empty");
+        }
+        let process = self.ensure(session).await?.lock().await.process.clone();
+        let response = process
+            .command("set_session_name", json!({ "name": name }), COMMAND_TIMEOUT)
+            .await
+            .context("renaming the Pi session")?;
+        accepted(&response, "Pi rejected the rename")
+    }
+
+    /// Switch a Pi session's model through the RPC command Pi owns. Pi writes
+    /// the resulting `model_change` entry; ingest then updates every viewer.
+    pub async fn set_model(
+        &self,
+        session: &SessionKey,
+        provider: &str,
+        model_id: &str,
+    ) -> Result<()> {
+        pi_only(session, "switch models")?;
+        let provider = provider.trim();
+        let model_id = model_id.trim();
+        if provider.is_empty() || model_id.is_empty() {
+            bail!("a model switch requires both a provider and a model id");
+        }
+        let process = self.ensure(session).await?.lock().await.process.clone();
+        let response = process
+            .command(
+                "set_model",
+                json!({ "provider": provider, "modelId": model_id }),
+                COMMAND_TIMEOUT,
+            )
+            .await
+            .context("switching the Pi model")?;
+        accepted(&response, "Pi rejected the model switch")
+    }
+
+    /// Toggle Pi's orchestrator extension. The extension persists its own
+    /// authored mode record, so the summary changes only after ingest observes
+    /// that fact in the session file.
+    pub async fn set_orchestrator(&self, session: &SessionKey, active: bool) -> Result<()> {
+        pi_only(session, "toggle orchestrator")?;
+        let process = self.ensure(session).await?.lock().await.process.clone();
+        let message = if active {
+            "/orchestrator on"
+        } else {
+            "/orchestrator off"
+        };
+        let response = process
+            .command("prompt", json!({ "message": message }), COMMAND_TIMEOUT)
+            .await
+            .context("toggling the Pi orchestrator")?;
+        accepted(&response, "Pi rejected the orchestrator toggle")
+    }
+
+    /// Pi's authoritative model list, degraded into a readout instead of an
+    /// error for the entire session view.
+    pub async fn model_catalog(&self, session: &SessionKey) -> ModelCatalog {
+        if session.harness != Harness::Pi {
+            return ModelCatalog::default();
+        }
+        if let Some(cache) = self.models.lock().await.as_ref()
+            && cache.checked.elapsed() < MODELS_CACHE_TTL
+        {
+            return cache.catalog.clone();
+        }
+
+        let catalog = match self.binary.clone() {
+            Ok(binary) => list_models(binary)
+                .await
+                .unwrap_or_else(|error| ModelCatalog {
+                    options: Vec::new(),
+                    error: Some(format!("{error:#}")),
+                }),
+            Err(error) => ModelCatalog {
+                options: Vec::new(),
+                error: Some(error),
+            },
+        };
+        *self.models.lock().await = Some(ModelsCache {
+            checked: Instant::now(),
+            catalog: catalog.clone(),
+        });
+        catalog
     }
 
     /// How many user messages the session's transcript currently holds.
@@ -247,7 +370,13 @@ impl Runs {
 
         let (resolving, watermark) = {
             let state = run.lock().await;
-            (state.resolving, state.pending_prompt.as_ref().map(|_| state.user_count_at_send))
+            (
+                state.resolving,
+                state
+                    .pending_prompt
+                    .as_ref()
+                    .map(|_| state.user_count_at_send),
+            )
         };
         if !resolving && watermark.is_none() {
             return;
@@ -301,7 +430,10 @@ impl Runs {
             pending_prompt: None,
             user_count_at_send: 0,
         }));
-        self.sessions.lock().await.insert(session.clone(), run.clone());
+        self.sessions
+            .lock()
+            .await
+            .insert(session.clone(), run.clone());
 
         tokio::spawn(pump(
             session.clone(),
@@ -318,7 +450,12 @@ impl Runs {
         let counter = self.next_run.fetch_add(1, Ordering::SeqCst);
         let session = session.to_string();
         let nth = AtomicU64::new(0);
-        move || format!("run:{session}:{counter}:{}", nth.fetch_add(1, Ordering::SeqCst))
+        move || {
+            format!(
+                "run:{session}:{counter}:{}",
+                nth.fetch_add(1, Ordering::SeqCst)
+            )
+        }
     }
 
     /// pi names a session file by its id; resolution is a name walk, not a
@@ -353,8 +490,71 @@ impl Runs {
         .await
         .ok()
         .flatten();
-        directory.map(PathBuf::from).filter(|p| p.is_dir()).unwrap_or_else(home)
+        directory
+            .map(PathBuf::from)
+            .filter(|p| p.is_dir())
+            .unwrap_or_else(home)
     }
+}
+
+async fn list_models(binary: PathBuf) -> Result<ModelCatalog> {
+    let mut command = tokio::process::Command::new(&binary);
+    command.arg("--list-models").kill_on_drop(true);
+    let output = tokio::time::timeout(MODELS_TIMEOUT, command.output())
+        .await
+        .with_context(|| format!("{} --list-models timed out", binary.display()))?
+        .with_context(|| format!("running {} --list-models", binary.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "{} --list-models failed: {}",
+            binary.display(),
+            stderr.trim().lines().last().unwrap_or("no reason given")
+        );
+    }
+    let stdout = String::from_utf8(output.stdout).context("Pi's model list was not UTF-8")?;
+    let options = stdout
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some(ModelOption {
+                provider: fields.next()?.to_owned(),
+                id: fields.next()?.to_owned(),
+            })
+        })
+        .collect::<Vec<_>>();
+    if options.is_empty() {
+        bail!("{} --list-models returned no models", binary.display());
+    }
+    Ok(ModelCatalog {
+        options,
+        error: None,
+    })
+}
+
+fn accepted(response: &Value, fallback: &str) -> Result<()> {
+    if response
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    bail!(
+        "{}",
+        response
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or(fallback)
+    )
+}
+
+fn pi_only(session: &SessionKey, action: &str) -> Result<()> {
+    if session.harness != Harness::Pi {
+        bail!("{} sessions cannot {action}", session.harness);
+    }
+    Ok(())
 }
 
 /// Consume one pi's events for the process's lifetime, keeping the run state
@@ -423,7 +623,10 @@ async fn handle(
     event: &Value,
     next_run_id: &impl Fn() -> RunId,
 ) -> Change {
-    let kind = event.get("type").and_then(Value::as_str).unwrap_or_default();
+    let kind = event
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let mut state = run.lock().await;
 
     match kind {
@@ -434,7 +637,10 @@ async fn handle(
         "message_start" => {
             // Only assistant messages stream; user and tool-result messages
             // are persisted directly and reach the reader through the file.
-            if event.get("message").and_then(|m| m.get("role")).and_then(Value::as_str)
+            if event
+                .get("message")
+                .and_then(|m| m.get("role"))
+                .and_then(Value::as_str)
                 != Some("assistant")
             {
                 return Change::None;
@@ -448,9 +654,17 @@ async fn handle(
             Change::None // nothing to show until the first delta
         }
         "message_update" => {
-            let Some(delta) = event.get("assistantMessageEvent") else { return Change::None };
-            let Some(overlay) = state.overlay.as_mut() else { return Change::None };
-            if overlay.apply(delta) { Change::Coalesced } else { Change::None }
+            let Some(delta) = event.get("assistantMessageEvent") else {
+                return Change::None;
+            };
+            let Some(overlay) = state.overlay.as_mut() else {
+                return Change::None;
+            };
+            if overlay.apply(delta) {
+                Change::Coalesced
+            } else {
+                Change::None
+            }
         }
         "message_end" => {
             // pi persists the entry at `message_end` (verified against a real
@@ -465,7 +679,11 @@ async fn handle(
         "agent_end" => {
             // `willRetry` means the run continues; only a terminal end settles
             // it.
-            if !event.get("willRetry").and_then(Value::as_bool).unwrap_or(false) {
+            if !event
+                .get("willRetry")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
                 state.working = false;
             }
             drop_unresolved(&mut state);
@@ -477,11 +695,16 @@ async fn handle(
             Change::Now
         }
         "extension_ui_request" => {
-            let method = event.get("method").and_then(Value::as_str).unwrap_or_default();
+            let method = event
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if !pi_rpc::is_dialog(method) {
                 return Change::None; // a display hint
             }
-            let Some(id) = event.get("id") else { return Change::None };
+            let Some(id) = event.get("id") else {
+                return Change::None;
+            };
             let frame = pi_rpc::cancel_dialog(id);
             let process = process.clone();
             let session = session.clone();
@@ -509,7 +732,10 @@ async fn handle(
 /// the honest answer is a named refusal.
 fn drivable(session: &SessionKey) -> Result<()> {
     if session.harness != Harness::Pi {
-        bail!("skiff cannot yet run {} sessions — it can only read them", session.harness);
+        bail!(
+            "skiff cannot yet run {} sessions — it can only read them",
+            session.harness
+        );
     }
     Ok(())
 }
@@ -527,7 +753,9 @@ fn drop_unresolved(state: &mut SessionRun) {
 }
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 fn now_ms() -> i64 {

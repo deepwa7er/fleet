@@ -1,4 +1,4 @@
-import { defineConfig } from "vite"
+import { defineConfig } from "vitest/config"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 
@@ -6,6 +6,9 @@ import tailwindcss from "@tailwindcss/vite"
 // skiffd, so the client can be iterated on without rebuilding the binary.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  test: {
+    environment: "jsdom",
+  },
   server: {
     proxy: {
       "/ws": { target: "ws://127.0.0.1:8121", ws: true },
