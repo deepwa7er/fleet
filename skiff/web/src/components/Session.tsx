@@ -49,13 +49,13 @@ function Loaded({ view }: { view: SessionView }) {
       </header>
       <SessionControls view={view} command={(command) => client.command(command)} />
       <Transcript messages={view.messages} live={view.live} harness={session.harness} />
-      {/* Only pi can be driven from here yet: muse has no long-lived RPC
-          mode, and opencode is its own server. Offering a composer that
-          always errors would be worse than saying so. */}
-      {session.harness === "pi" ? (
+      {/* Pi owns a long-lived RPC process; Muse owns one process per prompt.
+          Both are real command adapters now. OpenCode joins them once its
+          server/event-stream adapter is present. */}
+      {session.harness !== "opencode" ? (
         <Composer session={session.id} working={view.live.working} />
       ) : (
-        <p className="instrumentation">read only · {session.harness} sessions cannot be driven yet</p>
+        <p className="instrumentation">read only · opencode adapter pending</p>
       )}
     </>
   )

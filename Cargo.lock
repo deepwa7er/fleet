@@ -4690,6 +4690,7 @@ dependencies = [
  "axum",
  "clap",
  "futures-util",
+ "libc",
  "notify",
  "pulldown-cmark",
  "rusqlite",

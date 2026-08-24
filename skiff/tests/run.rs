@@ -19,6 +19,7 @@ use tokio_tungstenite::tungstenite::Message;
 use skiff::ingest::source::Source;
 use skiff::ingest::{Ingest, pi};
 use skiff::run::Runs;
+use skiff::run::muse_exec::MuseConfig;
 use skiff::server::{AppState, router};
 use skiff::store::Store;
 use skiff::views::ViewSpec;
@@ -201,6 +202,11 @@ async fn start(script: &str) -> Harness {
         binary,
         sessions.path().to_path_buf(),
         true,
+        MuseConfig {
+            binary: sessions.path().join("missing-muse"),
+            session_dir: sessions.path().join("muse/sessions"),
+            session_dir_explicit: true,
+        },
     );
 
     // The same handover wiring `main` installs: a finished reply moves from

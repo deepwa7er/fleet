@@ -16,6 +16,7 @@ use tokio_tungstenite::tungstenite::Message;
 use skiff::ingest::{Ingest, pi};
 use skiff::ingest::source::Source;
 use skiff::run::Runs;
+use skiff::run::muse_exec::MuseConfig;
 use skiff::server::{AppState, router};
 use skiff::store::Store;
 use skiff::wire::{ClientFrame, ServerFrame};
@@ -54,6 +55,11 @@ async fn start() -> Harness {
         "skiff-tests-have-no-pi".into(),
         sessions.path().to_path_buf(),
         true,
+        MuseConfig {
+            binary: sessions.path().join("missing-muse"),
+            session_dir: sessions.path().join("muse/sessions"),
+            session_dir_explicit: true,
+        },
     );
 
     let dist = tempfile::tempdir().unwrap();

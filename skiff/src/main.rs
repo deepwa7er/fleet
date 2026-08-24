@@ -5,6 +5,7 @@ use tokio::sync::broadcast;
 use skiff::config::Config;
 use skiff::ingest::{Ingest, Topic};
 use skiff::run::Runs;
+use skiff::run::muse_exec::MuseConfig;
 use skiff::server::{AppState, router, serve};
 use skiff::store::Store;
 
@@ -37,6 +38,11 @@ async fn main() -> Result<()> {
         config.pi_binary(),
         config.pi_dir(),
         config.pi_session_dir.is_some(),
+        MuseConfig {
+            binary: config.muse_binary(),
+            session_dir: config.muse_dir(),
+            session_dir_explicit: config.muse_session_dir.is_some(),
+        },
     );
 
     // A finished reply is handed over to the transcript, and a sent prompt

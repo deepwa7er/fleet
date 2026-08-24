@@ -9,6 +9,7 @@ anyhow = { workspace = true }
 axum = { workspace = true, features = ["ws"] }
 clap = { workspace = true, features = ["derive", "env"] }
 notify = "7"
+libc = "0.2"
 # Markdown to typed blocks (DW-004 §8). Already a workspace dependency.
 pulldown-cmark = { workspace = true }
 # Syntax highlighting. Only the parser is used — scopes, not colours — so the
@@ -27,9 +28,9 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 # The wire types are the client's contract; ts-rs emits them into
 # web/src/gen and a test fails the build on drift (DW-004 §10).
 ts-rs = "10"
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"
 # A real WebSocket client for the end-to-end test: the protocol is the
 # contract, and testing it through the router rather than the socket would
 # leave the part the browser actually speaks unexercised.

@@ -17,6 +17,7 @@
 pub mod overlay;
 pub mod pi_rpc;
 pub mod resolve;
+pub mod muse_exec;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -31,10 +32,11 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 use ts_rs::TS;
 
 use crate::ingest::{Topic, pi};
-use crate::model::{Harness, Message, ModelCatalog, ModelOption, SessionKey};
+use crate::model::{Harness, Message, ModelCatalog, ModelOption, SessionKey, SourceHealth};
 use crate::store::Store;
 use overlay::{Overlay, RunId};
 use pi_rpc::{COMMAND_TIMEOUT, PiConfig, PiProcess};
+use muse_exec::{MuseConfig, MuseRuns};
 
 /// How often overlay growth is announced.
 ///
@@ -137,6 +139,7 @@ pub struct Runs {
     pi_dir_explicit: bool,
     next_run: AtomicU64,
     models: Mutex<Option<ModelsCache>>,
+    muse: MuseRuns,
 }
 
 impl Runs {
@@ -146,6 +149,7 @@ impl Runs {
         binary: PathBuf,
         pi_dir: PathBuf,
         pi_dir_explicit: bool,
+        muse_config: MuseConfig,
     ) -> Arc<Self> {
         let binary = resolve::binary(&binary);
         match &binary {
@@ -153,6 +157,17 @@ impl Runs {
             // Warned at startup, not swallowed until someone sends a prompt.
             Err(err) => tracing::warn!("{err} — pi sessions can be read but not run"),
         }
+        let pi_health = SourceHealth {
+            source: "pi runner".to_owned(),
+            error: binary.as_ref().err().cloned(),
+            checked_ms: now_ms(),
+        };
+        if let Err(error) = store.set_source_health(&pi_health) {
+            tracing::warn!(%error, "could not record Pi runner health");
+        } else {
+            let _ = topics.send(Topic::SourceHealth);
+        }
+        let muse = MuseRuns::new(muse_config, store.clone(), topics.clone());
         Arc::new(Self {
             sessions: Mutex::default(),
             store,
@@ -162,12 +177,16 @@ impl Runs {
             pi_dir_explicit,
             next_run: AtomicU64::new(0),
             models: Mutex::new(None),
+            muse,
         })
     }
 
     /// The live state of a session. A session with no running pi is simply
     /// idle — the absence of a process is not an error.
     pub async fn live(&self, session: &SessionKey) -> LiveState {
+        if session.harness == Harness::Muse {
+            return self.muse.live(session).await;
+        }
         let run = self.sessions.lock().await.get(session).cloned();
         match run {
             Some(run) => run.lock().await.live(),
@@ -177,7 +196,16 @@ impl Runs {
 
     /// Send a prompt, spawning pi for this session if it is not already up.
     pub async fn send(&self, session: &SessionKey, text: &str, client_id: &str) -> Result<()> {
-        drivable(session)?;
+        match session.harness {
+            Harness::Pi => self.send_pi(session, text, client_id).await,
+            Harness::Muse => self.muse.send(session, text, client_id).await,
+            Harness::Opencode => {
+                bail!("skiff cannot yet run opencode sessions — it can only read them")
+            }
+        }
+    }
+
+    async fn send_pi(&self, session: &SessionKey, text: &str, client_id: &str) -> Result<()> {
         if text.trim().is_empty() {
             bail!("an empty prompt has nothing to ask");
         }
@@ -227,7 +255,16 @@ impl Runs {
     /// Stop the run in flight. Aborting an idle session is not an error — it
     /// is what the button does when the run finished a moment ago.
     pub async fn abort(&self, session: &SessionKey) -> Result<()> {
-        drivable(session)?;
+        match session.harness {
+            Harness::Pi => self.abort_pi(session).await,
+            Harness::Muse => self.muse.abort(session).await,
+            Harness::Opencode => {
+                bail!("skiff cannot yet abort opencode sessions — it can only read them")
+            }
+        }
+    }
+
+    async fn abort_pi(&self, session: &SessionKey) -> Result<()> {
         let run = self.sessions.lock().await.get(session).cloned();
         let Some(run) = run else { return Ok(()) };
         let process = run.lock().await.process.clone();
@@ -365,6 +402,10 @@ impl Runs {
     /// disagree. The prompt compares *counts* rather than text, so sending the
     /// same message twice works.
     pub async fn session_changed(&self, session: &SessionKey) {
+        if session.harness == Harness::Muse {
+            self.muse.session_changed(session).await;
+            return;
+        }
         let run = self.sessions.lock().await.get(session).cloned();
         let Some(run) = run else { return };
 
@@ -720,24 +761,6 @@ async fn handle(
         }
         _ => Change::None,
     }
-}
-
-/// Refuse to drive a session this registry does not know how to run.
-///
-/// Not defensive: without it, a prompt to a muse session would resolve a file
-/// through pi's layout and spawn **pi** against a muse session log. It would
-/// fail eventually, but confusingly and after doing real work. muse has no
-/// long-lived RPC mode at all — it runs one `muse exec` per prompt — so the
-/// registry gains a second process model before it gains muse, and until then
-/// the honest answer is a named refusal.
-fn drivable(session: &SessionKey) -> Result<()> {
-    if session.harness != Harness::Pi {
-        bail!(
-            "skiff cannot yet run {} sessions — it can only read them",
-            session.harness
-        );
-    }
-    Ok(())
 }
 
 /// Drop a reply that will never be persisted.

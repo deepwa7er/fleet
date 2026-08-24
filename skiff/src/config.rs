@@ -40,6 +40,10 @@ pub struct Config {
     /// muse's session directory. Defaults to muse's own XDG resolution.
     #[arg(long, env = "SKIFF_MUSE_SESSION_DIR")]
     pub muse_session_dir: Option<PathBuf>,
+
+    /// The muse binary. Resolved on PATH and common home-relative locations.
+    #[arg(long, env = "SKIFF_MUSE_BINARY", default_value = "muse")]
+    pub muse_binary: PathBuf,
 }
 
 impl Config {
@@ -63,6 +67,10 @@ impl Config {
 
     pub fn muse_dir(&self) -> PathBuf {
         self.muse_session_dir.clone().unwrap_or_else(muse::default_session_dir)
+    }
+
+    pub fn muse_binary(&self) -> PathBuf {
+        self.muse_binary.clone()
     }
 
     /// Every source skiffd ingests from.
