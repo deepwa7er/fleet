@@ -288,16 +288,7 @@ fn run_measured(
         }
     };
     let checkout_str = checkout_root.to_string_lossy().into_owned();
-    let raw_build_cmd = subst(&manifest.build.cmd, workdir_str, &checkout_str);
-    let runtime = detect_container_runtime();
-    let build_cmd = translate_build_cmd(&raw_build_cmd, runtime);
-    if build_cmd != raw_build_cmd {
-        let rt = match runtime {
-            ContainerRuntime::Docker => "docker",
-            ContainerRuntime::Podman => "podman",
-        };
-        note(log, &format!("container runtime: {rt} (translated build command)"));
-    }
+    let build_cmd = subst(&manifest.build.cmd, workdir_str, &checkout_str);
     let id = deploy_id(at, stamp.as_ref());
 
     // Which commit this deploy resolved to — known only after source prep.
@@ -332,9 +323,6 @@ fn run_measured(
         };
         let t = Instant::now();
         run_local(&build_cmd, &build_dir, &build_env, log).context("build failed")?;
-        if runtime == ContainerRuntime::Podman {
-            normalize_podman_archives(&artifacts, log);
-        }
         rec.completed(events::Stage::Build, t);
     }
 
@@ -481,227 +469,6 @@ fn run_local(
         bail!("command exited with {status}: {cmd}");
     }
     Ok(())
-}
-
-/// Container runtime available on the build host. Detected from `PATH` (and
-/// `TUGBOAT_CONTAINER_RUNTIME` for tests) so a podman-only Fedora desktop
-/// can build the same `deploy.toml` that a Docker Mac does without a shim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ContainerRuntime {
-    Docker,
-    Podman,
-}
-
-/// Detect the container runtime to use for this build. `TUGBOAT_CONTAINER_RUNTIME`
-/// (`docker` or `podman`, case-insensitive) overrides `PATH` probing, which lets
-/// tests force a runtime without touching the host.
-pub(crate) fn detect_container_runtime() -> ContainerRuntime {
-    if let Ok(val) = std::env::var("TUGBOAT_CONTAINER_RUNTIME") {
-        match val.to_lowercase().as_str() {
-            "podman" => return ContainerRuntime::Podman,
-            "docker" => return ContainerRuntime::Docker,
-            _ => {}
-        }
-    }
-    let has_docker = path_has_executable("docker");
-    let has_podman = path_has_executable("podman");
-    // If both are present, the `docker` binary may be the `~/.local/bin/docker`
-    // shim that delegates to podman. Detect that so a podman-only desktop with
-    // a leftover shim still gets native podman translation.
-    if has_docker && has_podman && docker_is_podman_shim() {
-        return ContainerRuntime::Podman;
-    }
-    if has_docker {
-        ContainerRuntime::Docker
-    } else if has_podman {
-        ContainerRuntime::Podman
-    } else {
-        // No runtime found — default to Docker so the build fails with the
-        // familiar `docker: command not found` rather than an early tugboat error.
-        ContainerRuntime::Docker
-    }
-}
-
-fn path_has_executable(name: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|dir| is_executable(&dir.join(name)))
-}
-
-fn docker_is_podman_shim() -> bool {
-    let Ok(output) = Command::new("docker").arg("--version").output() else {
-        return false;
-    };
-    let combined =
-        String::from_utf8_lossy(&output.stdout).into_owned() + &String::from_utf8_lossy(&output.stderr);
-    combined.to_lowercase().contains("podman")
-}
-
-/// Translate a `deploy.toml` build command for the detected runtime. Docker
-/// commands are returned unchanged; podman translation rewrites `docker buildx
-/// build` → `podman build`, strips `--load`, and uses
-/// `podman save --format docker-archive` so the tar is `docker load`-compatible.
-pub(crate) fn translate_build_cmd(cmd: &str, runtime: ContainerRuntime) -> String {
-    if runtime == ContainerRuntime::Docker {
-        return cmd.to_owned();
-    }
-    let mut t = cmd.replace("docker buildx build", "podman build");
-    t = t.replace("docker build", "podman build");
-    t = strip_load_flag(&t);
-    t = t.replace("docker save", "podman save --format docker-archive");
-    t
-}
-
-fn strip_load_flag(cmd: &str) -> String {
-    let mut t = cmd.to_string();
-    while t.contains(" --load ") {
-        t = t.replace(" --load ", " ");
-    }
-    while let Some(idx) = t.find(" --load") {
-        let after = idx + " --load".len();
-        let next = t[after..].chars().next();
-        let is_boundary = match next {
-            None => true,
-            Some(c) => c.is_whitespace() || matches!(c, '&' | ';' | '|' | '"' | '\''),
-        };
-        if !is_boundary {
-            break;
-        }
-        t.replace_range(idx..after, "");
-        while t.contains("  ") {
-            t = t.replace("  ", " ");
-        }
-    }
-    t
-}
-
-/// After a podman build, patch any `*.tar` artifacts that contain a
-/// `localhost/`-prefixed repo tag so `docker load` on the VPS creates the
-/// expected short tag (`skiff:deploy`, not `localhost/skiff:deploy`). Podman
-/// 5.x always prefixes short names with `localhost/`; `podman tag` cannot
-/// create an unprefixed alias for short names, so the tar itself must be
-/// rewritten. Best-effort: failures are logged, not fatal.
-fn normalize_podman_archives(
-    artifacts: &[(PathBuf, &crate::manifest::Artifact)],
-    log: &dyn LogSink,
-) {
-    for (src, artifact) in artifacts {
-        if artifact.kind != crate::manifest::ArtifactKind::File {
-            continue;
-        }
-        if !src.is_file() {
-            continue;
-        }
-        if src.extension().and_then(|e| e.to_str()) != Some("tar") {
-            continue;
-        }
-        match patch_podman_archive(src) {
-            Ok(true) => note(log, &format!("normalized podman archive {}", src.display())),
-            Ok(false) => {}
-            Err(err) => note(
-                log,
-                &format!("warning: could not normalize {}: {err}", src.display()),
-            ),
-        }
-    }
-}
-
-fn patch_podman_archive(path: &Path) -> Result<bool> {
-    let script = r#"
-import tarfile, json, io, os, sys
-path = sys.argv[1]
-changed = False
-tmp = path + ".tmp"
-try:
-    with tarfile.open(path, 'r') as src, tarfile.open(tmp, 'w') as dst:
-        for member in src.getmembers():
-            f = src.extractfile(member)
-            data = f.read() if f is not None else b''
-            if member.name == "manifest.json":
-                try:
-                    j = json.loads(data.decode('utf-8'))
-                    for entry in j:
-                        if "RepoTags" in entry and entry["RepoTags"]:
-                            new_tags = [t.replace("localhost/", "") for t in entry["RepoTags"]]
-                            if new_tags != entry["RepoTags"]:
-                                changed = True
-                                entry["RepoTags"] = new_tags
-                    new_data = json.dumps(j).encode('utf-8')
-                    if len(new_data) != len(data):
-                        info = tarfile.TarInfo(name=member.name)
-                        info.size = len(new_data)
-                        info.mtime = member.mtime
-                        info.mode = member.mode
-                        info.type = member.type
-                        dst.addfile(info, io.BytesIO(new_data))
-                        continue
-                except Exception:
-                    pass
-                dst.addfile(member, io.BytesIO(data) if data else None)
-            elif member.name == "repositories":
-                try:
-                    j = json.loads(data.decode('utf-8'))
-                    new_j = {}
-                    for repo, tags in j.items():
-                        new_repo = repo.replace("localhost/", "")
-                        if new_repo != repo:
-                            changed = True
-                        new_j[new_repo] = tags
-                    if changed:
-                        new_data = json.dumps(new_j).encode('utf-8')
-                        info = tarfile.TarInfo(name=member.name)
-                        info.size = len(new_data)
-                        info.mtime = member.mtime
-                        info.mode = member.mode
-                        info.type = member.type
-                        dst.addfile(info, io.BytesIO(new_data))
-                        continue
-                except Exception:
-                    pass
-                dst.addfile(member, io.BytesIO(data) if data else None)
-            else:
-                dst.addfile(member, io.BytesIO(data) if data else None)
-    if changed:
-        os.rename(tmp, path)
-        print("changed")
-    else:
-        try:
-            os.remove(tmp)
-        except:
-            pass
-        print("unchanged")
-except Exception as e:
-    try:
-        os.remove(tmp)
-    except:
-        pass
-    print(f"error: {e}", file=sys.stderr)
-    sys.exit(1)
-"#;
-    let output = (|| -> Result<std::process::Output> {
-        let mut child = Command::new("python3")
-            .arg("-")
-            .arg(path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("spawning python3 to patch archive")?;
-        {
-            let stdin = child.stdin.as_mut().context("python3 stdin unavailable")?;
-            stdin.write_all(script.as_bytes())?;
-        }
-        child.wait_with_output().context("waiting on python3")
-    })()?;
-    if !output.status.success() {
-        bail!(
-            "python patch failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    Ok(stdout == "changed")
 }
 
 /// The cross-target every VPS-bound fleet build compiles for.
@@ -1072,9 +839,7 @@ fn print_plan(
     log: &dyn LogSink,
 ) {
     let checkout_str = checkout.to_string_lossy();
-    let raw_build_cmd = subst(&manifest.build.cmd, workdir_str, &checkout_str);
-    let runtime = detect_container_runtime();
-    let build_cmd = translate_build_cmd(&raw_build_cmd, runtime);
+    let build_cmd = subst(&manifest.build.cmd, workdir_str, &checkout_str);
     log.line(&format!("DRY RUN — plan for {} → {}\n", manifest.name, manifest.host()));
     log.line("  source:");
     match source {
@@ -1089,13 +854,6 @@ fn print_plan(
     }
     log.line("  build:");
     log.line(&format!("    {build_cmd}"));
-    if build_cmd != raw_build_cmd {
-        let rt = match runtime {
-            ContainerRuntime::Docker => "docker",
-            ContainerRuntime::Podman => "podman",
-        };
-        log.line(&format!("    (translated for {rt})"));
-    }
     log.line("  ship:");
     // Artifact sources are shown against the on-disk checkout; a default-branch
     // deploy builds the same relative paths inside its worktree.
@@ -1356,71 +1114,4 @@ mod tests {
         assert_eq!(inner.0.lock().unwrap().as_slice(), ["first", "second"]);
     }
 
-    #[test]
-    fn translate_build_cmd_leaves_docker_unchanged() {
-        let cmd = "docker buildx build --platform linux/amd64 -t skiff:deploy --load . && docker save skiff:deploy -o /tmp/skiff-image.tar";
-        assert_eq!(
-            translate_build_cmd(cmd, ContainerRuntime::Docker),
-            cmd
-        );
-        // Non-container builds are also left alone
-        let rust = "cargo build --release --target x86_64-unknown-linux-musl";
-        assert_eq!(
-            translate_build_cmd(rust, ContainerRuntime::Podman),
-            rust
-        );
-    }
-
-    #[test]
-    fn translate_build_cmd_rewrites_docker_to_podman() {
-        let cmd = "docker buildx build --platform linux/amd64 -t skiff:deploy --load . && docker save skiff:deploy -o {workdir}/skiff-image.tar";
-        let got = translate_build_cmd(cmd, ContainerRuntime::Podman);
-        assert_eq!(
-            got,
-            "podman build --platform linux/amd64 -t skiff:deploy . && podman save --format docker-archive skiff:deploy -o {workdir}/skiff-image.tar"
-        );
-    }
-
-    #[test]
-    fn translate_strips_load_flag() {
-        let cmd = "docker buildx build -t blog:deploy --load .";
-        let got = translate_build_cmd(cmd, ContainerRuntime::Podman);
-        assert_eq!(got, "podman build -t blog:deploy .");
-        assert!(!got.contains("--load"));
-    }
-
-    #[test]
-    fn translate_handles_docker_build_without_buildx() {
-        let cmd = "docker build -t readout:deploy . && docker save readout:deploy -o /tmp/out.tar";
-        let got = translate_build_cmd(cmd, ContainerRuntime::Podman);
-        assert_eq!(
-            got,
-            "podman build -t readout:deploy . && podman save --format docker-archive readout:deploy -o /tmp/out.tar"
-        );
-    }
-
-    #[test]
-    fn strip_load_flag_handles_boundary_cases() {
-        // --load at end
-        assert_eq!(strip_load_flag("podman build -t foo --load"), "podman build -t foo");
-        // --load before &&
-        assert_eq!(
-            strip_load_flag("podman build -t foo --load && podman save foo -o out.tar"),
-            "podman build -t foo && podman save foo -o out.tar"
-        );
-        // should not strip --load as part of another flag
-        assert_eq!(
-            strip_load_flag("podman build --load-factor 2 -t foo ."),
-            "podman build --load-factor 2 -t foo ."
-        );
-    }
-
-    #[test]
-    fn detect_runtime_respects_env_override() {
-        std::env::set_var("TUGBOAT_CONTAINER_RUNTIME", "podman");
-        assert_eq!(detect_container_runtime(), ContainerRuntime::Podman);
-        std::env::set_var("TUGBOAT_CONTAINER_RUNTIME", "docker");
-        assert_eq!(detect_container_runtime(), ContainerRuntime::Docker);
-        std::env::remove_var("TUGBOAT_CONTAINER_RUNTIME");
-    }
 }

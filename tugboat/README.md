@@ -10,6 +10,20 @@ optionally enrolls the unit in `lighthouse.target` so lighthouse discovers it.
 It replaces the per-service `deploy.sh` scripts that had each reinvented (and
 drifted on) the same build → ship → restart → health-check → rollback dance.
 
+## Build contract
+
+The `[build].cmd` in each `deploy.toml` is the complete, authoritative build
+recipe. Tugboat expands its placeholders and executes it unchanged; it does not
+select a compiler, package manager, or container runtime on the service's
+behalf. This keeps tool-specific behavior in the manifest where it is visible
+and testable.
+
+Containerized fleet services use Docker and Docker Buildx in their build
+recipes, and their image archives are loaded by Docker on the VPS. A machine
+that builds those services must therefore provide a working `docker` CLI with
+Buildx. Native-binary and static-site services do not require Docker unless
+their own build recipe says otherwise.
+
 ## Install
 
 ```sh
