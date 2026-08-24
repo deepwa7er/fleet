@@ -30,7 +30,7 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 use ts_rs::TS;
 
 use crate::ingest::{Topic, pi};
-use crate::model::{Message, SessionKey};
+use crate::model::{Harness, Message, SessionKey};
 use crate::store::Store;
 use overlay::{Overlay, RunId};
 use pi_rpc::{COMMAND_TIMEOUT, PiConfig, PiProcess};
@@ -148,6 +148,7 @@ impl Runs {
 
     /// Send a prompt, spawning pi for this session if it is not already up.
     pub async fn send(&self, session: &SessionKey, text: &str, client_id: &str) -> Result<()> {
+        drivable(session)?;
         if text.trim().is_empty() {
             bail!("an empty prompt has nothing to ask");
         }
@@ -190,6 +191,7 @@ impl Runs {
     /// Stop the run in flight. Aborting an idle session is not an error — it
     /// is what the button does when the run finished a moment ago.
     pub async fn abort(&self, session: &SessionKey) -> Result<()> {
+        drivable(session)?;
         let run = self.sessions.lock().await.get(session).cloned();
         let Some(run) = run else { return Ok(()) };
         let process = run.lock().await.process.clone();
@@ -481,6 +483,21 @@ async fn handle(
         }
         _ => Change::None,
     }
+}
+
+/// Refuse to drive a session this registry does not know how to run.
+///
+/// Not defensive: without it, a prompt to a muse session would resolve a file
+/// through pi's layout and spawn **pi** against a muse session log. It would
+/// fail eventually, but confusingly and after doing real work. muse has no
+/// long-lived RPC mode at all — it runs one `muse exec` per prompt — so the
+/// registry gains a second process model before it gains muse, and until then
+/// the honest answer is a named refusal.
+fn drivable(session: &SessionKey) -> Result<()> {
+    if session.harness != Harness::Pi {
+        bail!("skiff cannot yet run {} sessions — it can only read them", session.harness);
+    }
+    Ok(())
 }
 
 /// Drop a reply that will never be persisted.

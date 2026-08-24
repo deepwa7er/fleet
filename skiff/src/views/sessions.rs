@@ -47,7 +47,7 @@ mod tests {
             orchestrator_active: false,
         };
         store
-            .ingest_session(SessionIngest { summary: &summary, header: None, entries: &[] })
+            .ingest_session(SessionIngest { summary: &summary, state: None, entries: &[] })
             .unwrap();
         store
             .set_source_health(&SourceHealth {

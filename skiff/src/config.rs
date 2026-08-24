@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use crate::ingest::pi;
+use crate::ingest::{muse, pi};
 
 /// The agent desk: harness sessions and fleet changes as live queries.
 #[derive(Debug, Parser)]
@@ -36,6 +36,10 @@ pub struct Config {
     /// The pi binary. Resolved on PATH by default.
     #[arg(long, env = "SKIFF_PI_BINARY", default_value = "pi")]
     pub pi_binary: PathBuf,
+
+    /// muse's session directory. Defaults to muse's own XDG resolution.
+    #[arg(long, env = "SKIFF_MUSE_SESSION_DIR")]
+    pub muse_session_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -55,6 +59,22 @@ impl Config {
 
     pub fn pi_binary(&self) -> PathBuf {
         self.pi_binary.clone()
+    }
+
+    pub fn muse_dir(&self) -> PathBuf {
+        self.muse_session_dir.clone().unwrap_or_else(muse::default_session_dir)
+    }
+
+    /// Every source skiffd ingests from.
+    ///
+    /// A source whose directory does not exist is still listed: it degrades to
+    /// a named error the client shows, rather than being silently absent —
+    /// which would be indistinguishable from a harness with no sessions.
+    pub fn sources(&self) -> Vec<Box<dyn crate::ingest::source::Source>> {
+        vec![
+            Box::new(pi::Pi::new(self.pi_dir())),
+            Box::new(muse::Muse::new(self.muse_dir())),
+        ]
     }
 }
 

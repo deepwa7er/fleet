@@ -12,8 +12,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{Value, json};
 
+use super::source::{Discovered, ParsedBatch, Source};
 use crate::model::{Capabilities, Entry, Harness, SessionKey, SessionSummary, leaf_path};
 
 pub const SOURCE: &str = "pi";
@@ -75,6 +76,72 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The pi adapter.
+pub struct Pi {
+    root: PathBuf,
+}
+
+impl Pi {
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+}
+
+impl Source for Pi {
+    fn name(&self) -> &'static str {
+        SOURCE
+    }
+
+    fn harness(&self) -> Harness {
+        Harness::Pi
+    }
+
+    fn root(&self) -> &Path {
+        &self.root
+    }
+
+    fn discover(&self) -> Result<Vec<Discovered>> {
+        Ok(session_files(&self.root)?
+            .into_iter()
+            .filter_map(|path| key_for_file(&path).map(|key| Discovered { key, path }))
+            .collect())
+    }
+
+    fn parse(&self, lines: &[String], first_line: i64, state: Option<&Value>) -> ParsedBatch {
+        let parsed = parse_lines(lines, first_line);
+        ParsedBatch {
+            entries: parsed.entries,
+            // The header is line 1 only, so a resumed read has nothing new to
+            // say about it and must not overwrite what is stored.
+            state: parsed.header.map(|header| json!({ "header": header })),
+        }
+        .keeping(state)
+    }
+
+    fn summarize(
+        &self,
+        key: &SessionKey,
+        state: Option<&Value>,
+        entries: &[Entry],
+    ) -> Option<SessionSummary> {
+        // A `.jsonl` file with no session header is not a pi session — it is
+        // some other file sharing the extension, or one pi created but has not
+        // written yet. Either way it must not appear in the list.
+        let header = state?.get("header")?;
+        Some(summarize(key, Some(header), entries))
+    }
+}
+
+impl ParsedBatch {
+    /// Carry the stored state forward when this batch produced none.
+    fn keeping(mut self, previous: Option<&Value>) -> Self {
+        if self.state.is_none() {
+            self.state = previous.cloned();
+        }
+        self
+    }
 }
 
 /// What one batch of lines contained.

@@ -16,7 +16,8 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
-use skiff::ingest::Ingest;
+use skiff::ingest::{Ingest, pi};
+use skiff::ingest::source::Source;
 use skiff::run::Runs;
 use skiff::server::{AppState, router};
 use skiff::store::Store;
@@ -154,16 +155,22 @@ fn fake(dir: &Path, script: &str) -> PathBuf {
     path
 }
 
+/// These tests exercise one source; the multi-source scan is covered in
+/// `ingest`'s own tests.
+fn pi_source(root: &Path) -> Vec<Box<dyn Source>> {
+    vec![Box::new(pi::Pi::new(root.to_path_buf()))]
+}
+
 async fn start(script: &str) -> Harness {
     let sessions = tempfile::tempdir().unwrap();
     std::fs::write(sessions.path().join("abc.jsonl"), format!("{HEADER}\n")).unwrap();
 
     let store = Store::in_memory().unwrap();
     let (topics, _) = tokio::sync::broadcast::channel(256);
-    let ingest = Ingest::new(store.clone(), sessions.path().to_path_buf(), topics.clone());
+    let ingest = Ingest::new(store.clone(), pi_source(sessions.path()), topics.clone());
     ingest.scan().unwrap();
     // The watcher runs for real: these tests turn on the file landing.
-    Ingest::new(store.clone(), sessions.path().to_path_buf(), topics.clone()).spawn();
+    Ingest::new(store.clone(), pi_source(sessions.path()), topics.clone()).spawn();
 
     let binary = fake(sessions.path(), script);
     let runs = Runs::new(
@@ -512,6 +519,35 @@ async fn aborting_an_idle_session_is_not_an_error() {
             }
             ServerFrame::Error { error, .. } => panic!("aborting an idle session errored: {error}"),
             _ => continue,
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_session_skiff_cannot_run_is_refused_by_name() {
+    // Without this, a prompt to a muse session would resolve a file through
+    // pi's layout and spawn pi against a muse log.
+    let harness = start(FAKE_PI).await;
+    let mut socket = connect(harness.addr).await;
+    send(
+        &mut socket,
+        ClientFrame::Command {
+            req: 8,
+            cmd: Command::Send {
+                session: "muse:abc".parse().unwrap(),
+                text: "go".into(),
+                client_id: "c".into(),
+            },
+        },
+    )
+    .await;
+    let deadline = tokio::time::Instant::now() + DEADLINE;
+    loop {
+        assert!(tokio::time::Instant::now() < deadline, "no error arrived");
+        if let ServerFrame::Error { req, error, .. } = next_frame(&mut socket).await {
+            assert_eq!(req, Some(8));
+            assert!(error.contains("muse"), "the refusal names the harness: {error}");
+            return;
         }
     }
 }

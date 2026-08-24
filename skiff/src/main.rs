@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
     // The ingest owns its own thread for the process's lifetime; it is the
     // thing that makes every view non-empty, so there is nothing to gracefully
     // shut down that outliving the process would help.
-    Ingest::new(store.clone(), config.pi_dir(), topics.clone()).spawn();
+    Ingest::new(store.clone(), config.sources(), topics.clone()).spawn();
 
     let runs = Runs::new(
         store.clone(),

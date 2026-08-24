@@ -9,7 +9,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 const DDL: &str = r#"
 CREATE TABLE session (
@@ -21,10 +21,11 @@ CREATE TABLE session (
     updated_ms          INTEGER,
     model               TEXT,
     orchestrator_active INTEGER NOT NULL DEFAULT 0,
-    -- The source's own session header (pi's line 1: cwd, created-at). Kept
-    -- because it appears exactly once, at the top of the file, and an
-    -- incremental read that starts from a byte watermark never sees it again.
-    header_raw          TEXT,
+    -- Whatever the source needs to remember between incremental reads, in
+    -- the source's own shape. pi keeps its session header here (line 1 only,
+    -- so a resumed read never sees it again); muse keeps the model in force,
+    -- which its records establish cumulatively. Opaque to the store.
+    source_state        TEXT,
     cap_rename          INTEGER NOT NULL DEFAULT 0,
     cap_orchestrator    INTEGER NOT NULL DEFAULT 0,
     cap_model           INTEGER NOT NULL DEFAULT 0

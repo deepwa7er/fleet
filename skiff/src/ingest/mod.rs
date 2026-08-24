@@ -12,20 +12,23 @@
 //! **Restart is not destructive.** Everything ingested here re-derives from
 //! files, so skiffd restarting loses nothing durable — the next scan converges.
 
+pub mod muse;
 pub mod pi;
 pub mod pi_map;
+pub mod source;
 mod tail;
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use notify::{RecursiveMode, Watcher};
 use tokio::sync::broadcast;
 
-use crate::model::{Harness, SessionKey, SourceHealth};
+use crate::model::{SessionKey, SourceHealth};
 use crate::store::{SessionIngest, Store};
+use source::{Discovered, Source};
 
 /// What changed. Subscriptions declare the topics they care about; an
 /// invalidated subscription recomputes and re-sends (DW-004 §6).
@@ -60,13 +63,17 @@ const FLOOR_SCAN: Duration = Duration::from_secs(15);
 
 pub struct Ingest {
     store: Store,
-    pi_dir: PathBuf,
+    sources: Vec<Box<dyn Source>>,
     topics: broadcast::Sender<Topic>,
 }
 
 impl Ingest {
-    pub fn new(store: Store, pi_dir: PathBuf, topics: broadcast::Sender<Topic>) -> Self {
-        Self { store, pi_dir, topics }
+    pub fn new(
+        store: Store,
+        sources: Vec<Box<dyn Source>>,
+        topics: broadcast::Sender<Topic>,
+    ) -> Self {
+        Self { store, sources, topics }
     }
 
     /// Run the ingest loop on its own thread until the process ends.
@@ -95,19 +102,29 @@ impl Ingest {
                 None
             }
         };
-        let mut watching = false;
+        let mut watching: HashSet<&'static str> = HashSet::new();
 
         loop {
-            if let Some(watcher) = watcher.as_mut()
-                && !watching
-                && let Err(err) = watcher.watch(&self.pi_dir, RecursiveMode::Recursive)
-            {
-                // Almost always "the directory does not exist yet". The floor
-                // scan keeps trying, and `scan` records the reason for the
-                // client either way.
-                tracing::debug!(dir = %self.pi_dir.display(), %err, "watch not established yet");
-            } else if watcher.is_some() {
-                watching = true;
+            if let Some(watcher) = watcher.as_mut() {
+                for source in &self.sources {
+                    if watching.contains(source.name()) {
+                        continue;
+                    }
+                    match watcher.watch(source.root(), RecursiveMode::Recursive) {
+                        Ok(()) => {
+                            watching.insert(source.name());
+                        }
+                        // Almost always "the directory does not exist yet".
+                        // The floor scan keeps trying, and `scan` records the
+                        // reason for the client either way.
+                        Err(err) => tracing::debug!(
+                            source = source.name(),
+                            dir = %source.root().display(),
+                            %err,
+                            "watch not established yet"
+                        ),
+                    }
+                }
             }
 
             if let Err(err) = self.scan() {
@@ -122,7 +139,7 @@ impl Ingest {
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     // The watcher was dropped or died. The floor scan is still
                     // a correct, if slower, ingest.
-                    watching = false;
+                    watching.clear();
                     watcher = None;
                     std::thread::sleep(FLOOR_SCAN);
                 }
@@ -133,18 +150,29 @@ impl Ingest {
     /// One full pass over every source. Announces what changed.
     pub fn scan(&self) -> Result<()> {
         let mut changed = HashSet::new();
-        let outcome = self.scan_pi(&mut changed);
+        for source in &self.sources {
+            self.scan_source(source.as_ref(), &mut changed)?;
+        }
+        for topic in changed {
+            // No subscribers is the normal state when nobody has the app open.
+            let _ = self.topics.send(topic);
+        }
+        Ok(())
+    }
 
+    fn scan_source(&self, source: &dyn Source, changed: &mut HashSet<Topic>) -> Result<()> {
+        let outcome = self.read_source(source, changed);
         let error = match outcome {
             Ok(()) => None,
             Err(err) => {
                 // The error is data, not a crash: it reaches the client as a
                 // named unhealthy source.
-                tracing::warn!(source = pi::SOURCE, %err, "source unreadable");
+                tracing::warn!(source = source.name(), %err, "source unreadable");
                 Some(format!("{err:#}"))
             }
         };
-        let health = SourceHealth { source: pi::SOURCE.to_owned(), error, checked_ms: now_ms() };
+        let health =
+            SourceHealth { source: source.name().to_owned(), error, checked_ms: now_ms() };
         let previous = self
             .store
             .source_health()?
@@ -155,39 +183,34 @@ impl Ingest {
         if previous.as_ref() != Some(&health.error) {
             changed.insert(Topic::SourceHealth);
         }
-
-        for topic in changed {
-            // No subscribers is the normal state when nobody has the app open.
-            let _ = self.topics.send(topic);
-        }
         Ok(())
     }
 
-    fn scan_pi(&self, changed: &mut HashSet<Topic>) -> Result<()> {
-        if !self.pi_dir.is_dir() {
-            anyhow::bail!("session directory {} does not exist", self.pi_dir.display());
+    fn read_source(&self, source: &dyn Source, changed: &mut HashSet<Topic>) -> Result<()> {
+        if !source.root().is_dir() {
+            anyhow::bail!("session directory {} does not exist", source.root().display());
         }
-        let files = pi::session_files(&self.pi_dir)
-            .with_context(|| format!("scanning {}", self.pi_dir.display()))?;
+        let found = source
+            .discover()
+            .with_context(|| format!("scanning {}", source.root().display()))?;
 
         let mut seen = HashSet::new();
-        for file in &files {
-            let Some(key) = pi::key_for_file(file) else { continue };
+        for Discovered { key, path } in &found {
             seen.insert(key.clone());
-            match self.ingest_pi_file(&key, file) {
+            match self.read_session(source, key, path) {
                 Ok(true) => {
-                    changed.insert(Topic::Session(key));
+                    changed.insert(Topic::Session(key.clone()));
                     changed.insert(Topic::SessionList);
                 }
                 Ok(false) => {}
                 // One unreadable file must not hide every other session, so
                 // this is logged against the file rather than failing the pass.
-                Err(err) => tracing::warn!(file = %file.display(), %err, "skipping session file"),
+                Err(err) => tracing::warn!(file = %path.display(), %err, "skipping session file"),
             }
         }
 
-        for stale in self.store.sessions()?.into_iter().filter(|s| s.harness == Harness::Pi) {
-            if !seen.contains(&stale.id) {
+        for stale in self.store.sessions()? {
+            if stale.harness == source.harness() && !seen.contains(&stale.id) {
                 self.store.forget_session(&stale.id)?;
                 changed.insert(Topic::Session(stale.id));
                 changed.insert(Topic::SessionList);
@@ -198,8 +221,14 @@ impl Ingest {
 
     /// Read one session file forward from its watermark. Answers whether
     /// anything changed.
-    fn ingest_pi_file(&self, key: &SessionKey, path: &Path) -> Result<bool> {
-        let cursor = self.store.cursor(pi::SOURCE, &path.to_string_lossy())?;
+    fn read_session(
+        &self,
+        source: &dyn Source,
+        key: &SessionKey,
+        path: &Path,
+    ) -> Result<bool> {
+        let cursor_key = path.to_string_lossy().into_owned();
+        let cursor = self.store.cursor(source.name(), &cursor_key)?;
         let tail = tail::read_forward(path, cursor)?;
         if tail.lines.is_empty() && !tail.restarted {
             return Ok(false);
@@ -211,35 +240,27 @@ impl Ingest {
             self.store.clear_entries(key)?;
         }
 
-        let parsed = pi::parse_lines(&tail.lines, tail.first_line);
+        let stored = if tail.restarted { None } else { self.store.source_state(key)? };
+        let parsed = source.parse(&tail.lines, tail.first_line, stored.as_ref());
 
-        // The header is line 1 only, so a resumed read recovers it from the
-        // store rather than going without.
-        let header = match parsed.header.clone() {
-            Some(header) => Some(header),
-            None if tail.restarted => None,
-            None => self.store.session_header(key)?,
-        };
-
-        // A `.jsonl` file with no session header is not a session — it is some
-        // other file that happens to share the extension, or a file pi created
-        // but has not written yet. Either way it must not appear in the list.
-        // Nothing is persisted, so a header arriving later is picked up whole
-        // on the next scan.
-        let Some(header) = header else { return Ok(false) };
-
-        // The summary reads the leaf branch, so it needs every entry — not
-        // just the ones that arrived in this batch.
+        // The summary reads every entry — the leaf branch, the first prompt,
+        // the model in force — not just the ones that arrived in this batch.
         let mut all = if tail.restarted { Vec::new() } else { self.store.entries(key)? };
         all.extend(parsed.entries.iter().cloned());
 
-        let summary = pi::summarize(key, Some(&header), &all);
+        let state = parsed.state.clone().or(stored);
+        let Some(summary) = source.summarize(key, state.as_ref(), &all) else {
+            // Not a session. Nothing is persisted, so whatever makes it one
+            // arriving later is picked up whole on the next scan.
+            return Ok(false);
+        };
+
         self.store.ingest_session(SessionIngest {
             summary: &summary,
-            header: parsed.header.as_ref(),
+            state: parsed.state.as_ref(),
             entries: &parsed.entries,
         })?;
-        self.store.set_cursor(pi::SOURCE, &path.to_string_lossy(), tail.cursor)?;
+        self.store.set_cursor(source.name(), &cursor_key, tail.cursor)?;
         Ok(true)
     }
 }
@@ -255,6 +276,10 @@ fn now_ms() -> i64 {
 mod tests {
     use super::*;
 
+    fn sources(root: &Path) -> Vec<Box<dyn Source>> {
+        vec![Box::new(pi::Pi::new(root.to_path_buf()))]
+    }
+
     struct Fixture {
         dir: tempfile::TempDir,
         ingest: Ingest,
@@ -267,7 +292,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let store = Store::in_memory().unwrap();
             let (tx, topics) = broadcast::channel(64);
-            let ingest = Ingest::new(store.clone(), dir.path().to_path_buf(), tx);
+            let ingest = Ingest::new(store.clone(), sources(dir.path()), tx);
             Self { dir, ingest, store, topics }
         }
 
@@ -384,7 +409,7 @@ mod tests {
         let mut f = Fixture::new();
         let missing = f.dir.path().join("nope");
         let (tx, topics) = broadcast::channel(64);
-        f.ingest = Ingest::new(f.store.clone(), missing, tx);
+        f.ingest = Ingest::new(f.store.clone(), sources(&missing), tx);
         f.topics = topics;
 
         f.ingest.scan().expect("a missing source must not fail the pass");
@@ -403,6 +428,76 @@ mod tests {
         f.drain();
         f.ingest.scan().unwrap();
         assert!(!f.drain().contains(&Topic::SourceHealth));
+    }
+
+    #[test]
+    fn two_sources_ingest_side_by_side_and_forget_independently() {
+        // The property the Source trait exists for: neither adapter knows the
+        // other, and neither can reach into the other's sessions.
+        let dir = tempfile::tempdir().unwrap();
+        let pi_root = dir.path().join("pi");
+        let muse_root = dir.path().join("muse");
+        std::fs::create_dir_all(&pi_root).unwrap();
+        let muse_session = muse_root.join("2026/08/23/abc");
+        std::fs::create_dir_all(&muse_session).unwrap();
+
+        std::fs::write(pi_root.join("p1.jsonl"), format!("{HEADER}\n")).unwrap();
+        let record = serde_json::json!({
+            "id": "r1", "recorded_at": 1_000, "payload_type": "runtime.session",
+            "payload": { "kind": "run", "event": { "kind": "started", "prompt": "hi" } }
+        });
+        std::fs::write(muse_session.join("session.jsonl"), format!("{record}\n")).unwrap();
+
+        let store = Store::in_memory().unwrap();
+        let (tx, _rx) = broadcast::channel(64);
+        let ingest = Ingest::new(
+            store.clone(),
+            vec![
+                Box::new(pi::Pi::new(pi_root.clone())),
+                Box::new(crate::ingest::muse::Muse::new(muse_root)),
+            ],
+            tx,
+        );
+        ingest.scan().unwrap();
+
+        let ids: Vec<_> = store.sessions().unwrap().iter().map(|s| s.id.to_string()).collect();
+        assert_eq!(ids.len(), 2, "{ids:?}");
+        assert!(ids.contains(&"pi:p1".to_owned()));
+        assert!(ids.contains(&"muse:abc".to_owned()));
+
+        // Removing pi's only session must not touch muse's.
+        std::fs::remove_file(pi_root.join("p1.jsonl")).unwrap();
+        ingest.scan().unwrap();
+        let ids: Vec<_> = store.sessions().unwrap().iter().map(|s| s.id.to_string()).collect();
+        assert_eq!(ids, ["muse:abc"]);
+    }
+
+    #[test]
+    fn a_broken_source_does_not_stop_a_healthy_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let pi_root = dir.path().join("pi");
+        std::fs::create_dir_all(&pi_root).unwrap();
+        std::fs::write(pi_root.join("p1.jsonl"), format!("{HEADER}\n")).unwrap();
+
+        let store = Store::in_memory().unwrap();
+        let (tx, _rx) = broadcast::channel(64);
+        Ingest::new(
+            store.clone(),
+            vec![
+                Box::new(pi::Pi::new(pi_root)),
+                // Never created: the source degrades to a named error.
+                Box::new(crate::ingest::muse::Muse::new(dir.path().join("gone"))),
+            ],
+            tx,
+        )
+        .scan()
+        .unwrap();
+
+        assert_eq!(store.sessions().unwrap().len(), 1, "the healthy source still ingested");
+        let health = store.source_health().unwrap();
+        let muse = health.iter().find(|h| h.source == "muse").unwrap();
+        assert!(muse.error.as_ref().unwrap().contains("does not exist"));
+        assert_eq!(health.iter().find(|h| h.source == "pi").unwrap().error, None);
     }
 
     #[test]

@@ -18,7 +18,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::model::{Message, Part, SessionKey, SessionSummary, ToolStatus};
+use crate::model::{Message, Part, Role, SessionKey, SessionSummary, ToolStatus};
 use crate::run::LiveState;
 use crate::store::Store;
 
@@ -54,11 +54,14 @@ pub fn transcript(entries: &[crate::model::Entry]) -> Vec<Message> {
     let mut awaiting: HashMap<String, (usize, usize)> = HashMap::new();
 
     for entry in crate::model::leaf_path(entries) {
-        let Some(message) = entry.mapped.clone() else { continue };
+        let Some(mut message) = entry.mapped.clone() else { continue };
 
-        if let Some(folded) = fold(&mut messages, &mut awaiting, &message) {
-            debug_assert!(folded, "fold answers whether it consumed the message");
-            continue;
+        if message.role == Role::Tool {
+            message.parts = fold(&mut messages, &mut awaiting, message.parts);
+            // Every result found its call, so there is nothing left to show.
+            if message.parts.is_empty() {
+                continue;
+            }
         }
 
         let index = messages.len();
@@ -74,32 +77,44 @@ pub fn transcript(entries: &[crate::model::Entry]) -> Vec<Message> {
     messages
 }
 
-/// Fold a tool-result message into the call it answers.
+/// Fold each tool result into the call it answers, returning the ones that
+/// found no call.
 ///
-/// Answers `Some(true)` when the message was consumed. A result whose call is
-/// not on this branch — the call was abandoned, or the file is mid-write —
-/// is *not* consumed, and surfaces as its own message rather than vanishing:
-/// a tool that ran is a fact, and the reader should see it even when the
-/// transcript cannot say what asked for it.
+/// **A result message may carry several results.** pi emits one per message,
+/// but muse commits them in batches (`tool_result_batch_committed`), so
+/// folding has to be per *part* — assuming one part per message silently left
+/// every multi-result batch unfolded, which real muse sessions are full of.
+///
+/// A result whose call is not on this branch — the call was abandoned, or the
+/// file is mid-write — is kept and surfaces on its own. A tool that ran is a
+/// fact, and the reader should see it even when the transcript cannot say
+/// what asked for it.
 fn fold(
     messages: &mut [Message],
     awaiting: &mut HashMap<String, (usize, usize)>,
-    message: &Message,
-) -> Option<bool> {
-    let [Part::Tool { call_id, status, output, .. }] = message.parts.as_slice() else {
-        return None;
-    };
-    if *status == ToolStatus::Running {
-        return None;
-    }
-    let (message_index, part_index) = awaiting.remove(call_id)?;
-    let target = messages.get_mut(message_index)?.parts.get_mut(part_index)?;
-    let Part::Tool { status: call_status, output: call_output, .. } = target else {
-        return None;
-    };
-    *call_status = *status;
-    *call_output = output.clone();
-    Some(true)
+    parts: Vec<Part>,
+) -> Vec<Part> {
+    parts
+        .into_iter()
+        .filter(|part| {
+            let Part::Tool { call_id, status, output, .. } = part else { return true };
+            if *status == ToolStatus::Running {
+                return true;
+            }
+            let Some((message_index, part_index)) = awaiting.remove(call_id) else { return true };
+            let Some(target) =
+                messages.get_mut(message_index).and_then(|m| m.parts.get_mut(part_index))
+            else {
+                return true;
+            };
+            let Part::Tool { status: call_status, output: call_output, .. } = target else {
+                return true;
+            };
+            *call_status = *status;
+            *call_output = output.clone();
+            false
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -279,6 +294,68 @@ mod tests {
         let messages = transcript(&entries);
         let Part::Tool { status, .. } = &messages[0].parts[0] else { panic!() };
         assert_eq!(*status, ToolStatus::Running, "the abandoned result must not fold");
+    }
+
+    #[test]
+    fn a_batch_of_results_folds_each_into_its_own_call() {
+        // muse commits results in batches. Assuming one result per message —
+        // which is true of pi — left every multi-result batch unfolded, and
+        // real muse sessions are full of them.
+        let entries = vec![
+            entry(
+                1,
+                "a",
+                None,
+                Some(message("a", Role::Assistant, vec![call("c1"), call("c2")])),
+            ),
+            entry(
+                2,
+                "r",
+                Some("a"),
+                Some(message(
+                    "r",
+                    Role::Tool,
+                    vec![
+                        result("c1", ToolStatus::Completed, "one"),
+                        result("c2", ToolStatus::Error, "two"),
+                    ],
+                )),
+            ),
+        ];
+        let messages = transcript(&entries);
+        assert_eq!(messages.len(), 1, "the whole batch folded");
+        let Part::Tool { output, .. } = &messages[0].parts[0] else { panic!() };
+        assert_eq!(output.as_deref(), Some("one"));
+        let Part::Tool { status, output, .. } = &messages[0].parts[1] else { panic!() };
+        assert_eq!(*status, ToolStatus::Error);
+        assert_eq!(output.as_deref(), Some("two"));
+    }
+
+    #[test]
+    fn a_partly_matched_batch_keeps_only_what_did_not_fold() {
+        let entries = vec![
+            entry(1, "a", None, Some(message("a", Role::Assistant, vec![call("c1")]))),
+            entry(
+                2,
+                "r",
+                Some("a"),
+                Some(message(
+                    "r",
+                    Role::Tool,
+                    vec![
+                        result("c1", ToolStatus::Completed, "matched"),
+                        result("orphan", ToolStatus::Completed, "unmatched"),
+                    ],
+                )),
+            ),
+        ];
+        let messages = transcript(&entries);
+        assert_eq!(messages.len(), 2);
+        let Part::Tool { output, .. } = &messages[0].parts[0] else { panic!() };
+        assert_eq!(output.as_deref(), Some("matched"));
+        assert_eq!(messages[1].parts.len(), 1, "only the orphan survives on its own");
+        let Part::Tool { call_id, .. } = &messages[1].parts[0] else { panic!() };
+        assert_eq!(call_id, "orphan");
     }
 
     #[test]

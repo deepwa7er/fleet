@@ -6,13 +6,15 @@
 //! pushes a new one without the client asking.
 
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::Path;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
-use skiff::ingest::Ingest;
+use skiff::ingest::{Ingest, pi};
+use skiff::ingest::source::Source;
 use skiff::run::Runs;
 use skiff::server::{AppState, router};
 use skiff::store::Store;
@@ -31,11 +33,17 @@ struct Harness {
     ingest: Ingest,
 }
 
+/// These tests exercise one source; the multi-source scan is covered in
+/// `ingest`'s own tests.
+fn pi_source(root: &Path) -> Vec<Box<dyn Source>> {
+    vec![Box::new(pi::Pi::new(root.to_path_buf()))]
+}
+
 async fn start() -> Harness {
     let sessions = tempfile::tempdir().unwrap();
     let store = Store::in_memory().unwrap();
     let (topics, _) = tokio::sync::broadcast::channel(64);
-    let ingest = Ingest::new(store.clone(), sessions.path().to_path_buf(), topics.clone());
+    let ingest = Ingest::new(store.clone(), pi_source(sessions.path()), topics.clone());
 
     let runs = Runs::new(
         store.clone(),

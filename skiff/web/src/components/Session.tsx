@@ -46,7 +46,14 @@ function Loaded({ view }: { view: SessionView }) {
         )}
       </header>
       <Transcript messages={view.messages} live={view.live} harness={session.harness} />
-      <Composer session={session.id} working={view.live.working} />
+      {/* Only pi can be driven from here yet: muse has no long-lived RPC
+          mode, and opencode is its own server. Offering a composer that
+          always errors would be worse than saying so. */}
+      {session.harness === "pi" ? (
+        <Composer session={session.id} working={view.live.working} />
+      ) : (
+        <p className="instrumentation">read only · {session.harness} sessions cannot be driven yet</p>
+      )}
     </>
   )
 }

@@ -122,7 +122,7 @@ impl Store {
     // --- entries ------------------------------------------------------------
 
     /// Persist one source's read of a session: its summary, optionally its
-    /// header, and any new entries — in a single transaction.
+    /// source state, and any new entries — in a single transaction.
     ///
     /// Taking the summary as an argument rather than recomputing it here keeps
     /// this module free of harness knowledge: the adapter derives the summary
@@ -132,7 +132,7 @@ impl Store {
             let tx = conn.unchecked_transaction()?;
             // The summary row first: `entry` references it, and foreign keys
             // are on.
-            upsert_summary(&tx, batch.summary, batch.header)?;
+            upsert_summary(&tx, batch.summary, batch.state)?;
             {
                 let mut insert = tx.prepare_cached(
                     "INSERT INTO entry (session_id, seq, id, parent_id, raw, mapped)
@@ -175,12 +175,12 @@ impl Store {
         })
     }
 
-    /// The source's own session header, as last seen by a full read.
-    pub fn session_header(&self, session: &SessionKey) -> Result<Option<serde_json::Value>> {
+    /// What the source last asked to remember about this session.
+    pub fn source_state(&self, session: &SessionKey) -> Result<Option<serde_json::Value>> {
         self.with(|conn| {
             let raw: Option<Option<String>> = conn
                 .query_row(
-                    "SELECT header_raw FROM session WHERE id = ?1",
+                    "SELECT source_state FROM session WHERE id = ?1",
                     params![session.to_string()],
                     |row| row.get(0),
                 )
@@ -322,22 +322,23 @@ fn row_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<SummaryRest> {
 /// One source's read of one session, persisted atomically.
 pub struct SessionIngest<'a> {
     pub summary: &'a SessionSummary,
-    /// The source's session header. `Some` only after a full read — an
-    /// incremental read starts past it and must leave the stored one alone.
-    pub header: Option<&'a serde_json::Value>,
+    /// What the source wants remembered for the next read. `None` leaves the
+    /// stored value alone, which is what an incremental read that learned
+    /// nothing new should do.
+    pub state: Option<&'a serde_json::Value>,
     pub entries: &'a [Entry],
 }
 
 fn upsert_summary(
     conn: &Connection,
     s: &SessionSummary,
-    header: Option<&serde_json::Value>,
+    state: Option<&serde_json::Value>,
 ) -> Result<()> {
-    // COALESCE, not excluded: an incremental read passes no header, and must
-    // not blank the one the full read stored.
+    // COALESCE, not excluded: a read that learned nothing new passes `None`,
+    // and must not blank what an earlier read stored.
     conn.execute(
         "INSERT INTO session (id, harness, title, directory, created_ms, updated_ms, model,
-                              orchestrator_active, header_raw,
+                              orchestrator_active, source_state,
                               cap_rename, cap_orchestrator, cap_model)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
          ON CONFLICT(id) DO UPDATE SET
@@ -348,7 +349,7 @@ fn upsert_summary(
            updated_ms = excluded.updated_ms,
            model = excluded.model,
            orchestrator_active = excluded.orchestrator_active,
-           header_raw = COALESCE(excluded.header_raw, session.header_raw),
+           source_state = COALESCE(excluded.source_state, session.source_state),
            cap_rename = excluded.cap_rename,
            cap_orchestrator = excluded.cap_orchestrator,
            cap_model = excluded.cap_model",
@@ -361,7 +362,7 @@ fn upsert_summary(
             s.updated_ms,
             s.model,
             s.orchestrator_active,
-            header.map(|h| h.to_string()),
+            state.map(|s| s.to_string()),
             s.capabilities.rename,
             s.capabilities.orchestrator,
             s.capabilities.model,
@@ -399,7 +400,7 @@ mod tests {
     }
 
     fn ingest(store: &Store, summary: &SessionSummary, entries: &[Entry]) {
-        store.ingest_session(SessionIngest { summary, header: None, entries }).unwrap();
+        store.ingest_session(SessionIngest { summary, state: None, entries }).unwrap();
     }
 
     #[test]
@@ -447,27 +448,48 @@ mod tests {
     }
 
     #[test]
-    fn an_incremental_read_does_not_blank_the_stored_header() {
-        // The header is line 1 of the file; a read that resumes from a byte
-        // watermark never sees it again, so it must survive the upsert.
+    fn an_incremental_read_does_not_blank_the_stored_source_state() {
+        // pi's header is line 1 of the file, and a read that resumes from a
+        // byte watermark never sees it again — so it must survive an upsert
+        // that has nothing new to say about it.
         let store = Store::in_memory().unwrap();
         let key: SessionKey = "pi:a".parse().unwrap();
-        let header = serde_json::json!({ "type": "session", "cwd": "/home/x" });
+        let state = serde_json::json!({ "header": { "cwd": "/home/x" } });
         store
             .ingest_session(SessionIngest {
                 summary: &summary("pi:a", 1),
-                header: Some(&header),
+                state: Some(&state),
                 entries: &[],
             })
             .unwrap();
         ingest(&store, &summary("pi:a", 2), &[entry(1, "a", None)]);
-        assert_eq!(store.session_header(&key).unwrap(), Some(header));
+        assert_eq!(store.source_state(&key).unwrap(), Some(state));
     }
 
     #[test]
-    fn an_unknown_session_has_no_header() {
+    fn a_later_read_can_replace_the_source_state() {
+        // muse's carried model changes as records establish a new one.
         let store = Store::in_memory().unwrap();
-        assert_eq!(store.session_header(&"pi:nope".parse().unwrap()).unwrap(), None);
+        let key: SessionKey = "muse:a".parse().unwrap();
+        let mut summary = summary("muse:a", 1);
+        summary.harness = Harness::Muse;
+        for model in ["old", "new"] {
+            let state = serde_json::json!({ "model": model });
+            store
+                .ingest_session(SessionIngest {
+                    summary: &summary,
+                    state: Some(&state),
+                    entries: &[],
+                })
+                .unwrap();
+        }
+        assert_eq!(store.source_state(&key).unwrap(), Some(serde_json::json!({ "model": "new" })));
+    }
+
+    #[test]
+    fn an_unknown_session_has_no_source_state() {
+        let store = Store::in_memory().unwrap();
+        assert_eq!(store.source_state(&"pi:nope".parse().unwrap()).unwrap(), None);
     }
 
     #[test]
