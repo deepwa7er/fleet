@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::model::SessionKey;
+use change::AnnotationSide;
 
 use crate::run::LiveState;
 use crate::views::{ViewData, ViewSpec};
@@ -46,6 +47,33 @@ pub type ReqId = u32;
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[ts(export_to = "gen/")]
 pub enum Command {
+    /// Attach review reasoning to an exact structured-diff anchor.
+    #[serde(rename_all = "camelCase")]
+    AnnotateChange {
+        repo: String,
+        #[ts(type = "number")]
+        card: u64,
+        round: u32,
+        path: String,
+        line: u32,
+        side: AnnotationSide,
+        text: String,
+    },
+    /// Send a review note to the bound agent, then reopen the change.
+    #[serde(rename_all = "camelCase")]
+    RequestChanges {
+        repo: String,
+        #[ts(type = "number")]
+        card: u64,
+        note: String,
+    },
+    /// Claim a reviewed change and run the asynchronous landing transaction.
+    #[serde(rename_all = "camelCase")]
+    ApproveChange {
+        repo: String,
+        #[ts(type = "number")]
+        card: u64,
+    },
     /// Send a prompt. `clientId` comes back on the resulting pending prompt,
     /// so the pane that sent it can match its optimistic bubble by identity
     /// rather than by comparing text.

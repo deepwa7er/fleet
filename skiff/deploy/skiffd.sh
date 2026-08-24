@@ -19,13 +19,30 @@
 #     is rebased, or is being worked in. `install-skiffd.sh` is what copies a
 #     freshly built pair into place.
 #
-#   - No secrets. skiffd has none: `dw` links the change crate directly and
-#     agents use `dw`, so the bridge password that the Rails stack needs does
-#     not exist here (DW-004 §2).
+#   - No bridge secret. The Rails bridge password disappears. Landing's
+#     optional tugboat write uses tugboat's existing 0600 token file; Fizzy
+#     reads its existing token file directly. Nothing is copied into Skiff.
 set -euo pipefail
 
 export SKIFF_WEB_DIST="${HOME}/.local/share/skiffd/web"
 export SKIFF_STORE="${HOME}/.local/state/skiff/read-model.sqlite3"
 export RUST_LOG="${RUST_LOG:-skiff=info}"
+
+# systemd's PATH deliberately need not know Cargo. Resolve jj once at boot so
+# a missing binary is reported by the change view rather than by an interactive
+# shell assumption.
+if [ -x "${HOME}/.cargo/bin/jj" ]; then
+  export JJ_BINARY="${HOME}/.cargo/bin/jj"
+elif [ -x "${HOME}/.local/bin/jj" ]; then
+  export JJ_BINARY="${HOME}/.local/bin/jj"
+fi
+
+# Token-gated off when tugboat has not provisioned its hooks. The URL and
+# token are the daemon's own configuration, so the two clients cannot drift.
+TUGBOAT_CONFIG="${XDG_CONFIG_HOME:-${HOME}/.config}/tugboat"
+if [ -r "${TUGBOAT_CONFIG}/serve-url" ] && [ -r "${TUGBOAT_CONFIG}/serve-token" ]; then
+  export TUGBOAT_SERVE_URL="$(<"${TUGBOAT_CONFIG}/serve-url")"
+  export TUGBOAT_SERVE_TOKEN="$(<"${TUGBOAT_CONFIG}/serve-token")"
+fi
 
 exec "${HOME}/.local/bin/skiffd" --addr "$(tailscale ip -4):8121"

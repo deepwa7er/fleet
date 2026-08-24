@@ -4,19 +4,25 @@
 //! commits, while this crate owns the durable relationships and the exact
 //! structured diff that review annotations address.
 
+mod deploy;
 mod diff;
 mod jj;
+mod landing;
 mod log;
 mod model;
+mod record;
 mod service;
 
+pub use deploy::{DeployTrigger, TugboatClient, TugboatConfig};
 pub use diff::{Diff, DiffFile, DiffHunk, DiffKind, DiffLine, parse_diff};
 pub use jj::{Commit, Jj, ResolvedCommit, is_full_change_id};
+pub use landing::{FizzyConfig, LandingConfig, LandingService, TailReport};
 pub use log::{RoundInput, Store};
 pub use model::{
     Annotation, AnnotationSide, Author, CardComment, Change, ChangeRef, ChangeState, Deploy,
     DeployOutcome, DeployService, Landed, Landing, RecordExport, Request, Round,
 };
+pub use record::{PublicChange, Record, RecordConfig, build_public_change};
 pub use service::{ChangeService, default_change_dir, default_repos_dir};
 
 use std::path::{Path, PathBuf};
@@ -50,6 +56,8 @@ pub enum Error {
     Transition(String),
     #[error("{0}")]
     Jj(String),
+    #[error("{0}")]
+    External(String),
     #[error("{context}: {source}")]
     Io {
         context: String,

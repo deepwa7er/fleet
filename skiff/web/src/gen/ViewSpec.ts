@@ -3,4 +3,4 @@
 /**
  * Which view a subscription is for, with its parameters.
  */
-export type ViewSpec = { "kind": "sessions" } | { "kind": "session", id: string, };
+export type ViewSpec = { "kind": "changes" } | { "kind": "change", repo: string, card: number, round: number | null, } | { "kind": "sessions" } | { "kind": "session", id: string, };

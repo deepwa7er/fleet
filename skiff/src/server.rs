@@ -18,7 +18,8 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use tokio::sync::broadcast;
+use tokio::sync::{Mutex, broadcast};
+use tokio::task::JoinSet;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::ingest::Topic;
@@ -32,15 +33,71 @@ pub struct AppState {
     store: Store,
     runs: Arc<Runs>,
     topics: broadcast::Sender<Topic>,
+    changes: change::ChangeService,
+    landing: change::LandingService,
+    landings: Arc<Mutex<JoinSet<()>>>,
 }
 
 impl AppState {
     pub fn new(store: Store, runs: Arc<Runs>, topics: broadcast::Sender<Topic>) -> Self {
-        Self {
+        let changes = change::ChangeService::new(
+            change::Store::new(change::default_change_dir().expect("HOME resolves change state")),
+            change::default_repos_dir().expect("HOME resolves repositories"),
+            change::Jj::new(
+                std::env::var_os("JJ_BINARY")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| "jj".into()),
+            ),
+        );
+        Self::with_changes(
             store,
             runs,
             topics,
+            changes,
+            change::LandingConfig::from_env(),
+        )
+        .expect("default landing configuration is valid")
+    }
+
+    pub fn with_changes(
+        store: Store,
+        runs: Arc<Runs>,
+        topics: broadcast::Sender<Topic>,
+        changes: change::ChangeService,
+        landing_config: change::LandingConfig,
+    ) -> change::Result<Self> {
+        let landing = change::LandingService::new(changes.clone(), landing_config)?;
+        Ok(Self {
+            store,
+            runs,
+            topics,
+            changes,
+            landing,
+            landings: Arc::new(Mutex::new(JoinSet::new())),
+        })
+    }
+
+    pub async fn shutdown(&self) {
+        let mut landings = self.landings.lock().await;
+        while let Some(result) = landings.join_next().await {
+            if let Err(error) = result {
+                tracing::error!(%error, "landing task failed during shutdown");
+            }
         }
+    }
+
+    async fn spawn_landing(&self, repo: String, card: u64) {
+        let landing = self.landing.clone();
+        let topics = self.topics.clone();
+        let mut landings = self.landings.lock().await;
+        while landings.try_join_next().is_some() {}
+        landings.spawn(async move {
+            if let Err(error) = landing.land(&repo, card).await {
+                tracing::error!(repo, card, %error, "landing failed");
+            }
+            let _ = topics.send(Topic::Change { repo, card });
+            let _ = topics.send(Topic::ChangeList);
+        });
     }
 }
 
@@ -56,13 +113,37 @@ pub fn router(state: AppState, web_dist: PathBuf) -> Router {
         .fallback_service(files)
 }
 
-pub async fn serve(addr: SocketAddr, router: Router) -> Result<()> {
+pub async fn serve(addr: SocketAddr, router: Router, state: AppState) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("binding {addr}"))?;
     tracing::info!(%addr, "skiffd listening");
-    axum::serve(listener, router).await.context("serving")?;
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            // Drain before asking axum's long-lived WebSockets to close. A
+            // browser may keep a socket open indefinitely; it must never keep
+            // an already-running push from reaching its durable outcome.
+            state.shutdown().await;
+        })
+        .await
+        .context("serving")?;
     Ok(())
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("installing SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = terminate.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 async fn ws_upgrade(
@@ -194,6 +275,67 @@ async fn handle_message(
 
 async fn run_command(state: &AppState, cmd: Command) -> anyhow::Result<()> {
     match cmd {
+        Command::AnnotateChange {
+            repo,
+            card,
+            round,
+            path,
+            line,
+            side,
+            text,
+        } => {
+            let changes = state.changes.clone();
+            let repo_for_task = repo.clone();
+            tokio::task::spawn_blocking(move || {
+                changes.add_annotation(&repo_for_task, card, round, &path, line, side, &text)
+            })
+            .await??;
+            let _ = state.topics.send(Topic::Change { repo, card });
+            Ok(())
+        }
+        Command::RequestChanges { repo, card, note } => {
+            let change = {
+                let changes = state.changes.clone();
+                let repo = repo.clone();
+                tokio::task::spawn_blocking(move || changes.store().require(&repo, card)).await??
+            };
+            if change.state != change::ChangeState::InReview {
+                anyhow::bail!(
+                    "change {repo}/{card} is {}; only in_review changes take requests",
+                    change.state
+                );
+            }
+            let session = change
+                .session
+                .ok_or_else(|| anyhow::anyhow!("change {repo}/{card} has no bound session"))?
+                .parse()
+                .map_err(|()| {
+                    anyhow::anyhow!("change {repo}/{card} has an invalid session binding")
+                })?;
+            let client_id = format!("review:{repo}:{card}:{}", change.updated_at);
+            state.runs.send(&session, &note, &client_id).await?;
+            let changes = state.changes.clone();
+            let repo_for_task = repo.clone();
+            tokio::task::spawn_blocking(move || {
+                changes.store().request_changes(&repo_for_task, card, &note)
+            })
+            .await??;
+            let _ = state.topics.send(Topic::Change { repo, card });
+            let _ = state.topics.send(Topic::ChangeList);
+            Ok(())
+        }
+        Command::ApproveChange { repo, card } => {
+            let landing = state.landing.clone();
+            let repo_for_task = repo.clone();
+            tokio::task::spawn_blocking(move || landing.begin(&repo_for_task, card)).await??;
+            let _ = state.topics.send(Topic::Change {
+                repo: repo.clone(),
+                card,
+            });
+            let _ = state.topics.send(Topic::ChangeList);
+            state.spawn_landing(repo, card).await;
+            Ok(())
+        }
         Command::Send {
             session,
             text,
@@ -300,7 +442,29 @@ async fn snapshot(
         None => (LiveState::default(), crate::model::ModelCatalog::default()),
     };
 
-    match compute(state.store.clone(), view, live, models).await {
+    let will_deploy = if matches!(view, ViewSpec::Change { .. }) {
+        match state.landing.tugboat() {
+            Some(tugboat) => tugboat
+                .service_count()
+                .await
+                .ok()
+                .and_then(|count| u32::try_from(count).ok()),
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    match compute(
+        state.store.clone(),
+        state.changes.clone(),
+        view,
+        live,
+        models,
+        will_deploy,
+    )
+    .await
+    {
         Ok(data) => {
             // Re-fetch: the await above yielded, and an unsubscribe may have
             // landed in the meantime. Sending a snapshot for a closed
@@ -331,13 +495,21 @@ async fn snapshot(
 /// worker threads.
 async fn compute(
     store: Store,
+    changes: change::ChangeService,
     view: ViewSpec,
     live: LiveState,
     models: crate::model::ModelCatalog,
+    will_deploy: Option<u32>,
 ) -> Result<ViewData> {
-    tokio::task::spawn_blocking(move || view.compute(&store, live, models))
-        .await
-        .context("the view task panicked")?
+    tokio::task::spawn_blocking(move || {
+        let mut data = view.compute(&store, &changes, live, models)?;
+        if let ViewData::Change(change) = &mut data {
+            change.will_deploy = will_deploy;
+        }
+        Ok(data)
+    })
+    .await
+    .context("the view task panicked")?
 }
 
 async fn send(socket: &mut WebSocket, frame: &ServerFrame) -> Result<()> {

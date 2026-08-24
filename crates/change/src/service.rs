@@ -27,6 +27,10 @@ impl ChangeService {
         &self.store
     }
 
+    pub fn jj(&self) -> &Jj {
+        &self.jj
+    }
+
     pub fn repository(&self, repo: &str) -> Result<PathBuf> {
         repository_path(&self.repos_dir, repo)
     }

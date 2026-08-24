@@ -12,6 +12,7 @@
 //! disciplines that never leak into each other.
 
 pub mod config;
+pub mod change_watch;
 pub mod content;
 pub mod ingest;
 pub mod model;

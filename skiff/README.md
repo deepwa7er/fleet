@@ -110,14 +110,18 @@ does not recognise. The hand-written barrel is `web/src/types.ts`, beside it.
 
 ### Status
 
-M1–M4 of [DW-004 §13](../docs/skiff-architecture.md) are complete. Pi, Muse,
+M1–M5 of [DW-004 §13](../docs/skiff-architecture.md) are complete. Pi, Muse,
 and OpenCode sessions now flow through native Rust adapters into the same
 typed transcript and live-run protocol. Send and abort work across all three;
 capability-gated rename, Pi model selection, and Pi orchestrator control are
 available in React, and source failures remain isolated and visible. Changes,
 The native `crates/change` model, authored log, jj integration, and structured
-diff now serve `dw` without a daemon or bridge password. Review and the desk
-are M5–M6; the breakwater cutover remains M7.
+diff now serve `dw` without a daemon or bridge password. Native review uses
+structured diffs and exact-line annotations over the same WebSocket as
+sessions; request-changes reaches the bound harness, and approval performs the
+typed `jj` landing followed by independently recorded deploy, public-record,
+and Fizzy outcomes. `dw finish` explicitly retries only an unfinished landing
+tail. The multi-pane desk is M6; the breakwater cutover remains M7.
 
 ---
 

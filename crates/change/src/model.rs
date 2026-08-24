@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::Commit;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export_to = "gen/")]
 pub enum ChangeState {
     Working,
     InReview,
@@ -37,8 +39,9 @@ impl ChangeState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export_to = "gen/")]
 pub enum Author {
     Agent,
     You,
@@ -53,15 +56,17 @@ impl std::fmt::Display for Author {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export_to = "gen/")]
 pub enum AnnotationSide {
     Old,
     New,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct Annotation {
     pub id: String,
     pub path: String,
@@ -71,8 +76,9 @@ pub struct Annotation {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct Round {
     pub n: u32,
     pub author: Author,
@@ -85,28 +91,31 @@ pub struct Round {
     pub created_at: String,
     #[serde(default)]
     pub annotations: Vec<Annotation>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub commit: Option<Commit>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub divergent: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct Request {
     pub note: String,
     pub at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct Landed {
     pub tip: String,
     pub at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct Landing {
     pub ok: bool,
     pub reason: Option<String>,
@@ -115,31 +124,35 @@ pub struct Landing {
     pub at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct CardComment {
     pub ok: bool,
     pub message: Option<String>,
     pub at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct RecordExport {
     pub ok: bool,
     pub message: Option<String>,
     pub at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct DeployOutcome {
     pub ok: bool,
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct DeployService {
     pub name: String,
     pub job_id: Option<String>,
@@ -148,8 +161,9 @@ pub struct DeployService {
     pub outcome: Option<DeployOutcome>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct Deploy {
     pub at: String,
     pub error: Option<String>,
@@ -157,10 +171,12 @@ pub struct Deploy {
     pub services: Vec<DeployService>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct Change {
     pub repo: String,
+    #[ts(type = "number")]
     pub card: u64,
     pub title: Option<String>,
     pub session: Option<String>,
@@ -175,12 +191,8 @@ pub struct Change {
     pub card_comment: Option<CardComment>,
     pub record_export: Option<RecordExport>,
     pub deploy: Option<Deploy>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub path: Option<String>,
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 impl Change {
@@ -196,10 +208,12 @@ impl Change {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct ChangeRef {
     pub repo: String,
+    #[ts(type = "number")]
     pub card: u64,
     pub state: ChangeState,
     pub rounds: u32,

@@ -83,6 +83,12 @@ enum Cli {
         #[arg(long)]
         repo: Option<String>,
     },
+    /// Explicitly retry unfinished post-landing consequences.
+    Finish {
+        card: u64,
+        #[arg(long)]
+        repo: Option<String>,
+    },
     /// Turn your own working copy into a one-round change ready to land.
     Ship {
         /// What this is — the only ceremony left for your own work.
@@ -209,7 +215,29 @@ async fn run(cli: Cli) -> Result<()> {
             println!("submitted {repo} #{card} · review in Skiff");
             Ok(())
         }
+        Cli::Finish { card, repo } => {
+            let repo = repo_name(repo)?;
+            let landing =
+                change::LandingService::new(service.clone(), change::LandingConfig::from_env())?;
+            let report = landing.finish(&repo, card).await?;
+            println!(
+                "finished {repo} #{card} · record {} · card comment {} · deploy {} · {} job outcomes",
+                attempted(report.record_attempted),
+                attempted(report.card_comment_attempted),
+                attempted(report.deploy_triggered),
+                report.deploy_jobs_finished,
+            );
+            Ok(())
+        }
         Cli::Ship { sentence, board } => ship(&service, &sentence, &board).await,
+    }
+}
+
+fn attempted(value: bool) -> &'static str {
+    if value {
+        "retried"
+    } else {
+        "complete/disabled"
     }
 }
 

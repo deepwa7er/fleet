@@ -13,13 +13,18 @@ It owns:
   author the same change from separate processes;
 - repository-safe jj lookup and additive-round validation;
 - git-format patch parsing into files, hunks, and old/new numbered lines;
-- exact `(path, side, line)` annotation-anchor validation.
+- exact `(path, side, line)` annotation-anchor validation;
+- the fetch/rebase/conflict-check/push landing boundary;
+- token-gated fleet deploy triggering and durable job outcomes;
+- exclusion-by-default public-record export and Fizzy landing comments;
+- explicit tail recovery through `dw finish`, which skips completed steps.
 
 The log remains compatible with records written by the Node bridge. Unknown
 or torn event lines are ignored. New paired facts such as request+reopen and
 landed+shipped are each one event, so a crash cannot persist half of the
 state transition.
 
-`cargo test -p change` includes a real colocated-jj integration test. It skips
-only on a host where `jj` is absent; the Fleet development machines are
-expected to have it installed.
+`cargo test -p change` includes real colocated-jj landing, bare-Git record,
+and fake-daemon tail integrations. The jj tests skip only on a host where
+`jj` is absent; the Fleet development machines are expected to have it
+installed.

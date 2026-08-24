@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use tokio::sync::broadcast;
 
+use skiff::change_watch::ChangeWatch;
 use skiff::config::Config;
 use skiff::ingest::opencode::OpencodeIngest;
 use skiff::ingest::{Ingest, Topic};
@@ -65,7 +66,13 @@ async fn main() -> Result<()> {
             loop {
                 match topics.recv().await {
                     Ok(Topic::Session(id)) => runs.session_changed(&id).await,
-                    Ok(_) => {}
+                    Ok(
+                        Topic::SessionList
+                        | Topic::Run(_)
+                        | Topic::SourceHealth
+                        | Topic::ChangeList
+                        | Topic::Change { .. },
+                    ) => {}
                     // Falling behind only delays a handover; the next file
                     // change resolves it.
                     Err(broadcast::error::RecvError::Lagged(_)) => {}
@@ -75,6 +82,24 @@ async fn main() -> Result<()> {
         }
     });
 
-    let router = router(AppState::new(store, runs, topics), config.web_dist_path());
-    serve(config.addr, router).await
+    let change_store = change::Store::new(change::default_change_dir()?);
+    ChangeWatch::new(change_store.clone(), topics.clone()).spawn();
+    let changes = change::ChangeService::new(
+        change_store,
+        change::default_repos_dir()?,
+        change::Jj::new(
+            std::env::var_os("JJ_BINARY")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| "jj".into()),
+        ),
+    );
+    let state = AppState::with_changes(
+        store,
+        runs,
+        topics,
+        changes,
+        change::LandingConfig::from_env(),
+    )?;
+    let router = router(state.clone(), config.web_dist_path());
+    serve(config.addr, router, state).await
 }

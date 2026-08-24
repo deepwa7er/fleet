@@ -1263,11 +1263,17 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 name = "change"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "axum",
  "chrono",
+ "fizzy",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
+ "ts-rs",
  "uuid",
 ]
 
@@ -4699,6 +4705,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "change",
  "clap",
  "futures-util",
  "libc",

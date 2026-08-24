@@ -96,3 +96,52 @@ body {
   border-color: var(--color-accent);
   box-shadow: 0 0 0 2px var(--color-accent);
 }
+
+.diff-scroll {
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  scrollbar-gutter: stable;
+}
+
+.diff-hunk {
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  color: var(--color-muted);
+  padding: 0.35rem 1rem;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 3.25rem 3.25rem 1.5rem minmax(max-content, 1fr) auto;
+  min-height: 1.55rem;
+}
+
+.diff-addition {
+  background: color-mix(in srgb, var(--color-good) 11%, transparent);
+}
+
+.diff-deletion {
+  background: color-mix(in srgb, var(--color-danger) 9%, transparent);
+}
+
+.diff-number {
+  color: var(--color-muted);
+  padding-right: 0.75rem;
+  text-align: right;
+  user-select: none;
+}
+
+.diff-sign {
+  color: var(--color-muted);
+  text-align: center;
+  user-select: none;
+}
+
+.diff-note {
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-fill));
+  margin: 0.4rem 1rem 0.8rem 6.5rem;
+  max-width: 50rem;
+  padding: 0.65rem 0.9rem;
+  white-space: normal;
+}

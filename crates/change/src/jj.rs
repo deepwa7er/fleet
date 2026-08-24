@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::{Error, Result};
 
@@ -18,8 +19,9 @@ const SHOW_TEMPLATE: &str = concat!(
     "parents.map(|c| c.change_id()).join(\",\") ++ \"\\n\"",
 );
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct Commit {
     pub change_id: String,
     pub commit_id: String,

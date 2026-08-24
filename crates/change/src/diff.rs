@@ -4,9 +4,11 @@
 //! text or try to re-fit annotations in the browser.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct Diff {
     pub files: Vec<DiffFile>,
 }
@@ -31,8 +33,9 @@ impl Diff {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct DiffFile {
     pub old_path: Option<String>,
     pub new_path: Option<String>,
@@ -40,8 +43,9 @@ pub struct DiffFile {
     pub hunks: Vec<DiffHunk>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct DiffHunk {
     pub old_start: u32,
     pub old_count: u32,
@@ -51,16 +55,18 @@ pub struct DiffHunk {
     pub lines: Vec<DiffLine>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export_to = "gen/")]
 pub enum DiffKind {
     Context,
     Addition,
     Deletion,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export_to = "gen/")]
 pub struct DiffLine {
     pub kind: DiffKind,
     pub old_line: Option<u32>,

@@ -35,6 +35,10 @@ use source::{Discovered, Source};
 /// invalidated subscription recomputes and re-sends (DW-004 §6).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Topic {
+    /// A change was created or its summary changed.
+    ChangeList,
+    /// One durable change or its landing tail changed.
+    Change { repo: String, card: u64 },
     /// A session was added, removed, or its summary changed.
     SessionList,
     /// A specific session's entries changed. Rare: pi persists a message

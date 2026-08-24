@@ -14,6 +14,8 @@
 //! view where the interesting update is a few hundred bytes appended to
 //! something large, many times a second.
 
+mod change;
+mod changes;
 mod session;
 mod sessions;
 
@@ -26,6 +28,8 @@ use crate::model::{ModelCatalog, SessionKey};
 use crate::run::LiveState;
 use crate::store::Store;
 
+pub use change::ChangeView;
+pub use changes::ChangesView;
 pub use session::{SessionView, transcript};
 pub use sessions::SessionsView;
 
@@ -34,6 +38,15 @@ pub use sessions::SessionsView;
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[ts(export_to = "gen/")]
 pub enum ViewSpec {
+    /// Every durable change, newest first.
+    Changes,
+    /// One review. `round = None` is the cumulative feature diff.
+    Change {
+        repo: String,
+        #[ts(type = "number")]
+        card: u64,
+        round: Option<u32>,
+    },
     /// Every session across every harness, with each source's health.
     Sessions,
     /// One session: its transcript and live state.
@@ -62,12 +75,32 @@ impl ViewSpec {
     /// both views had an answer for it.
     pub fn update_for(&self, topic: &Topic) -> Option<Update> {
         match self {
+            ViewSpec::Changes => match topic {
+                Topic::ChangeList | Topic::Change { .. } => Some(Update::Snapshot),
+                Topic::SessionList | Topic::Session(_) | Topic::Run(_) | Topic::SourceHealth => {
+                    None
+                }
+            },
+            ViewSpec::Change { repo, card, .. } => match topic {
+                Topic::Change {
+                    repo: changed_repo,
+                    card: changed_card,
+                } if changed_repo == repo && changed_card == card => Some(Update::Snapshot),
+                Topic::Change { .. }
+                | Topic::ChangeList
+                | Topic::SessionList
+                | Topic::Session(_)
+                | Topic::Run(_)
+                | Topic::SourceHealth => None,
+            },
             ViewSpec::Sessions => match topic {
                 Topic::SessionList | Topic::SourceHealth => Some(Update::Snapshot),
                 // A session's transcript or its in-flight reply changes
                 // nothing in the list; the summary change that would is
                 // announced as `SessionList`.
-                Topic::Session(_) | Topic::Run(_) => None,
+                Topic::Session(_) | Topic::Run(_) | Topic::ChangeList | Topic::Change { .. } => {
+                    None
+                }
             },
             ViewSpec::Session { id } => match topic {
                 // Everything this view renders from the store — the transcript
@@ -80,7 +113,10 @@ impl ViewSpec {
                 Topic::Session(changed) if changed == id => Some(Update::Snapshot),
                 Topic::Run(changed) if changed == id => Some(Update::Live),
                 Topic::Session(_) | Topic::Run(_) => None,
-                Topic::SessionList | Topic::SourceHealth => None,
+                Topic::SessionList
+                | Topic::SourceHealth
+                | Topic::ChangeList
+                | Topic::Change { .. } => None,
             },
         }
     }
@@ -94,10 +130,15 @@ impl ViewSpec {
     pub fn compute(
         &self,
         store: &Store,
+        changes: &::change::ChangeService,
         live: LiveState,
         models: ModelCatalog,
     ) -> Result<ViewData> {
         match self {
+            ViewSpec::Changes => Ok(ViewData::Changes(changes::compute(changes)?)),
+            ViewSpec::Change { repo, card, round } => Ok(ViewData::Change(Box::new(
+                change::compute(changes, repo, *card, *round)?,
+            ))),
             ViewSpec::Sessions => Ok(ViewData::Sessions(sessions::compute(store)?)),
             ViewSpec::Session { id } => Ok(ViewData::Session(Box::new(session::compute(
                 store, id, live, models,
@@ -108,6 +149,7 @@ impl ViewSpec {
     /// The session this view watches, if it watches one.
     pub fn session(&self) -> Option<&SessionKey> {
         match self {
+            ViewSpec::Changes | ViewSpec::Change { .. } => None,
             ViewSpec::Sessions => None,
             ViewSpec::Session { id } => Some(id),
         }
@@ -119,6 +161,8 @@ impl ViewSpec {
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[ts(export_to = "gen/")]
 pub enum ViewData {
+    Changes(ChangesView),
+    Change(Box<ChangeView>),
     Sessions(SessionsView),
     /// Boxed: a session view carries a whole transcript, and an unboxed
     /// variant would make every `ViewData` — including a small session list —
