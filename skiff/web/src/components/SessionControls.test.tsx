@@ -34,6 +34,7 @@ const view: SessionView = {
     ],
     error: null,
   },
+  change: null,
 }
 
 describe("SessionControls", () => {

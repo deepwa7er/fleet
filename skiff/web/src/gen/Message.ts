@@ -5,7 +5,7 @@ import type { Role } from "./Role";
 /**
  * One message in a transcript.
  */
-export type Message = { 
+export type Message = {
 /**
  * Stable for the message's whole life, **including while it streams**.
  * The old bridge named an in-flight message `<pending>` and swapped in the
@@ -13,11 +13,11 @@ export type Message = {
  * needed a positional key to survive settling (card #110). A live message
  * carries its run's id from the moment it opens, so nothing remounts.
  */
-id: string, role: Role, 
+id: string, role: Role,
 /**
  * The model behind an assistant message, when the harness records it.
  */
-agent: string | null, createdMs: number | null, 
+agent: string | null, createdMs: number | null,
 /**
  * When the harness recorded the message as finished, if it records that
  * at all.

@@ -7,7 +7,7 @@
  * agree about it — the "would two clients have to agree?" test for which side
  * of the boundary something belongs on (DW-004 §3).
  */
-export type PendingPrompt = { 
+export type PendingPrompt = {
 /**
  * Echoed from the client's command, so the pane that sent it can match
  * its optimistic bubble by identity rather than by guessing.

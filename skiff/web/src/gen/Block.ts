@@ -2,7 +2,7 @@
 import type { Inline } from "./Inline";
 import type { Token } from "./Token";
 
-export type Block = { "kind": "paragraph", inlines: Array<Inline>, } | { "kind": "heading", level: number, inlines: Array<Inline>, } | { "kind": "code", lang: string | null, tokens: Array<Token>, } | { "kind": "list", ordered: boolean, 
+export type Block = { "kind": "paragraph", inlines: Array<Inline>, } | { "kind": "heading", level: number, inlines: Array<Inline>, } | { "kind": "code", lang: string | null, tokens: Array<Token>, } | { "kind": "list", ordered: boolean,
 /**
  * The first number of an ordered list, when it is not 1.
  */

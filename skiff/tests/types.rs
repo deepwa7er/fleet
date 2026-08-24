@@ -37,6 +37,29 @@ fn generate_into(base: &Path) {
     std::fs::create_dir_all(base.join(GEN_SUBDIR)).expect("creating the output directory");
     ClientFrame::export_all_to(base).expect("exporting the client frame graph");
     ServerFrame::export_all_to(base).expect("exporting the server frame graph");
+    normalize_generated_files(&base.join(GEN_SUBDIR));
+}
+
+/// ts-rs emits spaces before newlines in documented multi-line types. Keep
+/// generated artifacts diff-clean without asking every downstream formatter
+/// to special-case them. This normalization is part of generation, so drift
+/// checks and checked-in output remain byte-for-byte deterministic.
+fn normalize_generated_files(dir: &Path) {
+    for entry in std::fs::read_dir(dir)
+        .expect("reading generated type directory")
+        .flatten()
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "ts"))
+    {
+        let path = entry.path();
+        let body = std::fs::read_to_string(&path).expect("reading generated type");
+        let normalized = body
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        std::fs::write(path, normalized).expect("normalizing generated type");
+    }
 }
 
 fn read_dir(dir: &Path) -> BTreeSet<(String, String)> {
@@ -59,7 +82,10 @@ fn the_checked_in_client_types_match_the_server() {
     let out = tempfile::tempdir().expect("a temporary directory");
     generate_into(out.path());
     let generated = read_dir(&out.path().join(GEN_SUBDIR));
-    assert!(!generated.is_empty(), "the export produced nothing; the graph roots are wrong");
+    assert!(
+        !generated.is_empty(),
+        "the export produced nothing; the graph roots are wrong"
+    );
 
     if std::env::var_os("SKIFF_WRITE_TYPES").is_some() {
         let target = checked_in_base().join(GEN_SUBDIR);

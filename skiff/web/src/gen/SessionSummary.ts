@@ -9,16 +9,16 @@ import type { Harness } from "./Harness";
  * Every field here is *derived* from the harness's own files. Nothing in this
  * struct is authored by skiff, so it is always safe to throw away and rebuild.
  */
-export type SessionSummary = { id: string, harness: Harness, capabilities: Capabilities, 
+export type SessionSummary = { id: string, harness: Harness, capabilities: Capabilities,
 /**
  * The session's name, when its harness has one. muse names its own and
  * offers no rename, so this can be present but not editable.
  */
-title: string | null, 
+title: string | null,
 /**
  * The working directory the session runs in, when the harness records it.
  */
-directory: string | null, 
+directory: string | null,
 /**
  * Milliseconds since the epoch. `i64`, not `u64`: JSON numbers are
  * signed, and a clock-skewed pre-epoch timestamp should read as absurd

@@ -5,15 +5,15 @@ import type { PendingPrompt } from "./PendingPrompt";
 /**
  * Everything about a session that is not in the store.
  */
-export type LiveState = { 
+export type LiveState = {
 /**
  * The harness is working: between `agent_start` and settlement.
  */
-working: boolean, 
+working: boolean,
 /**
  * The in-flight reply, if one is streaming.
  */
-pending: Message | null, 
+pending: Message | null,
 /**
  * A sent prompt not yet visible in the transcript.
  */

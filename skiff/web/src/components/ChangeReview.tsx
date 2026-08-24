@@ -10,13 +10,13 @@ export function ChangeReview({
   card,
   round,
   onRound,
-  onBack,
+  onClose,
 }: {
   repo: string
   card: number
   round: number | null
   onRound: (round: number | null) => void
-  onBack: () => void
+  onClose: () => void
 }) {
   const view = useView({ kind: "change", repo, card, round } as const)
   const [note, setNote] = useState("")
@@ -45,7 +45,7 @@ export function ChangeReview({
     <article className="flex flex-col gap-8">
       <header className="flex flex-wrap items-start justify-between gap-5">
         <div>
-          <button className="text-sm text-accent" onClick={onBack}>← Changes</button>
+          <button className="text-sm text-accent" onClick={onClose}>Close change</button>
           <p className="instrumentation mt-5">{repo} #{card} · {change.state.replace("_", " ")}</p>
           <h2 className="font-heading text-4xl tracking-tight">{change.title ?? `Change #${card}`}</h2>
         </div>

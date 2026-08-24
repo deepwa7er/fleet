@@ -2,7 +2,7 @@
 import type { SessionSummary } from "./SessionSummary";
 import type { SourceHealth } from "./SourceHealth";
 
-export type SessionsView = { 
+export type SessionsView = {
 /**
  * Most recently active first.
  */

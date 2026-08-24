@@ -21,6 +21,7 @@ use ts_rs::TS;
 use crate::model::{Message, ModelCatalog, Part, Role, SessionKey, SessionSummary, ToolStatus};
 use crate::run::LiveState;
 use crate::store::Store;
+use change::{ChangeRef, ChangeService};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -40,10 +41,13 @@ pub struct SessionView {
     /// capability; an enumeration failure is isolated here rather than
     /// failing the transcript subscription.
     pub models: ModelCatalog,
+    /// The most recently active durable change bound to this session.
+    pub change: Option<ChangeRef>,
 }
 
 pub fn compute(
     store: &Store,
+    changes: &ChangeService,
     id: &SessionKey,
     live: LiveState,
     models: ModelCatalog,
@@ -55,6 +59,7 @@ pub fn compute(
             messages: Vec::new(),
             live,
             models,
+            change: changes.store().bound_to(&id.to_string())?,
         });
     }
     Ok(SessionView {
@@ -62,6 +67,7 @@ pub fn compute(
         messages: transcript(&store.entries(id)?),
         live,
         models,
+        change: changes.store().bound_to(&id.to_string())?,
     })
 }
 
@@ -498,8 +504,16 @@ mod tests {
     #[test]
     fn an_unknown_session_is_named_as_absent_rather_than_empty() {
         let store = Store::in_memory().unwrap();
+        let changes = tempfile::tempdir().unwrap();
+        let repos = tempfile::tempdir().unwrap();
+        let changes = ChangeService::new(
+            change::Store::new(changes.path()),
+            repos.path(),
+            change::Jj::new("jj"),
+        );
         let view = compute(
             &store,
+            &changes,
             &"pi:nope".parse().unwrap(),
             LiveState::default(),
             ModelCatalog::default(),
@@ -507,5 +521,35 @@ mod tests {
         .unwrap();
         assert_eq!(view.session, None);
         assert!(view.messages.is_empty());
+    }
+
+    #[test]
+    fn a_session_view_includes_its_durable_change_binding() {
+        let store = Store::in_memory().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let repos = tempfile::tempdir().unwrap();
+        let changes = ChangeService::new(
+            change::Store::new(root.path()),
+            repos.path(),
+            change::Jj::new("jj"),
+        );
+        changes
+            .store()
+            .create("fleet", 124, Some("Rust Skiff"), Some("pi:abc"))
+            .unwrap();
+
+        let view = compute(
+            &store,
+            &changes,
+            &"pi:abc".parse().unwrap(),
+            LiveState::default(),
+            ModelCatalog::default(),
+        )
+        .unwrap();
+
+        let change = view.change.expect("bound change");
+        assert_eq!(change.repo, "fleet");
+        assert_eq!(change.card, 124);
+        assert_eq!(change.title.as_deref(), Some("Rust Skiff"));
     }
 }

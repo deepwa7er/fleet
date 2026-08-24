@@ -8,11 +8,11 @@ import type { ToolStatus } from "./ToolStatus";
  * this type — carrying them further would make every layer know about a
  * concept only one layer acts on.
  */
-export type Part = { "kind": "text", blocks: Array<Block>, } | { "kind": "reasoning", blocks: Array<Block>, } | { "kind": "tool", 
+export type Part = { "kind": "text", blocks: Array<Block>, } | { "kind": "reasoning", blocks: Array<Block>, } | { "kind": "tool",
 /**
  * The harness's own call id, used to fold a result into its call.
  */
-callId: string, name: string, status: ToolStatus, 
+callId: string, name: string, status: ToolStatus,
 /**
  * Program output, kept as text. Monospace is DW-001's voice for "a
  * machine produced this"; parsing it as markdown would be a category

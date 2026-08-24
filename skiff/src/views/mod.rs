@@ -112,11 +112,13 @@ impl ViewSpec {
                 // line, which on a busy desktop is most of the time.
                 Topic::Session(changed) if changed == id => Some(Update::Snapshot),
                 Topic::Run(changed) if changed == id => Some(Update::Live),
+                // A change binding or its summary can alter the small change
+                // ref embedded beside this transcript. The topic does not
+                // carry the session binding, so open session panes recompute;
+                // active change volume is deliberately small.
+                Topic::Change { .. } => Some(Update::Snapshot),
                 Topic::Session(_) | Topic::Run(_) => None,
-                Topic::SessionList
-                | Topic::SourceHealth
-                | Topic::ChangeList
-                | Topic::Change { .. } => None,
+                Topic::SessionList | Topic::SourceHealth | Topic::ChangeList => None,
             },
         }
     }
@@ -141,7 +143,7 @@ impl ViewSpec {
             ))),
             ViewSpec::Sessions => Ok(ViewData::Sessions(sessions::compute(store)?)),
             ViewSpec::Session { id } => Ok(ViewData::Session(Box::new(session::compute(
-                store, id, live, models,
+                store, changes, id, live, models,
             )?))),
         }
     }

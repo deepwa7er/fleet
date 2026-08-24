@@ -5,26 +5,40 @@ import { Composer } from "./Composer"
 import { SessionControls } from "./SessionControls"
 import { Transcript } from "./Transcript"
 
-export function Session({ id, onBack }: { id: string; onBack: () => void }) {
+export function Session({
+  id,
+  onClose,
+  onOpenChange,
+}: {
+  id: string
+  onClose: () => void
+  onOpenChange: (repo: string, card: number) => void
+}) {
   const view = useView({ kind: "session", id } as const)
 
   return (
     <div className="flex flex-col gap-8">
       <button
         type="button"
-        onClick={onBack}
+        onClick={onClose}
         className="instrumentation cursor-pointer self-start text-accent"
       >
-        ← sessions
+        Close session
       </button>
       {view.status === "loading" && <p className="text-muted">Loading…</p>}
       {view.status === "error" && <p className="text-danger">{view.error}</p>}
-      {view.status === "ready" && <Loaded view={view.data} />}
+      {view.status === "ready" && <Loaded view={view.data} onOpenChange={onOpenChange} />}
     </div>
   )
 }
 
-function Loaded({ view }: { view: SessionView }) {
+function Loaded({
+  view,
+  onOpenChange,
+}: {
+  view: SessionView
+  onOpenChange: (repo: string, card: number) => void
+}) {
   // An absent session is named, not rendered as an empty transcript — the two
   // look identical otherwise, and only one of them means "this is gone".
   if (!view.session) {
@@ -48,6 +62,16 @@ function Loaded({ view }: { view: SessionView }) {
         )}
       </header>
       <SessionControls view={view} command={(command) => client.command(command)} />
+      {view.change ? (
+        <button
+          type="button"
+          className="physical-key self-start bg-fill px-4 py-2 text-left"
+          onClick={() => onOpenChange(view.change!.repo, view.change!.card)}
+        >
+          <span className="block">Review {view.change.title ?? `change #${view.change.card}`}</span>
+          <span className="instrumentation">{view.change.repo} #{view.change.card} · open beside transcript</span>
+        </button>
+      ) : null}
       <Transcript messages={view.messages} live={view.live} harness={session.harness} />
       {/* All three harnesses expose the same typed send/abort intent here;
           their incompatible process models end at Rust's adapter boundary. */}
