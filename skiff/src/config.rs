@@ -14,10 +14,10 @@ use crate::ingest::{muse, pi};
 #[derive(Debug, Parser)]
 #[command(name = "skiffd", version)]
 pub struct Config {
-    /// Address to listen on. Defaults to the tailnet-facing port beside the
-    /// stack skiffd replaces, so both can run at once until the cutover
-    /// (DW-004 §13).
-    #[arg(long, env = "SKIFF_ADDR", default_value = "0.0.0.0:8121")]
+    /// Address to listen on. Development defaults to loopback; the production
+    /// wrapper binds the desktop's tailnet IP explicitly. Skiff has no app-level
+    /// authentication, so an implicit LAN bind would be unsafe.
+    #[arg(long, env = "SKIFF_ADDR", default_value = "127.0.0.1:8120")]
     pub addr: SocketAddr,
 
     /// The derived read model. Safe to delete at any time: it is rebuilt on

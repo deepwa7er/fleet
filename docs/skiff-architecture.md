@@ -5,7 +5,7 @@
 │ DOC. NO.  DW-004          REV. A          CLASSIFICATION: INTERNAL     │
 │ SUBJECT   Skiff rebuilt ground-up: one Rust service, one React client  │
 │ ORIGIN    Design session 2026-08-23                                    │
-│ STATUS    Accepted. Building. Cutover pending M7.                      │
+│ STATUS    Accepted. Implemented through M7.                            │
 │ SCOPE     skiff · crates/change · crates/dw · breakwater               │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -397,7 +397,7 @@ awaits.
 Specifically:
 
 - **Record export.** DW-003's privacy boundary is field-by-field
-  exclusion-by-default in `buildEntry`. It must sit beside the struct it
+  exclusion-by-default in `build_public_change`. It must sit beside the struct it
   filters, so that a newly added field's *omission* is visible in the same
   review that adds it. This is the strongest of the three.
 - **Deploy trigger.** A `DeployTrigger` port with the tugboat HTTP client as one
@@ -534,10 +534,10 @@ Not carried across:
 
 ## 13. MILESTONES
 
-Ordered so that the risky, valuable part comes first and every milestone is
-independently usable. skiffd runs on **port 8121** throughout, alongside the
-live Rails+bridge stack on 8120; both read the same sources, which is safe
-precisely because observed state is derived.
+Ordered so that the risky, valuable part came first and every milestone was
+independently usable. During M1–M6 skiffd ran on **port 8121** alongside the
+live Rails+bridge stack on 8120; M7 moved skiffd to 8120 and deleted both
+replaced processes.
 
 | | |
 |---|---|

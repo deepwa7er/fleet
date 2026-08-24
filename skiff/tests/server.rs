@@ -65,6 +65,8 @@ async fn start() -> Harness {
 
     let dist = tempfile::tempdir().unwrap();
     std::fs::write(dist.path().join("index.html"), "<!doctype html>").unwrap();
+    std::fs::write(dist.path().join("service-worker.js"), "// worker").unwrap();
+    std::fs::write(dist.path().join("manifest.webmanifest"), "{}").unwrap();
     let app = router(AppState::new(store, runs, topics), dist.path().to_path_buf());
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
@@ -210,6 +212,23 @@ async fn the_client_bundle_is_served_with_a_fallback_for_client_routes() {
     assert!(client.get(&format!("{base}/s/pi:abc")).await.contains("<!doctype html>"));
 }
 
+#[tokio::test]
+async fn mutable_pwa_metadata_is_never_served_as_an_immutable_asset() {
+    let harness = start().await;
+    let base = format!("http://{}", harness.addr);
+    let client = reqwest_lite::Client;
+
+    let worker = client.raw(&format!("{base}/service-worker.js")).await;
+    assert!(worker.contains("cache-control: no-cache"));
+    assert!(worker.contains("content-type: text/javascript; charset=utf-8"));
+    assert!(worker.ends_with("// worker"));
+
+    let manifest = client.raw(&format!("{base}/manifest.webmanifest")).await;
+    assert!(manifest.contains("cache-control: no-cache"));
+    assert!(manifest.contains("content-type: application/manifest+json"));
+    assert!(manifest.ends_with("{}"));
+}
+
 /// A three-line HTTP GET, so the test suite does not pull in an HTTP client
 /// for two assertions.
 mod reqwest_lite {
@@ -218,7 +237,7 @@ mod reqwest_lite {
     pub struct Client;
 
     impl Client {
-        pub async fn get(&self, url: &str) -> String {
+        pub async fn raw(&self, url: &str) -> String {
             let rest = url.strip_prefix("http://").expect("an http url");
             let (host, path) = rest.split_once('/').expect("a path");
             let mut stream = tokio::net::TcpStream::connect(host).await.unwrap();
@@ -227,7 +246,16 @@ mod reqwest_lite {
             stream.write_all(request.as_bytes()).await.unwrap();
             let mut response = String::new();
             stream.read_to_string(&mut response).await.unwrap();
-            response.split_once("\r\n\r\n").expect("a response body").1.to_owned()
+            response
+        }
+
+        pub async fn get(&self, url: &str) -> String {
+            self.raw(url)
+                .await
+                .split_once("\r\n\r\n")
+                .expect("a response body")
+                .1
+                .to_owned()
         }
     }
 }

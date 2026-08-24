@@ -24,7 +24,7 @@
 #     reads its existing token file directly. Nothing is copied into Skiff.
 set -euo pipefail
 
-export SKIFF_WEB_DIST="${HOME}/.local/share/skiffd/web"
+export SKIFF_WEB_DIST="${HOME}/.local/share/skiffd/current"
 export SKIFF_STORE="${HOME}/.local/state/skiff/read-model.sqlite3"
 export RUST_LOG="${RUST_LOG:-skiff=info}"
 
@@ -45,4 +45,4 @@ if [ -r "${TUGBOAT_CONFIG}/serve-url" ] && [ -r "${TUGBOAT_CONFIG}/serve-token" 
   export TUGBOAT_SERVE_TOKEN="$(<"${TUGBOAT_CONFIG}/serve-token")"
 fi
 
-exec "${HOME}/.local/bin/skiffd" --addr "$(tailscale ip -4):8121"
+exec "${HOME}/.local/bin/skiffd" --addr "$(tailscale ip -4):8120"

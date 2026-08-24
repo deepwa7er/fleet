@@ -1,6 +1,0 @@
-<%# One change in a register (DW-002 §6): the same item shape as a session —
-    title as the link, one instrumentation line of facts. Locals: change. %>
-<li class="item">
-  <%= link_to change_title(change), change_path(change[:repo], change[:card]), class: "item-title" %>
-  <p class="instrumentation"><%= change_instrumentation(change) %></p>
-</li>

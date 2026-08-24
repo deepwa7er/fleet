@@ -1,23 +1,16 @@
-# systemd user unit for skiffd — the Rust + React rebuild (DW-004).
+# systemd user unit for skiffd — the Rust + React agent desk (DW-004).
 #
-# Runs ALONGSIDE the Rails stack (skiff.service on 8120) throughout the
-# rebuild, on port 8121. Both read the same harness session files, which is
-# safe precisely because everything skiffd caches is derived from them
-# (DW-004 §13). The flip happens at breakwater in M7, and this unit outlives
-# it — only the port changes.
+# deploy/install-skiffd.sh installs this to the user unit directory. ExecStart
+# references the installed wrapper, not a checkout, so the unit keeps working
+# when a development worktree moves or is removed.
 #
-# Template: deploy/install-skiffd.sh substitutes the placeholders and installs
-# this to ~/.config/systemd/user/skiffd.service. ExecStart references the
-# INSTALLED wrapper, not the repo's copy, so the unit keeps working however the
-# checkout moves.
-#
-# Restart=always, matching skiff.service and for the same reason: a stray
+# Restart=always: a stray
 # external SIGTERM makes a clean exit, and under on-failure a clean exit looks
 # intentional and the unit stays dead. That took the site down once
 # (2026-08-10). systemd never auto-restarts a stop it initiated, so
 # `systemctl --user stop` still stops.
 [Unit]
-Description=skiffd — the agent desk (DW-004, tailnet, port 8121)
+Description=skiffd — the agent desk (tailnet, port 8120)
 After=network-online.target tailscaled.service
 Wants=network-online.target
 

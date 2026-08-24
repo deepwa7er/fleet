@@ -82,7 +82,7 @@ async fn start() -> Harness {
     std::fs::create_dir_all(&destination).unwrap();
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
-            "bridge/test/fixtures/muse-sessions/2026/08/10/{SESSION_ID}/session.jsonl"
+            "tests/fixtures/muse-sessions/2026/08/10/{SESSION_ID}/session.jsonl"
         )),
         destination.join("session.jsonl"),
     )

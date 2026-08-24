@@ -10,6 +10,11 @@
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
+The workflow and domain model remain live. Sections that place their
+implementation in Rails or the Node bridge describe the original delivery;
+[DW-004](skiff-architecture.md) superseded that runtime with `crates/change`,
+`dw`, skiffd, and React at the 2026-08-24 cutover.
+
 Capture you never touch, curation the agents do for you, and a public record
 that falls out of reviewing their work.
 

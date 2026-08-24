@@ -12,3 +12,12 @@ createRoot(root).render(
     <App />
   </StrictMode>,
 )
+
+// The worker caches only content-addressed client assets and the honest
+// offline page. WebSocket traffic, change state, and transcripts never enter
+// Cache Storage; reconnect snapshots remain the sole convergence mechanism.
+if ("serviceWorker" in navigator) {
+  addEventListener("load", () => {
+    void navigator.serviceWorker.register("/service-worker.js", { scope: "/" })
+  })
+}

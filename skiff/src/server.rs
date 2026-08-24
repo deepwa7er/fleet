@@ -16,6 +16,7 @@ use anyhow::{Context, Result};
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
+use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use tokio::sync::{Mutex, broadcast};
@@ -105,12 +106,44 @@ impl AppState {
 /// file falls back to `index.html`, because the client owns routing.
 pub fn router(state: AppState, web_dist: PathBuf) -> Router {
     let index = web_dist.join("index.html");
+    let worker = web_dist.join("service-worker.js");
+    let manifest = web_dist.join("manifest.webmanifest");
     let files = ServeDir::new(&web_dist).fallback(ServeFile::new(index));
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/ws", get(ws_upgrade))
+        // These two files are mutable release pointers, unlike Vite's hashed
+        // assets. Explicit no-cache keeps worker updates and install metadata
+        // from waiting on an intermediary's freshness guess.
+        .route(
+            "/service-worker.js",
+            get(move || no_cache_file(worker.clone(), "text/javascript; charset=utf-8")),
+        )
+        .route(
+            "/manifest.webmanifest",
+            get(move || no_cache_file(manifest.clone(), "application/manifest+json")),
+        )
         .with_state(Arc::new(state))
         .fallback_service(files)
+}
+
+async fn no_cache_file(
+    path: PathBuf,
+    content_type: &'static str,
+) -> std::result::Result<impl IntoResponse, StatusCode> {
+    let body = tokio::fs::read(path)
+        .await
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        })?;
+    Ok((
+        [
+            (header::CACHE_CONTROL, "no-cache"),
+            (header::CONTENT_TYPE, content_type),
+        ],
+        body,
+    ))
 }
 
 pub async fn serve(addr: SocketAddr, router: Router, state: AppState) -> Result<()> {
