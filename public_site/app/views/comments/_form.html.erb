@@ -1,0 +1,14 @@
+<%= form_with model: comment, url: url do |form| %>
+  <% if comment.errors.any? %>
+    <ul>
+      <% comment.errors.full_messages.each do |message| %>
+      <li><%= message %></li>
+      <% end %>
+    </ul>
+  <% end %>
+
+  <%= form.label :body, "Comment" %>
+  <%= form.text_area :body, rows: 4 %>
+
+  <%= form.submit submit_label %>
+<% end %>

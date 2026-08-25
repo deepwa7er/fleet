@@ -1,0 +1,8 @@
+<article id="<%= dom_id(comment) %>">
+  <p><%= comment.created_at.strftime("%B %-d %Y") %></p>
+  <%= simple_format comment.body %>
+
+  <%= link_to "Edit", edit_comment_path(comment) %>
+  <%= button_to "Delete", comment, method: :delete,
+      form: { data: { turbo_confirm: "Delete this comment?" } }%>
+</article>
