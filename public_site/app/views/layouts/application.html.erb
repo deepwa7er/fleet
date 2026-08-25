@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title><%= [content_for(:title), "deepwa7er"].compact_blank.join(" — ") %></title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <%= csrf_meta_tags %>
+    <%= csp_meta_tag %>
+
+    <%= yield :head %>
+
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="icon" href="/icon.png" type="image/png">
+    <link rel="apple-touch-icon" href="/icon.png">
+
+    <%# G11: the blackletter masthead voice (UnifrakturCook). Falls back to
+        Georgia if the font can't load. %>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=UnifrakturCook:wght@700&display=swap" rel="stylesheet">
+
+    <%= stylesheet_link_tag :app, "data-turbo-track": "reload" %>
+    <%= javascript_importmap_tags %>
+  </head>
+
+  <body>
+    <div class="container measure">
+      <header class="masthead">
+        <%# On the home page the masthead title and the page's heading are the
+            same string, so it is said once — as the incipit (G5 + G11), in the
+            masthead's place. Everywhere else the wordmark is a navigation link
+            back home. The title never appears twice on a page. %>
+        <% if current_page?(root_path) %>
+          <h1 class="incipit">deepwa7er</h1>
+        <% else %>
+          <a class="wordmark" href="<%= root_path %>">deepwa7er</a>
+        <% end %>
+        <nav class="masthead-nav">
+          <a href="https://blog.deepwa7er.com">Blog</a>
+          <a href="https://github.com/deepwa7er">GitHub</a>
+        </nav>
+      </header>
+
+      <% flash.each do |type, message| %>
+        <p class="flash flash--<%= type == "alert" ? "alert" : "notice" %>"><%= message %></p>
+      <% end %>
+
+      <%= yield %>
+    </div>
+  </body>
+</html>

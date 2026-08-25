@@ -87,6 +87,10 @@ label = "mirror"
 upstream = "127.0.0.1:8103"
 
 [[routes]]
+label = "public_site"
+upstream = "127.0.0.1:8104"
+
+[[routes]]
 label = "readout"
 upstream = "127.0.0.1:8101"
 

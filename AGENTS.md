@@ -53,9 +53,12 @@ Archived, both 2026-08-13: the drydock autonomous worker (`drydock.ARCHIVED.md`,
 
 `loom/` and `filament/` were standalone repos until 2026-08-14, imported here with full history (`git filter-repo --to-subdirectory-filter <name>`, then a merge with `--allow-unrelated-histories`) in PRs #32 and #39. `shutter/` followed on 2026-08-15 by the same method in PR #43. **`deepwa7er/loom`, `deepwa7er/filament`, and `deepwa7er/shutter` are now archived read-only on GitHub** and each carries a README pointing back here.
 
+`public_site/` followed on 2026-08-24 using the same history-preserving import under Fizzy card #128. After that import merges, archive `deepwa7er/public_site` read-only and treat this monorepo as its canonical source.
+
 Consequences for any change to any of them:
 
 - Change them in this repo. `~/code/loom`, `~/code/filament`, and `~/code/shutter` are stale checkouts of archived remotes, not worktrees to edit — a push from any of them fails, and work done there is stranded outside the monorepo.
+- Change `public_site/` in this repo too. `~/code/public_site` is the preserved standalone checkout used for the import, not a second working copy; after the import merges, new work there would be stranded outside the monorepo.
 - Do not restore the URL dependency. `loom/Package.swift` references filament as `.package(path: "../filament")`; the old `git@github.com:deepwa7er/filament.git` requirement now points at a frozen snapshot. `loom/Package.resolved` is intentionally absent — loom has no remote dependencies left to pin.
 
 ## Quality — NO HACKS (authoritative)

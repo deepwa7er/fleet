@@ -1,0 +1,8 @@
+<%= turbo_stream.remove "no_comments" %>
+
+<%= turbo_stream.append "comments", @comment %>
+
+<%= turbo_stream.update "new_comment" do %>
+  <%= render "comments/form", comment: Comment.new,
+        url: topic_comments_path(@topic), submit_label: "Post Comment"%>
+<% end %>

@@ -1,0 +1,18 @@
+<%= form_with model: @topic do |form| %>
+  <% if @topic.errors.any? %>
+    <ul>
+      <% @topic.errors.full_messages.each do |message| %>
+        <li><%= message %></li>
+      <% end %>
+    </ul>
+  <% end %>
+
+  <%= form.label :title %>
+  <%= form.text_field :title %>
+  <%= form.label :body %>
+  <%= form.text_area :body %>
+
+  <%= form.submit %>
+  <%= link_to "Cancel", topics_path %>
+
+<% end %>
