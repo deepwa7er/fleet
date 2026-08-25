@@ -150,8 +150,8 @@ approach (and the palette rules), not the Rails app.
 
 No server, no state, no auth. A rebuild is idempotent from the record
 repo; "deploying the timeline" is regenerating static files. Where it is
-served — a public route, or beside `public_site` once card #101 lands — is
-an open question (§6) that does not affect the export or the entry format.
+served — a public route, or beside the now in-monorepo `public_site` — is an
+open question (§6) that does not affect the export or the entry format.
 
 ---
 
@@ -172,8 +172,8 @@ before the timeline has readers would repeat depot's mistake.
   public from day one? Public-by-default is §8's position; a private start
   with a later flip is also cheap. Owner's call.
 - **Where the rendered timeline is served.** A breakwater route on the
-  VPS, or folded into `public_site` when the subtree import (card #101)
-  finishes. The export does not depend on the answer.
+  VPS, or folded into the now in-monorepo `public_site`. The export does not
+  depend on the answer.
 - **Backfill.** Steps 02–03 shipped through the old PR workflow, and test
   changes were synthetic. Proposal: the record starts at the workflow
   cutover — no backfill. The PR history remains on GitHub for everything
