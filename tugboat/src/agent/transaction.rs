@@ -16,6 +16,8 @@ use super::{
 use crate::subprocess::{run_captured_timeout, CapturedOutput, StdoutSink};
 use crate::transport::{self, RsyncKind};
 
+mod policy;
+
 const HEALTH_PROTOCOL: u32 = 1;
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -37,19 +39,51 @@ struct PreparedTarget {
 }
 
 pub(super) fn execute(plan: &DeploymentPlan<'_>) -> Result<()> {
-    let artifact_hashes = plan
-        .targets
-        .iter()
-        .map(|planned| sha256_file(&planned.artifact))
-        .collect::<Result<Vec<_>>>()?;
+    let mut runtime = MachineRuntime::new(plan)?;
+    policy::execute(&mut runtime)?;
+    println!("\n✓ {} deployed to: {}", plan.name, plan.target_names());
+    Ok(())
+}
 
-    let mut prepared = Vec::with_capacity(plan.targets.len());
-    for (planned, artifact_hash) in plan.targets.iter().zip(artifact_hashes) {
+/// Production effects behind the transaction policy. The policy knows target
+/// indices and prepared state; this adapter owns every local/SSH operation.
+struct MachineRuntime<'plan, 'manifest> {
+    plan: &'plan DeploymentPlan<'manifest>,
+    artifact_hashes: Vec<String>,
+}
+
+impl<'plan, 'manifest> MachineRuntime<'plan, 'manifest> {
+    fn new(plan: &'plan DeploymentPlan<'manifest>) -> Result<Self> {
+        let artifact_hashes = plan
+            .targets
+            .iter()
+            .map(|planned| sha256_file(&planned.artifact))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self {
+            plan,
+            artifact_hashes,
+        })
+    }
+}
+
+impl policy::Runtime for MachineRuntime<'_, '_> {
+    type Prepared = PreparedTarget;
+
+    fn target_count(&self) -> usize {
+        self.plan.targets.len()
+    }
+
+    fn target_name(&self, index: usize) -> &str {
+        &self.plan.targets[index].target.name
+    }
+
+    fn prepare(&mut self, index: usize) -> Result<Self::Prepared> {
+        let planned = &self.plan.targets[index];
         println!(
             "\n════ PREPARE {} → {} ════",
-            plan.name, planned.target.name
+            self.plan.name, planned.target.name
         );
-        let baseline = match probe_once(planned.target, plan.health) {
+        let baseline = match probe_once(planned.target, self.plan.health) {
             Ok(status) => {
                 println!(
                     "==> BASELINE: pid {}, instance {}, sha256 {}",
@@ -62,89 +96,51 @@ pub(super) fn execute(plan: &DeploymentPlan<'_>) -> Result<()> {
                 None
             }
         };
-
-        match prepare_target(planned, &plan.transaction, artifact_hash, baseline) {
-            Ok(state) => prepared.push(state),
-            Err(error) => {
-                let mut errors = vec![format!(
-                    "preparing target `{}`: {error:#}",
-                    planned.target.name
-                )];
-                errors.extend(cleanup_all(
-                    plan.targets.iter().take(prepared.len()),
-                    &plan.transaction,
-                ));
-                return Err(error_report("agent deployment preparation failed", errors));
-            }
-        }
+        prepare_target(
+            planned,
+            &self.plan.transaction,
+            self.artifact_hashes[index].clone(),
+            baseline,
+        )
     }
 
-    for (index, (planned, state)) in plan.targets.iter().zip(&prepared).enumerate() {
+    fn activate(&mut self, index: usize, _prepared: &Self::Prepared) -> Result<()> {
+        // An activation attempt is compensatable even when its result is
+        // ambiguous, such as an SSH disconnect after the remote rename.
+        let planned = &self.plan.targets[index];
         println!(
             "\n════ ACTIVATE {} → {} ════",
-            plan.name, planned.target.name
+            self.plan.name, planned.target.name
         );
-        // Record the attempt before performing it: a lost SSH connection leaves
-        // the remote mutation ambiguous and therefore requires compensation.
-        let result = activate_target(planned, &plan.transaction).and_then(|()| {
-            wait_for_health(
-                planned.target,
-                plan.health,
-                &state.artifact_hash,
-                state
-                    .baseline
-                    .as_ref()
-                    .map(|status| status.instance.as_str()),
-            )
-        });
-        if let Err(error) = result {
-            let mut errors = vec![format!(
-                "activating target `{}`: {error:#}",
-                planned.target.name
-            )];
-            let mut preserve = vec![false; plan.targets.len()];
-            for rollback_index in (0..=index).rev() {
-                let rollback_target = &plan.targets[rollback_index];
-                let rollback_state = &prepared[rollback_index];
-                if let Err(rollback_error) = compensate_target(
-                    rollback_target,
-                    rollback_state,
-                    plan.health,
-                    &plan.transaction,
-                ) {
-                    preserve[rollback_index] = true;
-                    errors.push(format!(
-                        "compensating target `{}`: {rollback_error:#}; remaining transaction state and lock were preserved for recovery",
-                        rollback_target.target.name
-                    ));
-                }
-            }
-            errors.extend(cleanup_all(
-                plan.targets
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(cleanup_index, target)| {
-                        (!preserve[cleanup_index]).then_some(target)
-                    }),
-                &plan.transaction,
-            ));
-            return Err(error_report(
-                "agent deployment failed; compensation was attempted",
-                errors,
-            ));
-        }
+        activate_target(planned, &self.plan.transaction)
     }
 
-    let cleanup_errors = cleanup_all(plan.targets.iter(), &plan.transaction);
-    if !cleanup_errors.is_empty() {
-        return Err(error_report(
-            "agent deployment is healthy, but transaction cleanup failed",
-            cleanup_errors,
-        ));
+    fn verify(&mut self, index: usize, prepared: &Self::Prepared) -> Result<()> {
+        let target = self.plan.targets[index].target;
+        wait_for_health(
+            target,
+            self.plan.health,
+            &prepared.artifact_hash,
+            prepared
+                .baseline
+                .as_ref()
+                .map(|status| status.instance.as_str()),
+        )?;
+        Ok(())
     }
 
-    println!("\n✓ {} deployed to: {}", plan.name, plan.target_names());
-    Ok(())
+    fn compensate(&mut self, index: usize, prepared: &Self::Prepared) -> Result<()> {
+        compensate_target(
+            &self.plan.targets[index],
+            prepared,
+            self.plan.health,
+            &self.plan.transaction,
+        )
+    }
+
+    fn cleanup(&mut self, index: usize, _prepared: &Self::Prepared) -> Result<()> {
+        cleanup_target(&self.plan.targets[index], &self.plan.transaction)
+    }
 }
 
 fn prepare_target(
@@ -464,31 +460,17 @@ fn validate_health(status: &HealthStatus) -> Result<()> {
     Ok(())
 }
 
-fn cleanup_all<'plan, 'target>(
-    targets: impl Iterator<Item = &'plan PlannedTarget<'target>>,
-    transaction: &str,
-) -> Vec<String>
-where
-    'target: 'plan,
-{
-    let mut errors = Vec::new();
-    for planned in targets {
-        let result = match &planned.target.location {
-            Location::Local => LocalPaths::new(planned.target, transaction)
-                .and_then(|paths| cleanup_result(cleanup_local(&paths))),
-            Location::Ssh { host } => {
-                let paths = RemotePaths::new(planned.target, transaction);
-                cleanup_result(cleanup_remote(host, &paths))
-            }
-        };
-        if let Err(error) = result {
-            errors.push(format!(
-                "cleaning target `{}`: {error:#}",
-                planned.target.name
-            ));
+fn cleanup_target(planned: &PlannedTarget<'_>, transaction: &str) -> Result<()> {
+    match &planned.target.location {
+        Location::Local => {
+            let paths = LocalPaths::new(planned.target, transaction)?;
+            cleanup_result(cleanup_local(&paths))
+        }
+        Location::Ssh { host } => {
+            let paths = RemotePaths::new(planned.target, transaction);
+            cleanup_result(cleanup_remote(host, &paths))
         }
     }
-    errors
 }
 
 fn cleanup_local(paths: &LocalPaths) -> Vec<String> {
