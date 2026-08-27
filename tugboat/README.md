@@ -339,20 +339,16 @@ tugboat fleet hooks install  # wire the commit hooks to the daemon
 The daemon's catch-up runs the first build on startup, so the site comes current
 on its own once the agent is up.
 
-## Agent deploys (dev-machine binaries)
+## Agent deploys (dev-machine daemons)
 
-`tugboat agent deploy` installs a **per-user binary onto the dev machines
-themselves** (built locally, or rsync'd over SSH with an atomic swap) — rather
-than a root systemd service on the VPS. Two shapes:
+`tugboat agent deploy` installs a per-user daemon onto the dev machines
+themselves — rather than a root systemd service on the VPS — then restarts it
+via a launchd login agent (macOS) or a `systemd --user` unit (Linux). Tidepool's
+`tidepool-clipd` runs this way.
 
-- a **daemon**, restarted after install via a launchd login agent (macOS) or a
-  `systemd --user` unit (Linux) — e.g. tidepool's `tidepool-clipd`;
-- a **CLI tool**, just a binary on `PATH` with nothing to restart. Set neither
-  `launchd` nor `systemd_user`.
-
-The binary is built per target — cross-compiled when `goos`/`goarch` are given,
-or a native build when they aren't. No health-check / rollback / ledger — these
-are trivially replaceable user binaries, not the VPS's load-bearing services.
+The binary is cross-compiled per target, then installed locally or rsync'd over
+SSH with an atomic swap. No health-check / rollback / ledger — these are
+trivially replaceable user daemons, not the VPS's load-bearing services.
 
 ```sh
 tugboat agent deploy                 # build + install on every target
@@ -384,9 +380,9 @@ systemd_user = "tidepool-clipd"
 ```
 
 Each target is `local = true` (built + installed here) or `ssh = "user@host"`
-(rsync'd over SSH); a daemon restarts via `launchd = "<label>"` or
+(rsync'd over SSH), and sets exactly one of `launchd = "<label>"` or
 `systemd_user = "<unit>"`. `{out}` is the binary path tugboat provides;
-`{goos}`/`{goarch}` choose the build platform for a cross-compiled build.
+`{goos}` and `{goarch}` choose the cross-compilation platform.
 
 ## The manifest
 
