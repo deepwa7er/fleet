@@ -22,7 +22,6 @@
 //! appended one line at a time (`O_APPEND`, one short line per deploy, so an
 //! interrupted or concurrent write cannot tear an entry).
 
-use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -208,22 +207,7 @@ impl Recorder {
 
 /// The deploy event log's path, honoring `XDG_DATA_HOME`.
 pub fn log_path() -> Result<PathBuf> {
-    resolve_log_path(std::env::var_os("XDG_DATA_HOME"), std::env::var_os("HOME"))
-}
-
-/// The path resolution itself, as a pure function of the two environment
-/// variables — so it is testable without mutating the process environment
-/// (which races with every other test in this binary).
-fn resolve_log_path(xdg_data_home: Option<OsString>, home: Option<OsString>) -> Result<PathBuf> {
-    let base = match xdg_data_home {
-        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => {
-            let home =
-                home.context("no HOME or XDG_DATA_HOME to locate the tugboat data dir")?;
-            PathBuf::from(home).join(".local/share")
-        }
-    };
-    Ok(base.join("tugboat").join("deploys.jsonl"))
+    Ok(crate::local_data::tugboat_dir()?.join("deploys.jsonl"))
 }
 
 /// Record one event: append it to the local JSONL.
@@ -335,30 +319,5 @@ mod tests {
         let value = json(&rec.finish(&Ok(())));
         assert!(value.get("build_ms").is_none());
         assert!(value["total_ms"].as_u64().is_some());
-    }
-
-    fn os(s: &str) -> Option<OsString> {
-        Some(OsString::from(s))
-    }
-
-    #[test]
-    fn xdg_data_home_wins_when_set() {
-        assert_eq!(
-            resolve_log_path(os("/xdg/data"), os("/home/u")).unwrap(),
-            PathBuf::from("/xdg/data/tugboat/deploys.jsonl")
-        );
-    }
-
-    #[test]
-    fn falls_back_to_home_when_xdg_is_unset_or_empty() {
-        let expected = PathBuf::from("/home/u/.local/share/tugboat/deploys.jsonl");
-        assert_eq!(resolve_log_path(None, os("/home/u")).unwrap(), expected);
-        // An empty XDG_DATA_HOME is unset, per the XDG spec — not a path of "".
-        assert_eq!(resolve_log_path(os(""), os("/home/u")).unwrap(), expected);
-    }
-
-    #[test]
-    fn no_home_and_no_xdg_is_an_error_not_a_relative_path() {
-        assert!(resolve_log_path(None, None).is_err());
     }
 }

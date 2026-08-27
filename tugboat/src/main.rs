@@ -16,6 +16,7 @@ mod fleet;
 mod gen;
 mod git;
 mod hooks;
+mod local_data;
 mod manifest;
 mod scope;
 mod selfdeploy;

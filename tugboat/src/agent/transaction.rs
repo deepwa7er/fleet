@@ -17,6 +17,9 @@ use crate::subprocess::{run_captured_timeout, CapturedOutput, StdoutSink};
 use crate::transport::{self, RsyncKind};
 
 mod policy;
+#[cfg(test)]
+pub(super) use policy::TargetReport;
+pub(super) use policy::{Outcome, Report, StepOutcome};
 
 const HEALTH_PROTOCOL: u32 = 1;
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(60);
@@ -38,11 +41,29 @@ struct PreparedTarget {
     baseline: Option<HealthStatus>,
 }
 
-pub(super) fn execute(plan: &DeploymentPlan<'_>) -> Result<()> {
-    let mut runtime = MachineRuntime::new(plan)?;
-    policy::execute(&mut runtime)?;
-    println!("\n✓ {} deployed to: {}", plan.name, plan.target_names());
-    Ok(())
+pub(super) struct Execution {
+    pub report: Report,
+    pub artifact_hashes: Vec<String>,
+    pub error: Option<anyhow::Error>,
+}
+
+impl Execution {
+    pub fn into_result(self) -> Result<()> {
+        match self.error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+}
+
+pub(super) fn execute(plan: &DeploymentPlan<'_>, artifact_hashes: Vec<String>) -> Execution {
+    let mut runtime = MachineRuntime::new(plan, artifact_hashes);
+    let policy::Execution { report, error } = policy::execute(&mut runtime);
+    Execution {
+        report,
+        artifact_hashes: runtime.artifact_hashes,
+        error,
+    }
 }
 
 /// Production effects behind the transaction policy. The policy knows target
@@ -53,16 +74,12 @@ struct MachineRuntime<'plan, 'manifest> {
 }
 
 impl<'plan, 'manifest> MachineRuntime<'plan, 'manifest> {
-    fn new(plan: &'plan DeploymentPlan<'manifest>) -> Result<Self> {
-        let artifact_hashes = plan
-            .targets
-            .iter()
-            .map(|planned| sha256_file(&planned.artifact))
-            .collect::<Result<Vec<_>>>()?;
-        Ok(Self {
+    fn new(plan: &'plan DeploymentPlan<'manifest>, artifact_hashes: Vec<String>) -> Self {
+        assert_eq!(plan.targets.len(), artifact_hashes.len());
+        Self {
             plan,
             artifact_hashes,
-        })
+        }
     }
 }
 
@@ -198,7 +215,7 @@ fn prepare_local(planned: &PlannedTarget<'_>, transaction: &str) -> Result<Strin
         }
         std::fs::copy(&paths.live, &paths.backup)
             .with_context(|| format!("backing up to {}", paths.backup.display()))?;
-        sha256_file(&paths.backup)
+        artifact_sha256(&paths.backup)
     })();
 
     match result {
@@ -525,7 +542,7 @@ fn require_success(output: CapturedOutput, operation: &str) -> Result<CapturedOu
     bail!("{operation} exited with {}: {stderr}", output.status)
 }
 
-fn sha256_file(path: &Path) -> Result<String> {
+pub(super) fn artifact_sha256(path: &Path) -> Result<String> {
     let mut file = std::fs::File::open(path)
         .with_context(|| format!("opening {} for hashing", path.display()))?;
     let mut hasher = Sha256::new();
@@ -616,7 +633,7 @@ mod tests {
         let path = dir.path().join("artifact");
         std::fs::write(&path, b"hello").unwrap();
         assert_eq!(
-            sha256_file(&path).unwrap(),
+            artifact_sha256(&path).unwrap(),
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
     }
@@ -685,7 +702,7 @@ mod tests {
         assert_eq!(std::fs::read(&paths.staged).unwrap(), b"new");
         assert_eq!(std::fs::read(&paths.backup).unwrap(), b"old");
         assert!(paths.lock.is_dir());
-        assert_eq!(original_hash, sha256_file(&paths.backup).unwrap());
+        assert_eq!(original_hash, artifact_sha256(&paths.backup).unwrap());
 
         let second_error = prepare_local(&planned, "other").unwrap_err();
         assert!(second_error.to_string().contains("deployment lock"));

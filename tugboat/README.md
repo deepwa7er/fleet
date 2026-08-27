@@ -361,6 +361,15 @@ bootstrap instructions once on a new machine, then use Tugboat for subsequent
 fleet-wide updates. An interrupted transaction leaves its lock in place rather
 than guessing that recovery state is disposable.
 
+Every attempted deployment is also written to the local, append-only agent
+deployment journal at
+`${XDG_DATA_HOME:-$HOME/.local/share}/tugboat/agent-deploys.jsonl`. Each
+versioned JSON line records the transaction result, artifact hashes, timings,
+and the build, prepare, activate, verify, compensation, and cleanup outcome for
+every target. Journal writes are best-effort and never change the deployment
+result. The journal is operational history, not authoritative machine state;
+the running daemon's health identity remains authoritative.
+
 ```sh
 tugboat agent deploy                 # build + install on every target
 tugboat agent deploy --only desktop  # one target

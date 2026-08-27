@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -22,6 +22,7 @@ use serde::Deserialize;
 use crate::transport;
 use crate::user_service::{UserService, UserServiceManager};
 
+mod journal;
 mod transaction;
 
 // ── manifest input + validated domain model ─────────────────────────────────
@@ -474,28 +475,55 @@ impl<'a> DeploymentPlan<'a> {
     }
 
     fn execute(&self) -> Result<()> {
+        let recorder = journal::Recorder::start();
+        self.execute_recording(&recorder)
+    }
+
+    fn execute_recording(&self, recorder: &journal::Recorder) -> Result<()> {
+        let build_started = Instant::now();
+        let mut artifact_hashes = Vec::with_capacity(self.targets.len());
         // Preparation phase: prove every selected target builds before changing
         // any machine. Installation begins only after this entire loop succeeds.
-        for planned in &self.targets {
+        for (index, planned) in self.targets.iter().enumerate() {
             let target = planned.target;
             println!(
                 "\n════ BUILD {} → {} ({}/{}) ════",
                 self.name, target.name, target.platform.os, target.platform.arch
             );
-            let parent = planned
-                .artifact
-                .parent()
-                .context("planned artifact has no parent")?;
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating build output dir {}", parent.display()))?;
-            println!("==> {}", planned.build.display());
-            planned.build.run(self.source_dir)?;
-            if !planned.artifact.is_file() {
-                bail!("build produced no binary at {}", planned.artifact.display());
+            let result = (|| {
+                let parent = planned
+                    .artifact
+                    .parent()
+                    .context("planned artifact has no parent")?;
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating build output dir {}", parent.display()))?;
+                println!("==> {}", planned.build.display());
+                planned.build.run(self.source_dir)?;
+                if !planned.artifact.is_file() {
+                    bail!("build produced no binary at {}", planned.artifact.display());
+                }
+                transaction::artifact_sha256(&planned.artifact)
+            })();
+            match result {
+                Ok(hash) => artifact_hashes.push(hash),
+                Err(error) => {
+                    recorder.record_build_failure(self, &artifact_hashes, index, &error);
+                    return Err(error);
+                }
             }
         }
 
-        transaction::execute(self)
+        let build_elapsed = build_started.elapsed();
+        let transaction_started = Instant::now();
+        let execution = transaction::execute(self, artifact_hashes);
+        let transaction_elapsed = transaction_started.elapsed();
+        let deployed = execution.error.is_none();
+        recorder.record_transaction(self, build_elapsed, transaction_elapsed, &execution);
+        let result = execution.into_result();
+        if deployed {
+            println!("\n✓ {} deployed to: {}", self.name, self.target_names());
+        }
+        result
     }
 
     fn target_names(&self) -> String {
@@ -881,8 +909,10 @@ systemd_user = "never-restarted"
         .unwrap();
         let workdir = tempfile::tempdir().unwrap();
         let plan = DeploymentPlan::create(&manifest, dir.path(), None, workdir.path()).unwrap();
+        let journal_path = workdir.path().join("agent-deploys.jsonl");
+        let recorder = journal::Recorder::for_path(journal_path);
 
-        assert!(plan.execute().is_err());
+        assert!(plan.execute_recording(&recorder).is_err());
         assert_eq!(std::fs::read_to_string(first_dest).unwrap(), "old-first");
         assert_eq!(std::fs::read_to_string(second_dest).unwrap(), "old-second");
     }
