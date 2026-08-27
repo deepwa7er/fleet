@@ -1,39 +1,46 @@
 ---
 name: fleet
-description: End-to-end workflow for making changes to the fleet monorepo — Fizzy cards, jj workspaces, rounds with annotations submitted to the review in skiff. The human approves; approve lands.
+description: End-to-end workflow for Fizzy-backed Fleet changes — curated jj rounds reviewed in desktop Skiff, or manual Mac jj changes reviewed in VSCodium.
 ---
 
 # Fleet — monorepo change workflow
 
-Use when making **any** change to `fleet` (code, docs, style, config). One
-card = one change = one ordered stack of rounds ([DW-002](../../../docs/source-control-redesign.md)).
-You produce rounds and submit; the human reviews in skiff; **approve** is
-the only thing that lands to `origin/main`, and the timeline records what
-shipped ([DW-003](../../../docs/public-record.md)). There are no branches to
-push and no PRs to open — GitHub is a publishing target, not the review
-mechanism. (The pre-2026-08-23 card→branch→PR workflow lives in git
-history and `archive/*` tags; do not resurrect it.)
+Use when making **any** change to `fleet` (code, docs, style, config). DW-002
+defines two lanes:
+
+- **Desktop curated lane:** one card = one change = additive rounds. The human
+  reviews in Skiff; approve lands to `origin/main` and emits the timeline.
+- **Mac manual lane:** one card = one local jj change reviewed directly in
+  VSCodium. It uses Fizzy for identity and the outcome, but not `dw`, Skiff,
+  annotations, or the public timeline. Nothing lands until the human explicitly
+  accepts the editor-reviewed diff.
+
+There are no branches or GitHub pull requests in either lane. The retired
+pre-2026-08-23 workflow lives only in git history and `archive/*` tags.
 
 ## 0. Orient (every run)
 
 - Read `~/.claude/CLAUDE.md` (NO HACKS — authoritative; overrides summaries).
 - Read `docs/deepwater-style-guide.md` (DW-001) if the change touches UI.
-- `cargo run -p fizzy -- stream --board Playground` to see open cards before creating new ones (fizzy skill is the CLI contract).
-- `dw` links the change crate and authors the local log directly. No daemon,
-  loopback request, or password is involved in change curation.
+- Determine the lane before creating change state. Use the Mac manual lane for
+  work in the local VSCodium checkout; use the desktop curated lane for Skiff
+  review. Never copy `.jj` or `.workspaces` between machines.
+- In both lanes, run `cargo run -p fizzy -- stream --board Playground` before
+  creating a card (the fizzy skill is the CLI contract). In the desktop lane,
+  `dw` additionally authors the desktop-local change log.
 
 ## 1. Discover → Card
 
 Unchanged: search and read first; create or update a card per
 `.agents/skills/fizzy/SKILL.md` §4–§5 (`draft → lint → create --dedupe`,
 update in place for follow-ups). Ask before posting unless the user said
-"create cards". The card number is the change's identity.
+"create cards". The card number is the change's identity in both lanes.
 
-## 2. Isolate — a jj workspace, never the main working copy
+## 2. Choose the jj working copy
 
-Parallel work cannot share a working copy, but rounds must be jj changes
-the bridge can see — so isolation is a **jj workspace** (shares the repo
-and op log), not a git worktree:
+In the desktop curated lane, parallel work cannot share a working copy and
+rounds must be jj changes Skiff can see. Isolation is therefore a **jj
+workspace** (shares the repo and op log), not a git worktree:
 
 ```bash
 cd ~/code/fleet
@@ -44,12 +51,18 @@ cd .workspaces/<slug>
 jj new main@origin                        # round 1 bases on fresh main
 ```
 
+The Mac also has its own colocated repository. Initialize it once with `jj git
+init --colocate` and configure the jj author identity. For a manual change, use
+the VSCodium-open working copy only when `jj status` contains no unrelated
+work. Otherwise create a named jj workspace and tell the human which folder to
+open in VSCodium. `origin/main` is the only synchronization boundary.
+
 **Undo is scoped to you — hard rule (DW-002 §3).** The op log is shared by
 every workspace. Never run bare `jj undo`: it reverses the *globally* most
 recent operation, which may be another agent's or the human's. If you must
 revert, find your own operation in `jj op log` first and name it.
 
-## 3. Work — rounds are additive commits
+## 3. Work — desktop rounds are additive commits
 
 Build to the card's acceptance criteria. When the work is ready to show:
 
@@ -106,10 +119,26 @@ human's annotations and read-state honest. A request-changes note reaches
 your session prefixed `[dw request-changes · fleet #<card#>]`; answer it
 with the next round and re-submit.
 
-## 4. Gates — before every submit
+### Mac manual lane
 
-CI stays archived; these run before **every** round you submit, not once
-per change, and nothing checks main after a landing except the next deploy:
+Make the card's requested change in its local jj working copy, run the same
+gates in §4, and describe the reviewed unit with the card number in the
+description. Do not call `dw` and do not push. Report the card URL, checkout
+path, change id, diff summary, and gates so the human can review it in
+VSCodium.
+
+After the human explicitly accepts that diff and asks to ship it, fetch origin,
+rebase the reviewed change onto `main@origin`, and stop for another review if a
+conflict changes the diff. Otherwise move `main` to the reviewed change and
+push. Then comment on the Fizzy card with the landed commit and gates; closing
+the card remains a human action. This explicit post-review request is the Mac
+lane's approval boundary.
+
+## 4. Gates — before every submit or Mac review handoff
+
+CI stays archived; these run before **every** desktop round you submit and every
+Mac change you hand off for VSCodium review. Nothing checks main after a landing
+except the next deploy:
 
 ```bash
 cargo test --workspace
@@ -124,11 +153,12 @@ test)`, `(cd shutter && make build)` on macOS; `node --test
 bridge/test/*.test.js` from `skiff/` for the bridge; `bin/ci` from `skiff/`
 for Rails; `node --test timeline/test/` for `timeline/`.
 
-## 5. Stop — the human closes the loop
+## 5. Stop — the desktop human closes the curated loop
 
-- **Never** approve, never `jj git push`, never move the `main` bookmark,
-  never `dw ship` (it is the human's own-work verb), never close the card.
-- The human reviews at the desk (skiff), requests changes or approves;
+- In the desktop lane, **never** approve, run `jj git push`, move the `main`
+  bookmark, use `dw ship` (the human's own-work verb), or close the card.
+- In the desktop lane, the human reviews at the hosted Skiff desk, requests
+  changes or approves;
   approve rebases onto `origin/main` and pushes — the same artifact a
   merged PR used to be. Landing does not deploy; deploys stay human-requested.
 - If approve comes back with conflicts, the conflicted round commits carry
@@ -147,6 +177,9 @@ for Rails; `node --test timeline/test/` for `timeline/`.
 - `docs/deepwater-style-guide.md` (DW-001) governs all UI.
 - `gatesRan` is a claim about what you actually ran. The human's reading of
   the code is the only verification in the system — do not poison it.
+- Never use `dw`, the desktop change log, or Skiff for the Mac manual lane.
+  Never push a Mac change before the human explicitly accepts its
+  VSCodium-reviewed diff; preserve its identity and outcome in Fizzy.
 - Deployability is discovered: a top-level dir is deployable iff it has
   `deploy.toml`. `fleet.toml::docs.guidance` and `fleet.toml::backup` are
   the only central manifests — keep them in sync.

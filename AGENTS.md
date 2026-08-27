@@ -13,11 +13,20 @@ Reference: [DW-001](docs/deepwater-style-guide.md) · [specimen](docs/deepwater-
 
 The card→branch→PR workflow was retired at the cutover (2026-08-23). Before working on `jj`, the `dw` CLI, the change/round/annotation model, the review in `skiff`, or the record/timeline, read [DW-002](docs/source-control-redesign.md) and [DW-003](docs/public-record.md) — they record alternatives that were tried and rejected, and re-deriving that reasoning costs more than reading it.
 
-## Workflow — one card = one change = rounds in review
+## Workflow — desktop curation or Mac manual jj
 
-For any fleet change, read `.agents/skills/fleet/SKILL.md` first. In one breath: search first; Fizzy card (`cargo run -p fizzy -- create --board Playground --dedupe`); isolate in a **jj workspace** (`jj workspace add .workspaces/<slug>`, never the main working copy, never bare `jj undo` — the op log is shared); run the gates; register each finished pass with local `dw start` / `dw round` / `dw annotate` / `dw submit`, carrying `gatesRan` (only what you actually ran — it renders as a claim, verified by nothing) and your **annotations** (the justifications the review renders at the point they apply — never source comments); then stop. The human reviews at the skiff desk; request-changes returns as your next round; **approve** rebases onto `origin/main` and pushes — the only lander — and the record/timeline follow automatically. No branches, no `gh pr`, no pushes from agents; `dw ship` is the human's own-work verb.
+For any fleet change, read `.agents/skills/fleet/SKILL.md` first. The Fedora
+desktop uses the curated workflow: search, Fizzy card, isolated jj workspace,
+gates, `dw` rounds and annotations, then human review and approval in Skiff.
+The Mac uses a manual VSCodium lane: start from a Fizzy card, work in a local jj
+change, run the same gates, and stop for review in the editor without `dw` or
+Skiff. A Mac change may land only after the human explicitly accepts that diff
+and asks to ship it; record the landed commit and gates on its Fizzy card.
+Neither lane uses branches or GitHub pull requests, and `.jj` state is never
+copied between machines. Never use bare `jj undo` because each repository's
+operation log is shared by all of its workspaces.
 
-Gates before every submitted round. CI stays archived (2026-08-13), so these are the *only* enforcement — nothing checks `origin/main` after a landing:
+Gates before every submitted desktop round or Mac review handoff. CI stays archived (2026-08-13), so these are the *only* enforcement — nothing checks `origin/main` after a landing:
 
 ```bash
 cargo test --workspace

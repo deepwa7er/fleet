@@ -2,7 +2,7 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ DOC. NO.  DW-002          REV. A          CLASSIFICATION: INTERNAL     │
+│ DOC. NO.  DW-002          REV. B          CLASSIFICATION: INTERNAL     │
 │ SUBJECT   Replacing git's ceremony without leaving its ecosystem       │
 │ ORIGIN    Design session 2026-08-22                                    │
 │ STATUS    Shipped. Cutover 2026-08-23 — this is the live workflow.     │
@@ -15,8 +15,15 @@ implementation in Rails or the Node bridge describe the original delivery;
 [DW-004](skiff-architecture.md) superseded that runtime with `crates/change`,
 `dw`, skiffd, and React at the 2026-08-24 cutover.
 
-Capture you never touch, curation the agents do for you, and a public record
-that falls out of reviewing their work.
+Revision B makes both development machines first-class with two deliberately
+different Fizzy-backed workflows: curated agent changes on the desktop and
+manual, editor-reviewed jj changes on the Mac. Skiff remains a single-host
+desktop service; the Mac does not create a second review system.
+
+In the desktop's curated lane: capture you never touch, curation the agents do
+for you, and a public record that falls out of reviewing their work. The Mac's
+manual lane keeps the card and local capture, then uses editor review and a
+Fizzy outcome comment instead of Skiff curation.
 
 Read this before building any of it. Several sections record alternatives that
 were tried and rejected; the reasoning matters more than the conclusions, and
@@ -432,33 +439,43 @@ because it is a byproduct of reviewing.
 
 ## 9. WHERE YOU WORK
 
-**The Fedora desktop is the dev machine**, reached by SSH from the Mac. This
-design suits that better than most, because the surface you spend the most time
-in is not a local tool:
+**The Mac workstation and Fedora desktop are both development machines, with
+different review lanes.** Work can begin on either without the other being
+awake.
 
-- **Review is a web app.** Skiff runs on the desktop at `:8120` behind breakwater
-  at `agent.intern.deepwa7er.net`. From the Mac it is a browser tab over the
-  tailnet. The daily loop — read, request changes, watch, approve — never touches
-  SSH.
-- **Agents and repos are already colocated there** — harness, the skiff bridge,
-  pi/muse/opencode. Approve's rebase-and-push runs in the bridge, on the machine
-  holding the repository and the GitHub keys.
-- **Capture gets simpler.** One machine, one repository, no sync problem.
+- **Desktop: curated agent workflow.** The desktop owns Fizzy-backed changes,
+  additive rounds, annotations, and the continuously hosted Skiff at
+  `https://skiff.intern.deepwa7er.net`. Approval in Skiff remains the only
+  lander for that lane.
+- **Mac: card-backed VSCodium workflow.** The Mac uses a Fizzy card and its
+  colocated `jj` working copy directly. Changes are reviewed in VSCodium, not
+  registered with `dw` and not sent to Skiff. An agent may prepare and gate the
+  change, but it stops before landing until the human explicitly says the
+  editor-reviewed change should ship.
+- **Completed work synchronizes through Git.** `origin/main` is the boundary
+  between machines. Fetch it before starting a change. Never copy `.jj`,
+  `.workspaces`, or the desktop's active change log between machines.
 
-**Colocate on the desktop only.** Two colocated repositories with independent
-operation logs, both pushing to the same origin, is workable but muddy, and the
-undo-scoping problem in §3 gets worse when you have to remember which machine you
-are on. The Mac's checkout is retired rather than kept in sync.
+The Mac lane is intentionally manual. Start in the VSCodium-open checkout when
+its working-copy change contains no unrelated work; otherwise create a named jj
+workspace and open that folder in VSCodium. After implementation, run the gates,
+describe the jj change, and leave it visible for review. Only after explicit
+human acceptance: fetch `origin`, rebase the reviewed change onto the current
+`main@origin`, stop if that introduces a conflict, then move `main` to the
+reviewed change and push it. Record the landed commit and gates as a Fizzy card
+comment. Because this lane creates no change-log record, it creates no
+annotations or public timeline entry. Work that needs those artifacts starts on
+the desktop instead.
 
 ### Editing
 
 `dw edit <card>` **prints a path and does nothing else.** There are no editor
 integrations, deliberately.
 
-The editors in use are VSCodium and JetBrains (RubyMine), both driven in remote
-mode against the desktop — so the editor's own process is already running there,
-attached to the same filesystem, and you open the printed path in the window you
-already have. Nothing needs to launch anything.
+For desktop-curated work, VSCodium and JetBrains (RubyMine) run in remote mode
+against the desktop, so the editor is attached to the same filesystem as Skiff.
+For Mac-manual work, the local VSCodium window is the review surface; `dw edit`
+does not participate.
 
 `$VISUAL`/`$EDITOR` are still honored for the terminal case, but that is a
 convention rather than a coupling, and it is not the primary path.
@@ -530,7 +547,7 @@ Each step is useful on its own and none requires the next to exist.
 
 | Step | What it buys |
 |---|---|
-| **01** | Adopt colocated `jj` on the desktop and confirm the feel of it. Solves the losing-work problem outright (§3), changes nothing else, reversible at any point. A day, not a project. |
+| **01** | Adopt colocated `jj` independently on the Mac and desktop. Use one Fizzy card per change, desktop curation for recorded changes, and the Mac's direct jj lane for VSCodium review (§3, §9). |
 | **02** | The change object — rounds, annotations, and the card binding (§4). Nothing to look at yet, but it is what the review renders. |
 | **03** | The review in skiff (§6) — the bridge extension, the annotated diff, the three verbs, and approve. The daily experience, and the reason for the whole project. Its Fizzy prerequisite is done. |
 | **04** | The timeline. Mostly a rendering job once the layers above exist. |
