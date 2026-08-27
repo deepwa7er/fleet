@@ -20,6 +20,15 @@ GOOS = "{os}"
 GOARCH = "{arch}"
 CGO_ENABLED = "0"
 
+# The installed binary queries the running daemon through its per-user Unix
+# socket. Tugboat requires both a fresh process instance and the exact SHA-256
+# of the artifact it built before it commits the multi-machine transaction.
+[health]
+args = ["health"]
+attempts = 20
+interval_ms = 500
+timeout_ms = 3000
+
 [[targets]]
 # This MacBook — built here, installed locally, run as a launchd login agent.
 name = "mac"

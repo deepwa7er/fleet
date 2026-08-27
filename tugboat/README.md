@@ -346,11 +346,20 @@ themselves — rather than a root systemd service on the VPS — then restarts i
 via a launchd login agent (macOS) or a `systemd --user` unit (Linux). Tidepool's
 `tidepool-clipd` runs this way.
 
-The binary is cross-compiled per target, then installed locally or rsync'd over
-SSH with an atomic swap. Every selected artifact is built before Tugboat begins
-installing any of them, so a build failure cannot split the fleet across binary
-versions. No health-check / rollback / ledger — these are trivially replaceable
-user daemons, not the VPS's load-bearing services.
+The binary is cross-compiled per target, then updated locally or over SSH as one
+transaction. Tugboat builds every artifact, takes a per-target deployment lock,
+stages every new binary, and backs up every installed binary before it changes
+the first machine. It then activates and health-checks each target. A probe must
+report both a fresh process instance and the SHA-256 of the artifact Tugboat
+built. If any activation fails, Tugboat restores and restarts every target it
+already attempted, in reverse order, and verifies the restored binary wherever
+the previous version supports the health protocol.
+
+Agent deploy is deliberately an update workflow: the destination binary and
+launchd agent or systemd user unit must already be installed. Use the daemon's
+bootstrap instructions once on a new machine, then use Tugboat for subsequent
+fleet-wide updates. An interrupted transaction leaves its lock in place rather
+than guessing that recovery state is disposable.
 
 ```sh
 tugboat agent deploy                 # build + install on every target
@@ -371,6 +380,12 @@ args = ["build", "-o", "{out}", "./cmd/tidepool-clipd"]
 GOOS = "{os}"
 GOARCH = "{arch}"
 CGO_ENABLED = "0"
+
+[health]
+args = ["health"]
+attempts = 20
+interval_ms = 500
+timeout_ms = 3000
 
 [[targets]]
 name = "mac"
@@ -394,7 +409,10 @@ Each target is `local = true` (built + installed here) or `ssh = "user@host"`
 `systemd_user = "<unit>"`. `{out}` is the binary path tugboat provides;
 `{os}` and `{arch}` choose the cross-compilation platform. The build program,
 arguments, and environment are separate values and are executed directly,
-without an intermediary shell.
+without an intermediary shell. The health arguments are also structured argv;
+Tugboat runs the installed binary directly on local targets and through SSH on
+remote targets. Each attempt has a hard timeout, and the total retry policy is
+bounded by `attempts` and `interval_ms`.
 
 ## The manifest
 

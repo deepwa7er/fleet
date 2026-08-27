@@ -273,18 +273,72 @@ func (d *daemon) postClip(ctx context.Context, text string) error {
 	return nil
 }
 
-func main() {
-	urlFlag := flag.String("url", "", "tidepool base URL, e.g. https://tidepool.tailnet.ts.net")
-	pollFlag := flag.Duration("poll", 500*time.Millisecond, "local clipboard poll interval")
-	flag.Parse()
+func run(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) > 0 && args[0] == "health" {
+		flags := flag.NewFlagSet("tidepool-clipd health", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		timeout := flags.Duration("timeout", time.Second, "health query timeout")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("health accepts no positional arguments")
+		}
+		if *timeout <= 0 {
+			return errors.New("health timeout must be positive")
+		}
+		path, err := defaultHealthSocket()
+		if err != nil {
+			return err
+		}
+		queryCtx, cancel := healthContext(ctx, *timeout)
+		defer cancel()
+		status, err := queryHealth(queryCtx, path)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(status)
+	}
+
+	flags := flag.NewFlagSet("tidepool-clipd", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	urlFlag := flags.String("url", "", "tidepool base URL, e.g. https://tidepool.tailnet.ts.net")
+	pollFlag := flags.Duration("poll", 500*time.Millisecond, "local clipboard poll interval")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("unexpected positional arguments")
+	}
 	if *urlFlag == "" {
-		log.Fatal("must specify -url")
+		return errors.New("must specify -url")
+	}
+	if *pollFlag <= 0 {
+		return errors.New("poll interval must be positive")
 	}
 
 	cb, err := newClipboard()
 	if err != nil {
-		log.Fatalf("clipboard: %v", err)
+		return fmt.Errorf("clipboard: %w", err)
 	}
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate running binary: %w", err)
+	}
+	status, err := newHealthStatus(executable)
+	if err != nil {
+		return fmt.Errorf("initialize health status: %w", err)
+	}
+	healthSocket, err := defaultHealthSocket()
+	if err != nil {
+		return err
+	}
+	server, err := startHealthServer(healthSocket, status)
+	if err != nil {
+		return fmt.Errorf("start health server: %w", err)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	d := &daemon{
 		baseURL: strings.TrimRight(*urlFlag, "/"),
@@ -295,15 +349,38 @@ func main() {
 		http: &http.Client{},
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
 	log.Printf("tidepool-clipd -> %s (poll %s, os %s)", d.baseURL, d.poll, runtime.GOOS)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() { defer wg.Done(); d.watch(ctx) }()
 	go func() { defer wg.Done(); d.subscribe(ctx) }()
+	healthDone := make(chan error, 1)
+	go func() { healthDone <- server.serve(ctx) }()
+
+	var healthErr error
+	healthFinished := false
+	select {
+	case <-ctx.Done():
+	case healthErr = <-healthDone:
+		healthFinished = true
+	}
+	cancel()
 	wg.Wait()
+	if !healthFinished {
+		healthErr = <-healthDone
+	}
+	if healthErr != nil {
+		return healthErr
+	}
 	log.Print("shutdown")
+	return nil
+}
+
+func main() {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	if err := run(ctx, os.Args[1:], os.Stdout); err != nil {
+		log.Fatal(err)
+	}
 }

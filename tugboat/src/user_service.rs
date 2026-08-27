@@ -5,8 +5,11 @@
 //! restarts directly, without an intermediary shell.
 
 use std::process::Command;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+
+use crate::subprocess::run_captured_timeout;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UserServiceManager {
@@ -117,6 +120,25 @@ impl ServiceCommand {
             bail!("command exited with {status}: {}", self.display());
         }
         Ok(())
+    }
+
+    pub fn run_timeout(&self, timeout: Duration) -> Result<()> {
+        let mut command = Command::new(self.program);
+        command.args(&self.args);
+        let output = run_captured_timeout(command, None, timeout)
+            .with_context(|| format!("running {}", self.display()))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let stderr = output.stderr.trim();
+        if stderr.is_empty() {
+            bail!("command exited with {}: {}", output.status, self.display());
+        }
+        bail!(
+            "command exited with {}: {}: {stderr}",
+            output.status,
+            self.display()
+        )
     }
 }
 

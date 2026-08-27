@@ -6,10 +6,11 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
-use crate::subprocess::{run_streamed, LogSink};
+use crate::subprocess::{run_captured_timeout, run_streamed, CapturedOutput, LogSink};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RsyncKind {
@@ -52,6 +53,20 @@ pub fn ssh_script(host: &str, script: &str, log: &dyn LogSink) -> Result<()> {
         bail!("remote script exited with {status}");
     }
     Ok(())
+}
+
+/// Execute a remote command and capture its output with a hard deadline.
+pub fn ssh_capture(host: &str, remote_command: &str, timeout: Duration) -> Result<CapturedOutput> {
+    let mut command = Command::new("ssh");
+    command.arg(host).arg(remote_command);
+    run_captured_timeout(command, None, timeout).context("spawning ssh")
+}
+
+/// Execute a remote Bash script through stdin and capture its bounded output.
+pub fn ssh_script_capture(host: &str, script: &str, timeout: Duration) -> Result<CapturedOutput> {
+    let mut command = Command::new("ssh");
+    command.arg(host).arg("bash -s");
+    run_captured_timeout(command, Some(script.as_bytes()), timeout).context("spawning ssh")
 }
 
 /// Quote one value as one POSIX shell word for a remote script.

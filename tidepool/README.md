@@ -110,6 +110,18 @@ Pure Go, no CGo. Requires the platform clipboard tools at runtime:
 `pbcopy`/`pbpaste` (macOS, preinstalled) or `wl-copy`/`wl-paste` (Wayland;
 `dnf install wl-clipboard`). X11 isn't supported by the daemon.
 
+The daemon also exposes a per-user Unix-socket health protocol. This command
+queries it with a one-second deadline and prints the running PID, process
+instance token, readiness state, and SHA-256 of the binary that started:
+
+```sh
+~/.local/bin/tidepool-clipd health
+```
+
+Tugboat uses that identity to verify fleet updates and compensating rollbacks;
+a successful service-manager restart alone is not considered deployment
+success.
+
 ### Install on Linux (Wayland, systemd user unit)
 
 ```sh

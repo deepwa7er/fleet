@@ -12,6 +12,8 @@ serde_json = { workspace = true }
 toml = { workspace = true }
 anyhow = { workspace = true }
 tempfile = "3"
+sha2 = "0.10"
+wait-timeout = "0.2"
 
 # Render the Markdown that `gomarkdoc` emits for Go services into HTML for the
 # docs site (`fleet docs`). Pure Rust.

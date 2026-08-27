@@ -4,10 +4,12 @@
 //! deployer, documentation shipper, and HTTP daemon can share process plumbing
 //! without depending on one another's orchestration modules.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::process::{Command, ExitStatus, Stdio};
+use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use wait_timeout::ChildExt;
 
 /// A destination for subprocess output and workflow progress. Implementations
 /// must be `Sync` because stdout and stderr are drained concurrently.
@@ -24,6 +26,69 @@ impl LogSink for StdoutSink {
         // interleave within a line.
         println!("{line}");
     }
+}
+
+#[derive(Debug)]
+pub struct CapturedOutput {
+    pub status: ExitStatus,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Run a child with a hard deadline while capturing both output streams.
+///
+/// Regular OS pipes can deadlock when a parent waits before draining a verbose
+/// child. Temporary files keep the wait bounded regardless of output volume.
+pub fn run_captured_timeout(
+    mut command: Command,
+    stdin_data: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<CapturedOutput> {
+    let mut stdout = tempfile::tempfile().context("creating stdout capture")?;
+    let mut stderr = tempfile::tempfile().context("creating stderr capture")?;
+    let stdin = if let Some(data) = stdin_data {
+        let mut file = tempfile::tempfile().context("creating stdin buffer")?;
+        file.write_all(data).context("buffering child stdin")?;
+        file.seek(SeekFrom::Start(0))
+            .context("rewinding child stdin")?;
+        Stdio::from(file)
+    } else {
+        Stdio::null()
+    };
+    command
+        .stdout(Stdio::from(
+            stdout.try_clone().context("cloning stdout capture")?,
+        ))
+        .stderr(Stdio::from(
+            stderr.try_clone().context("cloning stderr capture")?,
+        ))
+        .stdin(stdin);
+
+    let mut child = command.spawn().context("spawning command")?;
+    let Some(status) = child
+        .wait_timeout(timeout)
+        .context("waiting on child process")?
+    else {
+        if let Err(error) = child.kill() {
+            if error.kind() != std::io::ErrorKind::InvalidInput {
+                return Err(error).context("killing timed-out child process");
+            }
+        }
+        child.wait().context("reaping timed-out child process")?;
+        bail!("command timed out after {} ms", timeout.as_millis());
+    };
+
+    let read_capture = |file: &mut std::fs::File| -> Result<String> {
+        file.seek(SeekFrom::Start(0))?;
+        let mut text = String::new();
+        file.read_to_string(&mut text)?;
+        Ok(text)
+    };
+    Ok(CapturedOutput {
+        status,
+        stdout: read_capture(&mut stdout).context("reading captured stdout")?,
+        stderr: read_capture(&mut stderr).context("reading captured stderr")?,
+    })
 }
 
 /// Run a child process, forwarding stdout and stderr into `log` as they arrive.
@@ -99,5 +164,29 @@ mod tests {
         let mut lines = log.0.lock().unwrap().clone();
         lines.sort();
         assert_eq!(lines, ["stderr:value", "stdout:value"]);
+    }
+
+    #[test]
+    fn captured_process_returns_both_output_streams() {
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "read -r value; printf 'out:%s' \"$value\"; printf 'err:%s' \"$value\" >&2",
+        ]);
+
+        let output =
+            run_captured_timeout(command, Some(b"value\n"), Duration::from_secs(1)).unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, "out:value");
+        assert_eq!(output.stderr, "err:value");
+    }
+
+    #[test]
+    fn captured_process_is_killed_at_the_deadline() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 5"]);
+
+        let error = run_captured_timeout(command, None, Duration::from_millis(10)).unwrap_err();
+        assert!(error.to_string().contains("timed out"));
     }
 }

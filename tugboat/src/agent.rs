@@ -7,21 +7,22 @@
 //! (Linux), like `tidepool-clipd`.
 //!
 //! A manifest is first converted into a validated domain model, then into a
-//! deployment plan shared by dry-run and execution. Execution builds every
-//! selected target before installing the first one, so a build failure can
-//! never leave the machines on different versions.
+//! deployment plan shared by dry-run and execution. Execution builds and stages
+//! every selected target before activating the first one, then verifies the
+//! exact running artifacts or restores every target it already attempted.
 
 use std::collections::{BTreeMap, HashSet};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
-use crate::subprocess::StdoutSink;
-use crate::transport::{self, RsyncKind};
+use crate::transport;
 use crate::user_service::{UserService, UserServiceManager};
+
+mod transaction;
 
 // ── manifest input + validated domain model ─────────────────────────────────
 
@@ -33,6 +34,7 @@ use crate::user_service::{UserService, UserServiceManager};
 struct RawManifest {
     name: String,
     build: RawBuild,
+    health: RawHealth,
     targets: Vec<RawTarget>,
 }
 
@@ -44,6 +46,15 @@ struct RawBuild {
     args: Vec<String>,
     #[serde(default)]
     env: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawHealth {
+    args: Vec<String>,
+    attempts: u32,
+    interval_ms: u64,
+    timeout_ms: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,6 +78,7 @@ struct RawTarget {
 struct Manifest {
     name: String,
     build: BuildSpec,
+    health: HealthSpec,
     targets: Vec<Target>,
 }
 
@@ -75,6 +87,14 @@ struct BuildSpec {
     program: String,
     args: Vec<String>,
     env: BTreeMap<String, String>,
+}
+
+#[derive(Debug)]
+struct HealthSpec {
+    args: Vec<String>,
+    attempts: u32,
+    interval: Duration,
+    timeout: Duration,
 }
 
 #[derive(Debug)]
@@ -180,6 +200,28 @@ impl TryFrom<RawManifest> for Manifest {
             env: raw.build.env,
         };
 
+        if raw.health.args.is_empty() {
+            bail!("agent: `health.args` must contain at least one argument");
+        }
+        if raw.health.args.iter().any(|arg| arg.contains('\0')) {
+            bail!("agent: `health.args` must not contain NUL bytes");
+        }
+        if raw.health.attempts == 0 {
+            bail!("agent: `health.attempts` must be positive");
+        }
+        if raw.health.interval_ms == 0 {
+            bail!("agent: `health.interval_ms` must be positive");
+        }
+        if raw.health.timeout_ms == 0 {
+            bail!("agent: `health.timeout_ms` must be positive");
+        }
+        let health = HealthSpec {
+            args: raw.health.args,
+            attempts: raw.health.attempts,
+            interval: Duration::from_millis(raw.health.interval_ms),
+            timeout: Duration::from_millis(raw.health.timeout_ms),
+        };
+
         let mut seen = HashSet::new();
         let mut targets = Vec::with_capacity(raw.targets.len());
         for raw_target in raw.targets {
@@ -193,6 +235,7 @@ impl TryFrom<RawManifest> for Manifest {
         Ok(Self {
             name,
             build,
+            health,
             targets,
         })
     }
@@ -242,8 +285,7 @@ impl TryFrom<RawTarget> for Target {
                     unit,
                     &format!("agent target `{name}`: `systemd_user` must not be empty"),
                 )?;
-                UserService::systemd_user(unit)
-                    .with_context(|| format!("agent target `{name}`"))?
+                UserService::systemd_user(unit).with_context(|| format!("agent target `{name}`"))?
             }
             (Some(_), Some(_)) => {
                 bail!("agent target `{name}`: set `launchd` or `systemd_user`, not both")
@@ -251,8 +293,7 @@ impl TryFrom<RawTarget> for Target {
             (None, None) => bail!("agent target `{name}`: set `launchd` or `systemd_user`"),
         };
         match (platform.os.as_str(), service.manager()) {
-            ("darwin", UserServiceManager::Launchd)
-            | ("linux", UserServiceManager::Systemd) => {}
+            ("darwin", UserServiceManager::Launchd) | ("linux", UserServiceManager::Systemd) => {}
             ("darwin", UserServiceManager::Systemd) => {
                 bail!("agent target `{name}`: `os = \"darwin\"` requires `launchd`")
             }
@@ -358,6 +399,8 @@ struct PlannedTarget<'a> {
 struct DeploymentPlan<'a> {
     name: &'a str,
     source_dir: &'a Path,
+    health: &'a HealthSpec,
+    transaction: String,
     targets: Vec<PlannedTarget<'a>>,
 }
 
@@ -387,6 +430,14 @@ impl<'a> DeploymentPlan<'a> {
         Ok(Self {
             name: &manifest.name,
             source_dir,
+            health: &manifest.health,
+            transaction: workdir
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .chars()
+                .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+                .collect(),
             targets,
         })
     }
@@ -407,6 +458,18 @@ impl<'a> DeploymentPlan<'a> {
                 target.destination.display()
             );
             println!("  restart: {}", target.service.remote_restart_description());
+            println!(
+                "  verify:  {} {} ({} attempts, {} ms each)",
+                target.destination.display(),
+                self.health
+                    .args
+                    .iter()
+                    .map(|arg| shell_word(arg))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                self.health.attempts,
+                self.health.timeout.as_millis()
+            );
         }
     }
 
@@ -432,21 +495,7 @@ impl<'a> DeploymentPlan<'a> {
             }
         }
 
-        for planned in &self.targets {
-            let target = planned.target;
-            println!("\n════ INSTALL {} → {} ════", self.name, target.name);
-            match &target.location {
-                Location::Local => {
-                    install_local(&planned.artifact, &target.destination, &target.service)?
-                }
-                Location::Ssh { host } => {
-                    install_remote(host, &planned.artifact, &target.destination, &target.service)?
-                }
-            }
-        }
-
-        println!("\n✓ {} deployed to: {}", self.name, self.target_names());
-        Ok(())
+        transaction::execute(self)
     }
 
     fn target_names(&self) -> String {
@@ -509,62 +558,6 @@ pub fn deploy(manifest_path: &Path, only: Option<&str>, dry_run: bool) -> Result
     DeploymentPlan::create(&manifest, source_dir, only, workdir.path())?.execute()
 }
 
-/// Install on this machine: atomic swap (write beside the dest, then rename, so a
-/// running binary is replaced safely), then restart the daemon.
-fn install_local(
-    built: &Path,
-    destination: &Destination,
-    service: &UserService,
-) -> Result<()> {
-    let dest = destination.local_path()?;
-    let staged = with_suffix(&dest, ".tug-new");
-    println!("==> INSTALL (local): {}", dest.display());
-
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating install dir {}", parent.display()))?;
-    }
-    std::fs::copy(built, &staged).with_context(|| format!("copying to {}", staged.display()))?;
-    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
-        .with_context(|| format!("chmod +x {}", staged.display()))?;
-    // A freshly-built local binary carries no quarantine, but a downloaded one
-    // would; strip it best-effort so Gatekeeper doesn't block the launchd agent.
-    #[cfg(target_os = "macos")]
-    {
-        let _ = Command::new("xattr")
-            .args(["-d", "com.apple.quarantine"])
-            .arg(&staged)
-            .status();
-    }
-    std::fs::rename(&staged, &dest).with_context(|| format!("installing {}", dest.display()))?;
-
-    let restart = service.restart_command()?;
-    println!("==> RESTART: {}", restart.display());
-    restart.run()
-}
-
-/// Install on a remote machine over SSH: rsync the binary beside the dest, then a
-/// remote atomic swap and restart.
-fn install_remote(
-    host: &str,
-    built: &Path,
-    destination: &Destination,
-    service: &UserService,
-) -> Result<()> {
-    let log = StdoutSink;
-    let dest = destination.display();
-    let staged = format!("{dest}.tug-new");
-    println!("==> SHIP: {} → {host}:{dest}", built.display());
-    transport::rsync(built, &format!("{host}:{staged}"), RsyncKind::File, &log)?;
-
-    println!("==> INSTALL + RESTART on {host}");
-    let restart = remote_restart_script(service);
-    let script = format!(
-        "set -euo pipefail\nmkdir -p \"$(dirname {dest})\"\nchmod 755 {staged}\nmv {staged} {dest}\n{restart}\necho \"    installed {dest}\""
-    );
-    transport::ssh_script(host, &script, &log)
-}
-
 fn remote_restart_script(service: &UserService) -> String {
     let name = transport::shell_quote(service.name());
     match service.manager() {
@@ -622,6 +615,12 @@ args = ["build", "-o", "{out}", "./cmd/clipd"]
 GOOS = "{os}"
 GOARCH = "{arch}"
 CGO_ENABLED = "0"
+
+[health]
+args = ["health"]
+attempts = 3
+interval_ms = 10
+timeout_ms = 100
 
 [[targets]]
 name = "mac"
@@ -703,6 +702,11 @@ name = "tool"
 [build]
 program = "go"
 args = ["build", "-o", "{out}"]
+[health]
+args = ["health"]
+attempts = 3
+interval_ms = 10
+timeout_ms = 100
 [[targets]]
 name = "mac"
 local = true
@@ -726,6 +730,11 @@ name = "tool"
 [build]
 program = "go"
 args = ["build", "./cmd/tool"]
+[health]
+args = ["health"]
+attempts = 3
+interval_ms = 10
+timeout_ms = 100
 [[targets]]
 name = "mac"
 local = true
@@ -743,6 +752,35 @@ launchd = "com.example.tool"
     }
 
     #[test]
+    fn rejects_an_unbounded_health_policy() {
+        let error = load_text(
+            r#"
+name = "tool"
+[build]
+program = "go"
+args = ["build", "-o", "{out}"]
+[health]
+args = ["health"]
+attempts = 0
+interval_ms = 10
+timeout_ms = 100
+[[targets]]
+name = "mac"
+local = true
+os = "darwin"
+arch = "arm64"
+dest = "~/.local/bin/tool"
+launchd = "com.example.tool"
+"#,
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("`health.attempts` must be positive"));
+    }
+
+    #[test]
     fn rejects_a_service_manager_that_does_not_match_the_platform() {
         let error = load_text(
             r#"
@@ -750,6 +788,11 @@ name = "tool"
 [build]
 program = "go"
 args = ["build", "-o", "{out}"]
+[health]
+args = ["health"]
+attempts = 3
+interval_ms = 10
+timeout_ms = 100
 [[targets]]
 name = "mac"
 local = true
@@ -809,6 +852,12 @@ name = "clipd"
 [build]
 program = "sh"
 args = ["-c", 'if [ "$1" = fail ]; then exit 1; else printf built > "$2"; fi', "_", "{{arch}}", "{{out}}"]
+
+[health]
+args = ["health"]
+attempts = 3
+interval_ms = 10
+timeout_ms = 100
 
 [[targets]]
 name = "first"
