@@ -19,8 +19,9 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
-use crate::deploy::{self, StdoutSink};
-use crate::manifest::ArtifactKind;
+use crate::subprocess::StdoutSink;
+use crate::transport::{self, RsyncKind};
+use crate::user_service::{UserService, UserServiceManager};
 
 // ── manifest input + validated domain model ─────────────────────────────────
 
@@ -149,26 +150,6 @@ impl Destination {
     }
 }
 
-#[derive(Debug)]
-enum UserService {
-    Launchd { label: String },
-    SystemdUser { unit: String },
-}
-
-impl UserService {
-    /// Render the restart action for local execution or the remote install
-    /// script. A later change can move this into shared typed service-manager
-    /// infrastructure without changing the validated manifest or plan.
-    fn restart_shell(&self) -> String {
-        match self {
-            Self::Launchd { label } => {
-                format!("launchctl kickstart -k gui/$(id -u)/{}", shq(label))
-            }
-            Self::SystemdUser { unit } => format!("systemctl --user restart {}", shq(unit)),
-        }
-    }
-}
-
 impl TryFrom<RawManifest> for Manifest {
     type Error = anyhow::Error;
 
@@ -249,30 +230,33 @@ impl TryFrom<RawTarget> for Target {
         };
         let destination = Destination::parse(raw.dest, &name)?;
         let service = match (raw.launchd, raw.systemd_user) {
-            (Some(label), None) => UserService::Launchd {
-                label: required(
+            (Some(label), None) => {
+                let label = required(
                     label,
                     &format!("agent target `{name}`: `launchd` must not be empty"),
-                )?,
-            },
-            (None, Some(unit)) => UserService::SystemdUser {
-                unit: required(
+                )?;
+                UserService::launchd(label).with_context(|| format!("agent target `{name}`"))?
+            }
+            (None, Some(unit)) => {
+                let unit = required(
                     unit,
                     &format!("agent target `{name}`: `systemd_user` must not be empty"),
-                )?,
-            },
+                )?;
+                UserService::systemd_user(unit)
+                    .with_context(|| format!("agent target `{name}`"))?
+            }
             (Some(_), Some(_)) => {
                 bail!("agent target `{name}`: set `launchd` or `systemd_user`, not both")
             }
             (None, None) => bail!("agent target `{name}`: set `launchd` or `systemd_user`"),
         };
-        match (platform.os.as_str(), &service) {
-            ("darwin", UserService::Launchd { .. })
-            | ("linux", UserService::SystemdUser { .. }) => {}
-            ("darwin", UserService::SystemdUser { .. }) => {
+        match (platform.os.as_str(), service.manager()) {
+            ("darwin", UserServiceManager::Launchd)
+            | ("linux", UserServiceManager::Systemd) => {}
+            ("darwin", UserServiceManager::Systemd) => {
                 bail!("agent target `{name}`: `os = \"darwin\"` requires `launchd`")
             }
-            ("linux", UserService::Launchd { .. }) => {
+            ("linux", UserServiceManager::Launchd) => {
                 bail!("agent target `{name}`: `os = \"linux\"` requires `systemd_user`")
             }
             (os, _) => bail!("agent target `{name}`: unsupported operating system `{os}`"),
@@ -422,7 +406,7 @@ impl<'a> DeploymentPlan<'a> {
                 location_name(&target.location),
                 target.destination.display()
             );
-            println!("  restart: {}", target.service.restart_shell());
+            println!("  restart: {}", target.service.remote_restart_description());
         }
     }
 
@@ -451,11 +435,12 @@ impl<'a> DeploymentPlan<'a> {
         for planned in &self.targets {
             let target = planned.target;
             println!("\n════ INSTALL {} → {} ════", self.name, target.name);
-            let restart = target.service.restart_shell();
             match &target.location {
-                Location::Local => install_local(&planned.artifact, &target.destination, &restart)?,
+                Location::Local => {
+                    install_local(&planned.artifact, &target.destination, &target.service)?
+                }
                 Location::Ssh { host } => {
-                    install_remote(host, &planned.artifact, &target.destination, &restart)?
+                    install_remote(host, &planned.artifact, &target.destination, &target.service)?
                 }
             }
         }
@@ -526,7 +511,11 @@ pub fn deploy(manifest_path: &Path, only: Option<&str>, dry_run: bool) -> Result
 
 /// Install on this machine: atomic swap (write beside the dest, then rename, so a
 /// running binary is replaced safely), then restart the daemon.
-fn install_local(built: &Path, destination: &Destination, restart_cmd: &str) -> Result<()> {
+fn install_local(
+    built: &Path,
+    destination: &Destination,
+    service: &UserService,
+) -> Result<()> {
     let dest = destination.local_path()?;
     let staged = with_suffix(&dest, ".tug-new");
     println!("==> INSTALL (local): {}", dest.display());
@@ -549,8 +538,9 @@ fn install_local(built: &Path, destination: &Destination, restart_cmd: &str) -> 
     }
     std::fs::rename(&staged, &dest).with_context(|| format!("installing {}", dest.display()))?;
 
-    println!("==> RESTART: {restart_cmd}");
-    run_restart(restart_cmd)
+    let restart = service.restart_command()?;
+    println!("==> RESTART: {}", restart.display());
+    restart.run()
 }
 
 /// Install on a remote machine over SSH: rsync the binary beside the dest, then a
@@ -559,34 +549,30 @@ fn install_remote(
     host: &str,
     built: &Path,
     destination: &Destination,
-    restart_cmd: &str,
+    service: &UserService,
 ) -> Result<()> {
     let log = StdoutSink;
     let dest = destination.display();
     let staged = format!("{dest}.tug-new");
     println!("==> SHIP: {} → {host}:{dest}", built.display());
-    deploy::rsync(built, &format!("{host}:{staged}"), ArtifactKind::File, &log)?;
+    transport::rsync(built, &format!("{host}:{staged}"), RsyncKind::File, &log)?;
 
     println!("==> INSTALL + RESTART on {host}");
-    // Transport extraction can replace this script rendering later. The typed
-    // destination rejects shell metacharacters before execution, preserving the
-    // existing absolute/home-relative contract without command interpolation.
+    let restart = remote_restart_script(service);
     let script = format!(
-        "set -euo pipefail\nmkdir -p \"$(dirname {dest})\"\nchmod 755 {staged}\nmv {staged} {dest}\n{restart_cmd}\necho \"    installed {dest}\""
+        "set -euo pipefail\nmkdir -p \"$(dirname {dest})\"\nchmod 755 {staged}\nmv {staged} {dest}\n{restart}\necho \"    installed {dest}\""
     );
-    deploy::ssh_script(host, &script, &log)
+    transport::ssh_script(host, &script, &log)
 }
 
-fn run_restart(cmd: &str) -> Result<()> {
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .status()
-        .with_context(|| format!("spawning: {cmd}"))?;
-    if !status.success() {
-        bail!("command exited with {status}: {cmd}");
+fn remote_restart_script(service: &UserService) -> String {
+    let name = transport::shell_quote(service.name());
+    match service.manager() {
+        UserServiceManager::Launchd => {
+            format!("uid=$(id -u)\nlaunchctl kickstart -k \"gui/$uid\"/{name}")
+        }
+        UserServiceManager::Systemd => format!("systemctl --user restart {name}"),
     }
-    Ok(())
 }
 
 fn location_name(location: &Location) -> &str {
@@ -602,10 +588,6 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(value)
 }
 
-fn shq(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
 fn shell_word(value: &str) -> String {
     if !value.is_empty()
         && value
@@ -614,7 +596,7 @@ fn shell_word(value: &str) -> String {
     {
         value.to_owned()
     } else {
-        shq(value)
+        transport::shell_quote(value)
     }
 }
 
@@ -797,6 +779,21 @@ systemd_user = "tool"
         let manifest = load_text(MANIFEST).unwrap();
         let error = select(&manifest, Some("mac,mac")).unwrap_err();
         assert!(error.to_string().contains("duplicate target name `mac`"));
+    }
+
+    #[test]
+    fn remote_restart_scripts_keep_service_values_typed_until_rendering() {
+        let launchd = UserService::launchd("com.example.clipd".to_owned()).unwrap();
+        assert_eq!(
+            remote_restart_script(&launchd),
+            "uid=$(id -u)\nlaunchctl kickstart -k \"gui/$uid\"/'com.example.clipd'"
+        );
+
+        let systemd = UserService::systemd_user("clipd".to_owned()).unwrap();
+        assert_eq!(
+            remote_restart_script(&systemd),
+            "systemctl --user restart 'clipd'"
+        );
     }
 
     #[test]

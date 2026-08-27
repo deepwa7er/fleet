@@ -27,6 +27,7 @@ use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
 use crate::fleet::expand_tilde;
+use crate::user_service::UserServiceManager;
 use crate::version::BuildInfo;
 
 /// The launchd agent label from `deploy/tugboat-serve.plist` (macOS).
@@ -90,7 +91,9 @@ pub fn run(args: SelfDeployArgs) -> Result<()> {
         .label
         .clone()
         .unwrap_or_else(|| default_target(manager).to_owned());
-    let restart_cmd = restart_argv(manager, &target)?.join(" ");
+    let service = manager.service(target)?;
+    let restart = service.restart_command()?;
+    let restart_cmd = restart.display();
 
     let install = match args.install_path {
         Some(p) => p,
@@ -142,7 +145,7 @@ pub fn run(args: SelfDeployArgs) -> Result<()> {
     //    failure past the swap rolls the old binary back.
     let outcome = (|| -> Result<RemoteHealth> {
         step("RESTART", &restart_cmd);
-        restart(&manager, &target)?;
+        restart.run()?;
         step("HEALTH", &format!("waiting for {health_url} (up to {}s)", args.timeout_secs));
         wait_for_restart(&health_url, prev.as_ref(), Duration::from_secs(args.timeout_secs))
     })();
@@ -158,7 +161,7 @@ pub fn run(args: SelfDeployArgs) -> Result<()> {
         Err(err) => {
             eprintln!("!! self-deploy failed; rolling back to the previous binary");
             rollback(&backup, &install)?;
-            let _ = restart(&manager, &target);
+            let _ = restart.run();
             Err(err).context("self-deploy failed; rolled back to the previous binary")
         }
     }
@@ -218,23 +221,14 @@ fn rollback(backup: &Option<PathBuf>, install: &Path) -> Result<()> {
     }
 }
 
-/// The service manager the daemon runs under — detected from PATH, since the
-/// same binary serves both hosts: macOS runs `tugboat serve` as a launchd
-/// agent, the Linux boxes as a systemd user unit.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum ServiceManager {
-    Launchd,
-    Systemd,
-}
-
 /// Pick the manager from which service binaries exist. Pure so the precedence
 /// is unit-testable without touching PATH. launchd wins when both are present
 /// (that combination only happens inside a macOS container with systemd tools
 /// installed, where the GUI-domain kickstart is still the right restart).
-fn resolve_manager(has_launchctl: bool, has_systemctl: bool) -> Result<ServiceManager> {
+fn resolve_manager(has_launchctl: bool, has_systemctl: bool) -> Result<UserServiceManager> {
     match (has_launchctl, has_systemctl) {
-        (true, _) => Ok(ServiceManager::Launchd),
-        (false, true) => Ok(ServiceManager::Systemd),
+        (true, _) => Ok(UserServiceManager::Launchd),
+        (false, true) => Ok(UserServiceManager::Systemd),
         (false, false) => bail!(
             "neither `launchctl` (macOS) nor `systemctl` (Linux) is on PATH; \
              cannot restart the daemon — pass --label and restart the service yourself"
@@ -242,7 +236,7 @@ fn resolve_manager(has_launchctl: bool, has_systemctl: bool) -> Result<ServiceMa
     }
 }
 
-fn detect_manager() -> Result<ServiceManager> {
+fn detect_manager() -> Result<UserServiceManager> {
     resolve_manager(which("launchctl"), which("systemctl"))
 }
 
@@ -254,46 +248,11 @@ fn which(bin: &str) -> bool {
 }
 
 /// The platform's own service name, when `--label` isn't given.
-fn default_target(manager: ServiceManager) -> &'static str {
+fn default_target(manager: UserServiceManager) -> &'static str {
     match manager {
-        ServiceManager::Launchd => LAUNCHD_LABEL,
-        ServiceManager::Systemd => SYSTEMD_UNIT,
+        UserServiceManager::Launchd => LAUNCHD_LABEL,
+        UserServiceManager::Systemd => SYSTEMD_UNIT,
     }
-}
-
-/// The argv that restarts the daemon under `manager`. Pure given the uid
-/// (launchd addresses its GUI domain by numeric uid), so both command shapes
-/// are unit-testable without a service manager present.
-fn restart_argv(manager: ServiceManager, target: &str) -> Result<Vec<String>> {
-    Ok(match manager {
-        ServiceManager::Launchd => vec![
-            "launchctl".to_owned(),
-            "kickstart".to_owned(),
-            "-k".to_owned(),
-            format!("gui/{}/{target}", uid()?),
-        ],
-        ServiceManager::Systemd => vec![
-            "systemctl".to_owned(),
-            "--user".to_owned(),
-            "restart".to_owned(),
-            target.to_owned(),
-        ],
-    })
-}
-
-/// Restart the daemon service, dispatching on the detected manager. `kickstart
-/// -k` kills the launchd agent and starts a fresh one from the installed
-/// binary; `systemctl --user restart` does the same for the systemd unit.
-fn restart(manager: &ServiceManager, target: &str) -> Result<()> {
-    let argv = restart_argv(*manager, target)?;
-    let status = Command::new(&argv[0])
-        .args(&argv[1..])
-        .status()
-        .with_context(|| format!("spawning {}", argv[0]))?;
-    if !status.success() {
-        bail!("`{}` failed (is the service loaded?)", argv.join(" "));
-    }
-    Ok(())
 }
 
 /// Poll `/health` until the daemon reports a different instance than `prev` (or
@@ -366,18 +325,6 @@ fn derive_health_url(port: u16) -> Result<String> {
         bail!("`tailscale ip -4` returned no address; pass --health-url explicitly");
     }
     Ok(format!("http://{ip}:{port}/health"))
-}
-
-/// The calling user's numeric uid (for the launchd `gui/<uid>` domain).
-fn uid() -> Result<u32> {
-    let out = Command::new("id").arg("-u").output().context("spawning `id -u`")?;
-    if !out.status.success() {
-        bail!("`id -u` failed");
-    }
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .parse()
-        .context("parsing uid from `id -u`")
 }
 
 /// Fail unless `repo` is a checkout of the tugboat crate itself.
@@ -532,32 +479,18 @@ mod tests {
 
     #[test]
     fn resolve_manager_prefers_launchd_then_systemd() {
-        assert_eq!(resolve_manager(true, true).unwrap(), ServiceManager::Launchd);
-        assert_eq!(resolve_manager(true, false).unwrap(), ServiceManager::Launchd);
-        assert_eq!(resolve_manager(false, true).unwrap(), ServiceManager::Systemd);
+        assert_eq!(resolve_manager(true, true).unwrap(), UserServiceManager::Launchd);
+        assert_eq!(resolve_manager(true, false).unwrap(), UserServiceManager::Launchd);
+        assert_eq!(resolve_manager(false, true).unwrap(), UserServiceManager::Systemd);
         assert!(resolve_manager(false, false).is_err());
     }
 
     #[test]
     fn default_target_matches_platform() {
-        assert_eq!(default_target(ServiceManager::Launchd), "com.deepwa7er.tugboat-serve");
-        assert_eq!(default_target(ServiceManager::Systemd), "tugboat-serve");
-    }
-
-    #[test]
-    fn systemd_argv_restarts_the_user_unit() {
         assert_eq!(
-            restart_argv(ServiceManager::Systemd, "tugboat-serve").unwrap(),
-            vec!["systemctl", "--user", "restart", "tugboat-serve"]
+            default_target(UserServiceManager::Launchd),
+            "com.deepwa7er.tugboat-serve"
         );
-    }
-
-    #[test]
-    fn launchd_argv_kickstarts_the_gui_domain() {
-        let argv = restart_argv(ServiceManager::Launchd, "com.deepwa7er.tugboat-serve").unwrap();
-        assert_eq!(argv[0], "launchctl");
-        assert_eq!(argv[1], "kickstart");
-        assert_eq!(argv[2], "-k");
-        assert_eq!(argv[3], format!("gui/{}/com.deepwa7er.tugboat-serve", uid().unwrap()));
+        assert_eq!(default_target(UserServiceManager::Systemd), "tugboat-serve");
     }
 }

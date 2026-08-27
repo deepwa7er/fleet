@@ -24,10 +24,11 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::deploy;
 use crate::fleet::{DocsConfig, Fleet};
 use crate::git;
-use crate::manifest::{self, ArtifactKind};
+use crate::manifest;
+use crate::subprocess::StdoutSink;
+use crate::transport::{self, RsyncKind};
 
 /// What `tugboat fleet docs` was asked to produce.
 pub struct Options {
@@ -362,7 +363,7 @@ fn build_frontend(fleet: &Fleet, docs: &DocsConfig, skip_build: bool, out: &Path
 /// is no service to restart — breakwater serves the directory — so this is a
 /// directory rsync plus a swap, not a unit deploy.
 fn ship(docs: &DocsConfig, assembled: &Path) -> Result<()> {
-    let log = deploy::StdoutSink;
+    let log = StdoutSink;
     let DocsConfig { host, dest, url, .. } = docs;
     let staged = format!("{host}:{dest}.tug-new");
     let parent = Path::new(dest)
@@ -373,9 +374,9 @@ fn ship(docs: &DocsConfig, assembled: &Path) -> Result<()> {
     println!("\n==> SHIP: {} → {host}:{dest}", assembled.display());
     // Ensure the destination's parent exists so rsync can create the staged dir,
     // then stage the new site beside the live one (same filesystem → atomic swap).
-    deploy::ssh_script(host, &ensure_parent_script(&parent), &log)?;
-    deploy::rsync(assembled, &staged, ArtifactKind::Dir, &log)?;
-    deploy::ssh_script(host, &swap_script(dest), &log)?;
+    transport::ssh_script(host, &ensure_parent_script(&parent), &log)?;
+    transport::rsync(assembled, &staged, RsyncKind::Directory, &log)?;
+    transport::ssh_script(host, &swap_script(dest), &log)?;
 
     if let Some(url) = url {
         println!("==> VERIFY: {url}");
@@ -396,7 +397,7 @@ fn ensure_parent_script(parent: &str) -> String {
         "set -euo pipefail\n\
          sudo=\"\"; [ \"$(id -u)\" -eq 0 ] || sudo=\"sudo\"\n\
          $sudo mkdir -p {}",
-        deploy::shq(parent),
+        transport::shell_quote(parent),
     )
 }
 
@@ -413,7 +414,7 @@ fn swap_script(dest: &str) -> String {
          $sudo mv \"$d.tug-new\" \"$d\"\n\
          $sudo rm -rf \"$d.tug-bak\"\n\
          echo \"    installed $d\"",
-        d = deploy::shq(dest),
+        d = transport::shell_quote(dest),
     )
 }
 

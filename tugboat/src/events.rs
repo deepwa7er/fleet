@@ -30,7 +30,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use crate::deploy::LogSink;
+use crate::subprocess::LogSink;
 
 /// Current event schema version. Bump when the shape changes; readers should
 /// ignore versions they don't know rather than misread them.

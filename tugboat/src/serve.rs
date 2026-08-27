@@ -32,12 +32,13 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, Notify};
 
-use crate::deploy::{self, LogSink};
+use crate::deploy;
 use crate::docs;
 use crate::fleet::{self, Fleet};
 use crate::git;
 use crate::manifest;
 use crate::scope;
+use crate::subprocess::LogSink;
 use crate::version::BuildInfo;
 
 /// How long to wait for a burst of commits to settle before rebuilding the docs,

@@ -20,6 +20,9 @@ mod manifest;
 mod scope;
 mod selfdeploy;
 mod serve;
+mod subprocess;
+mod transport;
+mod user_service;
 mod version;
 
 use std::net::IpAddr;
@@ -315,7 +318,13 @@ fn run_deploy(args: DeployArgs) -> Result<()> {
 
     // The daemon discovers deployables from their deploy.toml, so a new service
     // is fleet-visible the moment it has one — nothing to register here.
-    deploy::run(&manifest, &project_dir, source, args.dry_run, &deploy::StdoutSink)
+    deploy::run(
+        &manifest,
+        &project_dir,
+        source,
+        args.dry_run,
+        &subprocess::StdoutSink,
+    )
 }
 
 fn run_fleet(args: FleetArgs) -> Result<()> {

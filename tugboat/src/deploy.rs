@@ -8,9 +8,9 @@
 //! into the sink as it arrives, so the log stays live even when no terminal is
 //! attached.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -19,6 +19,8 @@ use anyhow::{bail, Context, Result};
 use crate::events;
 use crate::git;
 use crate::manifest::{ArtifactKind, Health, Manifest, Verify};
+use crate::subprocess::{run_streamed, LogSink};
+use crate::transport::{self, shell_quote as shq, RsyncKind};
 
 /// What was deployed, recorded on the host so the dashboard can tell whether a
 /// service is running the latest local code. Written only on a successful
@@ -29,23 +31,6 @@ struct Stamp {
     dirty: bool,
     branch: Option<String>,
     deployed_at: u64,
-}
-
-/// A destination for the deploy transcript: progress lines emitted by the engine
-/// plus every line of captured subprocess output. Implementations must be
-/// `Sync` because stdout and stderr are drained from separate threads.
-pub trait LogSink: Send + Sync {
-    fn line(&self, line: &str);
-}
-
-/// Writes the transcript straight to this process's stdout — the CLI's sink.
-pub struct StdoutSink;
-impl LogSink for StdoutSink {
-    fn line(&self, line: &str) {
-        // `println!` locks stdout, so concurrent stdout/stderr reader threads
-        // can't interleave within a single line.
-        println!("{line}");
-    }
 }
 
 /// Wraps another sink and also accumulates every line, so the engine can persist
@@ -396,7 +381,11 @@ fn run_measured(
                 step(log, "SHIP DIR", &format!("{}/ → {}:{}", src.display(), host, artifact.dest));
             }
         }
-        rsync(src, &staged, artifact.kind, log)?;
+        let kind = match artifact.kind {
+            ArtifactKind::File => RsyncKind::File,
+            ArtifactKind::Dir => RsyncKind::Directory,
+        };
+        transport::rsync(src, &staged, kind, log)?;
     }
     rec.completed(events::Stage::Ship, t);
 
@@ -409,7 +398,7 @@ fn run_measured(
     );
     rec.entering(events::Stage::Install);
     let t = Instant::now();
-    let install = ssh_script(host, &remote_script(manifest, stamp.as_ref(), &id), log);
+    let install = transport::ssh_script(host, &remote_script(manifest, stamp.as_ref(), &id), log);
     rec.completed(events::Stage::Install, t);
 
     // 5. End-to-end verify from this machine (informational) — only on success.
@@ -443,56 +432,6 @@ fn subst(input: &str, workdir: &str, workspace: &str) -> String {
     input
         .replace("{workdir}", workdir)
         .replace("{workspace}", workspace)
-}
-
-/// Run a child process, capturing its stdout and stderr and forwarding every
-/// line into `log` as it arrives. If `stdin_data` is given it is written to the
-/// child's stdin (concurrently, so a child that writes output while reading its
-/// input cannot deadlock). Returns the child's exit status.
-fn run_streamed(
-    mut cmd: Command,
-    stdin_data: Option<&[u8]>,
-    log: &dyn LogSink,
-) -> Result<ExitStatus> {
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    cmd.stdin(if stdin_data.is_some() {
-        Stdio::piped()
-    } else {
-        Stdio::null()
-    });
-
-    let mut child = cmd.spawn().context("spawning command")?;
-    let stdout = child.stdout.take().context("child stdout unavailable")?;
-    let stderr = child.stderr.take().context("child stderr unavailable")?;
-    let stdin = child.stdin.take();
-
-    // Drain stdout and stderr (and feed stdin) on separate threads so none of
-    // the three pipes can fill and stall the others. `scope` lets the threads
-    // borrow `log` without an Arc.
-    std::thread::scope(|scope| {
-        if let (Some(mut stdin), Some(data)) = (stdin, stdin_data) {
-            scope.spawn(move || {
-                // A broken pipe (child exited early) is not worth surfacing —
-                // the exit status below is the real signal.
-                let _ = stdin.write_all(data);
-                // Dropping `stdin` here closes the pipe so the child sees EOF.
-            });
-        }
-        scope.spawn(|| pipe_lines(stdout, log));
-        scope.spawn(|| pipe_lines(stderr, log));
-    });
-
-    child.wait().context("waiting on child process")
-}
-
-/// Forward each line read from `reader` into `log`. Stops on EOF or read error.
-fn pipe_lines<R: Read>(reader: R, log: &dyn LogSink) {
-    for line in BufReader::new(reader).lines() {
-        match line {
-            Ok(line) => log.line(&line),
-            Err(_) => break,
-        }
-    }
 }
 
 fn run_local(
@@ -578,47 +517,6 @@ fn musl_env(tool: &MuslToolchain) -> Vec<(&'static str, String)> {
     ]
 }
 
-/// Ship an artifact to `remote` over rsync. A `File` is copied as-is; a `Dir`
-/// gets trailing slashes (so rsync copies the *contents* into `remote`) plus
-/// `--delete` to prune stale files. The remote already needs rsync for the dir
-/// case, so files ride the same path and pick up `-z` compression for free.
-///
-/// `-a` preserves permissions and times (the binary keeps its exec bit), while
-/// `--no-owner --no-group` stops the local machine's uid/gid from carrying over
-/// — the files land owned by the remote SSH user, not whatever uid matches
-/// locally. Each ship targets a fresh `.tug-new` path, so there is no basis file
-/// for rsync to delta against; this is whole-file transfer, just compressed.
-pub(crate) fn rsync(local: &Path, remote: &str, kind: ArtifactKind, log: &dyn LogSink) -> Result<()> {
-    let mut command = Command::new("rsync");
-    command.args(["-az", "--no-owner", "--no-group"]);
-
-    let (from, to) = match kind {
-        ArtifactKind::File => (local.display().to_string(), remote.to_string()),
-        ArtifactKind::Dir => {
-            command.arg("--delete");
-            (format!("{}/", local.display()), format!("{remote}/"))
-        }
-    };
-    command.arg(&from).arg(&to);
-
-    let status = run_streamed(command, None, log).context("spawning rsync")?;
-    if !status.success() {
-        bail!("rsync failed: {from} → {to}");
-    }
-    Ok(())
-}
-
-pub(crate) fn ssh_script(host: &str, script: &str, log: &dyn LogSink) -> Result<()> {
-    let mut command = Command::new("ssh");
-    command.arg(host).arg("bash -s");
-    let status =
-        run_streamed(command, Some(script.as_bytes()), log).context("spawning ssh")?;
-    if !status.success() {
-        bail!("remote script exited with {status}");
-    }
-    Ok(())
-}
-
 /// How many past deploy transcripts to keep per service on the host.
 const TRANSCRIPT_KEEP: usize = 50;
 
@@ -691,11 +589,6 @@ fn verify(cfg: &Verify, log: &dyn LogSink) -> Result<()> {
         }
     }
     bail!("not reachable after {} attempts", cfg.retries);
-}
-
-/// Quote a value for safe interpolation as a single shell word.
-pub(crate) fn shq(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Shell-quote each item and join with spaces (for a bash array literal).
