@@ -8,16 +8,24 @@
 
 name = "tidepool-clipd"
 
-# Built locally, in this repo dir, once per target. `{goos}`/`{goarch}` select the
-# platform; `{out}` is a temp path tugboat provides for the built binary.
-build = "GOOS={goos} GOARCH={goarch} CGO_ENABLED=0 go build -o {out} ./cmd/tidepool-clipd"
+# Built locally, in this repo dir, once per target. `{os}`/`{arch}` select the
+# platform; `{out}` is a temp path tugboat provides for the built binary. Tugboat
+# executes the program directly instead of evaluating a shell command.
+[build]
+program = "go"
+args = ["build", "-o", "{out}", "./cmd/tidepool-clipd"]
+
+[build.env]
+GOOS = "{os}"
+GOARCH = "{arch}"
+CGO_ENABLED = "0"
 
 [[targets]]
 # This MacBook — built here, installed locally, run as a launchd login agent.
 name = "mac"
 local = true
-goos = "darwin"
-goarch = "arm64"
+os = "darwin"
+arch = "arm64"
 dest = "~/.local/bin/tidepool-clipd"
 launchd = "com.deepwa7er.tidepool-clipd"
 
@@ -25,7 +33,7 @@ launchd = "com.deepwa7er.tidepool-clipd"
 # The Fedora desktop — reached over Tailscale SSH, run as a systemd --user unit.
 name = "desktop"
 ssh = "deepwater@fedora"
-goos = "linux"
-goarch = "amd64"
+os = "linux"
+arch = "amd64"
 dest = "~/.local/bin/tidepool-clipd"
 systemd_user = "tidepool-clipd"

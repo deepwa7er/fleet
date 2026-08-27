@@ -347,8 +347,10 @@ via a launchd login agent (macOS) or a `systemd --user` unit (Linux). Tidepool's
 `tidepool-clipd` runs this way.
 
 The binary is cross-compiled per target, then installed locally or rsync'd over
-SSH with an atomic swap. No health-check / rollback / ledger — these are
-trivially replaceable user daemons, not the VPS's load-bearing services.
+SSH with an atomic swap. Every selected artifact is built before Tugboat begins
+installing any of them, so a build failure cannot split the fleet across binary
+versions. No health-check / rollback / ledger — these are trivially replaceable
+user daemons, not the VPS's load-bearing services.
 
 ```sh
 tugboat agent deploy                 # build + install on every target
@@ -359,22 +361,30 @@ tugboat agent deploy --dry-run       # print the plan
 Driven by an `agent.toml` in the target's repo:
 
 ```toml
-name  = "tidepool-clipd"
-build = "GOOS={goos} GOARCH={goarch} CGO_ENABLED=0 go build -o {out} ./cmd/tidepool-clipd"
+name = "tidepool-clipd"
+
+[build]
+program = "go"
+args = ["build", "-o", "{out}", "./cmd/tidepool-clipd"]
+
+[build.env]
+GOOS = "{os}"
+GOARCH = "{arch}"
+CGO_ENABLED = "0"
 
 [[targets]]
 name = "mac"
 local = true                          # build + install on this machine
-goos = "darwin"
-goarch = "arm64"
+os = "darwin"
+arch = "arm64"
 dest = "~/.local/bin/tidepool-clipd"
 launchd = "com.deepwa7er.tidepool-clipd"
 
 [[targets]]
 name = "desktop"
 ssh = "deepwater@fedora"              # reached over Tailscale SSH
-goos = "linux"
-goarch = "amd64"
+os = "linux"
+arch = "amd64"
 dest = "~/.local/bin/tidepool-clipd"
 systemd_user = "tidepool-clipd"
 ```
@@ -382,7 +392,9 @@ systemd_user = "tidepool-clipd"
 Each target is `local = true` (built + installed here) or `ssh = "user@host"`
 (rsync'd over SSH), and sets exactly one of `launchd = "<label>"` or
 `systemd_user = "<unit>"`. `{out}` is the binary path tugboat provides;
-`{goos}` and `{goarch}` choose the cross-compilation platform.
+`{os}` and `{arch}` choose the cross-compilation platform. The build program,
+arguments, and environment are separate values and are executed directly,
+without an intermediary shell.
 
 ## The manifest
 
