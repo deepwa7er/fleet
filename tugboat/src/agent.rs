@@ -7,8 +7,8 @@
 //!
 //! - a **daemon** — restarted after install via a launchd login agent (macOS) or
 //!   a `systemd --user` unit (Linux), like `tidepool-clipd`;
-//! - a **CLI tool** — just a binary on `PATH` (e.g. `~/.cargo/bin/drydock`), with
-//!   no unit to restart; set neither `launchd` nor `systemd_user`.
+//! - a **CLI tool** — just a binary on `PATH`, with no unit to restart; set
+//!   neither `launchd` nor `systemd_user`.
 //!
 //! The binary is built per target (cross-compiled when `goos`/`goarch` are given,
 //! or a native build when they aren't). No health-check/rollback/ledger — these

@@ -347,9 +347,8 @@ than a root systemd service on the VPS. Two shapes:
 
 - a **daemon**, restarted after install via a launchd login agent (macOS) or a
   `systemd --user` unit (Linux) — e.g. tidepool's `tidepool-clipd`;
-- a **CLI tool**, just a binary on `PATH` with nothing to restart — e.g. the
-  `drydock` worker CLI in `~/.cargo/bin`. Set neither `launchd` nor
-  `systemd_user`.
+- a **CLI tool**, just a binary on `PATH` with nothing to restart. Set neither
+  `launchd` nor `systemd_user`.
 
 The binary is built per target — cross-compiled when `goos`/`goarch` are given,
 or a native build when they aren't. No health-check / rollback / ledger — these
@@ -361,7 +360,7 @@ tugboat agent deploy --only desktop  # one target
 tugboat agent deploy --dry-run       # print the plan
 ```
 
-Driven by an `agent.toml` in the daemon's repo:
+Driven by an `agent.toml` in the target's repo:
 
 ```toml
 name  = "tidepool-clipd"
@@ -388,19 +387,6 @@ Each target is `local = true` (built + installed here) or `ssh = "user@host"`
 (rsync'd over SSH); a daemon restarts via `launchd = "<label>"` or
 `systemd_user = "<unit>"`. `{out}` is the binary path tugboat provides;
 `{goos}`/`{goarch}` choose the build platform for a cross-compiled build.
-
-A **CLI tool** omits the platform and restart fields entirely — a native build,
-installed on `PATH`, nothing to restart:
-
-```toml
-name  = "drydock"                       # one binary: `drydock serve` + worker CLI
-build = "cargo build --release && cp target/release/drydock {out}"
-
-[[targets]]
-name = "mac"
-local = true
-dest = "~/.cargo/bin/drydock"
-```
 
 ## The manifest
 
