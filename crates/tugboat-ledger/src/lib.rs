@@ -28,7 +28,8 @@ pub struct LedgerEntry {
     /// Schema version this entry was written with. Absent (0) on pre-v1 lines.
     #[serde(default)]
     pub v: u32,
-    /// Deploy id (`{at}-{short}`), naming the transcript `<name>/<id>.log`.
+    /// Deploy id (`{at}-{short}{nonce}`), naming the transcript
+    /// `<name>/<id>.log`.
     /// Absent on pre-v2 entries, which have no saved transcript.
     #[serde(default)]
     pub id: Option<String>,
@@ -57,15 +58,18 @@ impl LedgerEntry {
     }
 }
 
-/// The deploy id naming a transcript: `{start-unix-seconds}-{short-sha}`, or
-/// `{at}-nogit` outside a checkout. Always satisfies [`valid_deploy_id`].
-pub fn deploy_id(at: u64, short: Option<&str>) -> String {
-    format!("{at}-{}", short.unwrap_or("nogit"))
+/// The deploy id naming a transcript: `{start-unix-seconds}-{short-sha}{nonce}`,
+/// or `{at}-nogit{nonce}` outside a checkout. The caller supplies a lowercase
+/// alphanumeric nonce so attempts of the same commit in the same second cannot
+/// overwrite each other's transcript.
+pub fn deploy_id(at: u64, short: Option<&str>, nonce: &str) -> String {
+    format!("{at}-{}{nonce}", short.unwrap_or("nogit"))
 }
 
 /// A deploy id is all digits, a dash, then lowercase alphanumerics (a short
-/// sha or `nogit`). Readers validate before touching the filesystem: rejecting
-/// malformed ids also makes path traversal impossible (no `/`, no `.`).
+/// sha or `nogit`, followed by the attempt nonce). Readers validate before
+/// touching the filesystem: rejecting malformed ids also makes path traversal
+/// impossible (no `/`, no `.`).
 pub fn valid_deploy_id(id: &str) -> bool {
     let Some((at, rest)) = id.split_once('-') else {
         return false;
@@ -104,8 +108,16 @@ mod tests {
 
     #[test]
     fn deploy_id_round_trips_validation() {
-        assert!(valid_deploy_id(&deploy_id(1_718_900_000, Some("1a2b3c4d"))));
-        assert!(valid_deploy_id(&deploy_id(42, None)));
+        assert!(valid_deploy_id(&deploy_id(
+            1_718_900_000,
+            Some("1a2b3c4d"),
+            "0123456789abcdef"
+        )));
+        assert!(valid_deploy_id(&deploy_id(42, None, "fedcba9876543210")));
+        assert_ne!(
+            deploy_id(42, Some("deadbeef"), "0000000000000000"),
+            deploy_id(42, Some("deadbeef"), "0000000000000001")
+        );
         assert!(!valid_deploy_id("../../etc/passwd"));
         assert!(!valid_deploy_id("nodash"));
         assert!(!valid_deploy_id("123-UPPER"));

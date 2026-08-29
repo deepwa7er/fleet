@@ -17,6 +17,7 @@ port = 8097
 db = "recipes.db"
 
 [build]
+requirements = ["x86_64-linux-musl"]
 # Frontend (bun) then a static musl cross-compile. recipes bundles SQLite's C
 # source via rusqlite; tugboat resolves the host's musl C
 # toolchain and exports it to this build.

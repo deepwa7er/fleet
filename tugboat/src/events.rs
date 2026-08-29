@@ -4,10 +4,10 @@
 //! The two answer different questions and have different durability needs:
 //!
 //! - **The ledger** is the durable, per-host answer to "what is this service
-//!   running right now". It is written inside the same atomic remote transaction
-//!   as the install, so a dashboard can never disagree with the box. It records
-//!   *what shipped*, and its entry is composed before the deploy runs — which is
-//!   exactly why nothing measured *during* a deploy can live there.
+//!   running right now". It is appended after the transaction reaches a known
+//!   `deployed` or `compensated` outcome. It records *what shipped*, and its entry
+//!   is composed before the deploy runs — which is exactly why nothing measured
+//!   *during* a deploy can live there.
 //! - **This file** is the analytics record: how the deploy went. Timing
 //!   breakdown, and the failures that never reached the host at all — a build
 //!   that didn't compile, an artifact the build didn't produce. Losing a line
@@ -30,20 +30,15 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::subprocess::LogSink;
+use crate::transaction::Outcome;
 
 /// Current event schema version. Bump when the shape changes; readers should
 /// ignore versions they don't know rather than misread them.
-pub const EVENT_VERSION: u32 = 1;
+pub const EVENT_VERSION: u32 = 2;
 
-/// Where a deploy ended. `Deployed` is the only success.
-///
-/// Note what is deliberately absent: **`rolled_back`**. When the remote
-/// transaction fails, tugboat sees only a non-zero exit — it cannot tell a
-/// health-check rollback from a failed `sudo` or a dropped ssh connection.
-/// Claiming a rollback here would be a guess. The host ledger *does* know (it
-/// writes `rolled_back` from inside the rollback branch), so a reader that wants
-/// rollback rate joins these events to the ledger on `at`, which both sides
-/// stamp from the same value.
+/// Where the fallible pipeline was when it ended. The transaction itself has a
+/// separate typed [`Outcome`], so this stage never has to imply whether
+/// compensation succeeded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
     Build,
@@ -83,7 +78,8 @@ pub struct DeployEvent {
     branch: Option<String>,
     /// Whether the built tree had uncommitted changes.
     dirty: bool,
-    /// `deployed` or `failed`. See [`Stage`] on why `rolled_back` is not here.
+    /// `deployed`, a precise transaction outcome, or `failed` before a remote
+    /// transaction report existed.
     result: &'static str,
     /// The stage that ended a failed deploy. Absent on success.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,14 +90,11 @@ pub struct DeployEvent {
     /// Local build. Absent when the build was skipped (`--skip-build`).
     #[serde(skip_serializing_if = "Option::is_none")]
     build_ms: Option<u64>,
-    /// rsync of every artifact to the host.
+    /// The complete remote transaction: prepare and ship, activation, health
+    /// verification, compensation when required, cleanup, and host-ledger
+    /// recording.
     #[serde(skip_serializing_if = "Option::is_none")]
-    ship_ms: Option<u64>,
-    /// The remote transaction: atomic swap, restart, health-check, and (on
-    /// failure) the host's rollback. A service getting slower to come up shows
-    /// up here.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    install_ms: Option<u64>,
+    transaction_ms: Option<u64>,
     /// Everything, including source prep (fetch + worktree checkout) — what a
     /// human actually waited for.
     total_ms: u64,
@@ -123,8 +116,8 @@ pub struct Recorder {
     /// ends here.
     stage: Stage,
     build_ms: Option<u64>,
-    ship_ms: Option<u64>,
-    install_ms: Option<u64>,
+    transaction_ms: Option<u64>,
+    transaction_outcome: Option<Outcome>,
 }
 
 impl Recorder {
@@ -141,8 +134,8 @@ impl Recorder {
             dirty: false,
             stage: Stage::Build,
             build_ms: None,
-            ship_ms: None,
-            install_ms: None,
+            transaction_ms: None,
+            transaction_outcome: None,
         }
     }
 
@@ -159,16 +152,28 @@ impl Recorder {
         self.stage = stage;
     }
 
+    /// Preserve the transaction state machine's authoritative outcome. This is
+    /// deliberately set from its report rather than inferred from `Result`.
+    pub fn transaction_outcome(&mut self, outcome: Outcome) {
+        self.stage = match outcome {
+            Outcome::PreparationFailed => Stage::Ship,
+            Outcome::Deployed
+            | Outcome::Compensated
+            | Outcome::CompensationIncomplete
+            | Outcome::DeployedCleanupIncomplete => Stage::Install,
+        };
+        self.transaction_outcome = Some(outcome);
+    }
+
     /// Store a completed stage's duration.
     pub fn completed(&mut self, stage: Stage, elapsed: Instant) {
         let ms = elapsed.elapsed().as_millis() as u64;
         match stage {
             Stage::Build => self.build_ms = Some(ms),
-            Stage::Ship => self.ship_ms = Some(ms),
-            Stage::Install => self.install_ms = Some(ms),
+            Stage::Install => self.transaction_ms = Some(ms),
             // Verifying artifacts exist is a stat() per artifact; timing it
             // would measure nothing.
-            Stage::Artifacts => {}
+            Stage::Artifacts | Stage::Ship => {}
         }
     }
 
@@ -177,7 +182,9 @@ impl Recorder {
         let (result, stage, error) = match outcome {
             Ok(()) => ("deployed", None, None),
             Err(err) => (
-                "failed",
+                self.transaction_outcome
+                    .map(outcome_name)
+                    .unwrap_or("failed"),
                 Some(self.stage.as_str()),
                 // First line only: the full chain is already in the transcript,
                 // and a multi-line string would be unreadable in a table.
@@ -198,10 +205,19 @@ impl Recorder {
             stage,
             error,
             build_ms: self.build_ms,
-            ship_ms: self.ship_ms,
-            install_ms: self.install_ms,
+            transaction_ms: self.transaction_ms,
             total_ms: self.started.elapsed().as_millis() as u64,
         }
+    }
+}
+
+fn outcome_name(outcome: Outcome) -> &'static str {
+    match outcome {
+        Outcome::Deployed => "deployed",
+        Outcome::PreparationFailed => "preparation_failed",
+        Outcome::Compensated => "compensated",
+        Outcome::CompensationIncomplete => "compensation_incomplete",
+        Outcome::DeployedCleanupIncomplete => "deployed_cleanup_incomplete",
     }
 }
 
@@ -216,7 +232,9 @@ pub fn log_path() -> Result<PathBuf> {
 /// analytics write failed.
 pub fn record(event: &DeployEvent, log: &dyn LogSink) {
     if let Err(err) = try_append(event) {
-        log.line(&format!("    warning: could not record deploy event: {err:#}"));
+        log.line(&format!(
+            "    warning: could not record deploy event: {err:#}"
+        ));
     }
 }
 
@@ -255,8 +273,7 @@ mod tests {
     fn success_records_the_full_shape() {
         let mut rec = recorder();
         rec.build_ms = Some(37_800);
-        rec.ship_ms = Some(1_200);
-        rec.install_ms = Some(2_400);
+        rec.transaction_ms = Some(3_600);
         let value = json(&rec.finish(&Ok(())));
 
         assert_eq!(value["v"], EVENT_VERSION);
@@ -269,7 +286,7 @@ mod tests {
         assert_eq!(value["dirty"], false);
         assert_eq!(value["result"], "deployed");
         assert_eq!(value["build_ms"], 37_800);
-        assert_eq!(value["install_ms"], 2_400);
+        assert_eq!(value["transaction_ms"], 3_600);
         // A successful deploy carries no failure fields at all.
         assert!(value.get("stage").is_none());
         assert!(value.get("error").is_none());
@@ -288,6 +305,24 @@ mod tests {
         rec.entering(Stage::Install);
         let value = json(&rec.finish(&Err(anyhow::anyhow!("remote install failed"))));
         assert_eq!(value["stage"], "install");
+    }
+
+    #[test]
+    fn transaction_result_preserves_compensation_truth() {
+        for (outcome, expected) in [
+            (Outcome::PreparationFailed, "preparation_failed"),
+            (Outcome::Compensated, "compensated"),
+            (Outcome::CompensationIncomplete, "compensation_incomplete"),
+            (
+                Outcome::DeployedCleanupIncomplete,
+                "deployed_cleanup_incomplete",
+            ),
+        ] {
+            let mut recorder = recorder();
+            recorder.transaction_outcome(outcome);
+            let value = json(&recorder.finish(&Err(anyhow::anyhow!("transaction failed"))));
+            assert_eq!(value["result"], expected);
+        }
     }
 
     #[test]

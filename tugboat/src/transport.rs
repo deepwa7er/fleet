@@ -69,6 +69,26 @@ pub fn ssh_script_capture(host: &str, script: &str, timeout: Duration) -> Result
     run_captured_timeout(command, Some(script.as_bytes()), timeout).context("spawning ssh")
 }
 
+/// Execute a remote command while feeding bytes to its stdin. Successful
+/// commands stay silent; failures include the captured stderr. This is the
+/// transport for plumbing payloads such as deploy transcripts, where streaming
+/// the payload back into the transcript would be recursive.
+pub fn ssh_pipe_quiet(
+    host: &str,
+    remote_command: &str,
+    stdin_data: &[u8],
+    timeout: Duration,
+) -> Result<()> {
+    let mut command = Command::new("ssh");
+    command.arg(host).arg(remote_command);
+    let output = run_captured_timeout(command, Some(stdin_data), timeout)
+        .context("running remote command")?;
+    if !output.status.success() {
+        bail!("ssh exited {}: {}", output.status, output.stderr.trim());
+    }
+    Ok(())
+}
+
 /// Quote one value as one POSIX shell word for a remote script.
 pub fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))

@@ -16,7 +16,7 @@ use super::{
 use crate::subprocess::{run_captured_timeout, CapturedOutput, StdoutSink};
 use crate::transport::{self, RsyncKind};
 
-mod policy;
+use crate::transaction as policy;
 #[cfg(test)]
 pub(super) use policy::TargetReport;
 pub(super) use policy::{Outcome, Report, StepOutcome};

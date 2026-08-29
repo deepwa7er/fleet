@@ -6,7 +6,7 @@
 use anyhow::{anyhow, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::agent) enum Outcome {
+pub(crate) enum Outcome {
     Deployed,
     PreparationFailed,
     Compensated,
@@ -15,7 +15,7 @@ pub(in crate::agent) enum Outcome {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::agent) enum StepOutcome {
+pub(crate) enum StepOutcome {
     NotAttempted,
     NotRequired,
     Succeeded,
@@ -24,14 +24,14 @@ pub(in crate::agent) enum StepOutcome {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::agent) struct TargetReport {
-    pub(in crate::agent) name: String,
-    pub(in crate::agent) prepare: StepOutcome,
-    pub(in crate::agent) activate: StepOutcome,
-    pub(in crate::agent) verify: StepOutcome,
-    pub(in crate::agent) compensate: StepOutcome,
-    pub(in crate::agent) cleanup: StepOutcome,
-    pub(in crate::agent) recovery_preserved: bool,
+pub(crate) struct TargetReport {
+    pub(crate) name: String,
+    pub(crate) prepare: StepOutcome,
+    pub(crate) activate: StepOutcome,
+    pub(crate) verify: StepOutcome,
+    pub(crate) compensate: StepOutcome,
+    pub(crate) cleanup: StepOutcome,
+    pub(crate) recovery_preserved: bool,
 }
 
 impl TargetReport {
@@ -49,22 +49,22 @@ impl TargetReport {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::agent) struct Report {
-    pub(in crate::agent) outcome: Outcome,
-    pub(in crate::agent) targets: Vec<TargetReport>,
+pub(crate) struct Report {
+    pub(crate) outcome: Outcome,
+    pub(crate) targets: Vec<TargetReport>,
 }
 
-pub(super) struct Execution {
-    pub report: Report,
-    pub error: Option<anyhow::Error>,
+pub(crate) struct Execution {
+    pub(crate) report: Report,
+    pub(crate) error: Option<anyhow::Error>,
 }
 
-/// Machine effects required by the agent deployment state machine.
+/// Machine effects required by the deployment state machine.
 ///
 /// A failed `prepare` owns cleanup of any state it created before returning.
 /// Once `prepare` succeeds, the policy calls `cleanup` unless compensation for
 /// that target fails; failed compensation deliberately preserves recovery state.
-pub(super) trait Runtime {
+pub(crate) trait Runtime {
     type Prepared;
 
     fn target_count(&self) -> usize;
@@ -76,7 +76,7 @@ pub(super) trait Runtime {
     fn cleanup(&mut self, index: usize, prepared: &Self::Prepared) -> Result<()>;
 }
 
-pub(super) fn execute<R: Runtime>(runtime: &mut R) -> Execution {
+pub(crate) fn execute<R: Runtime>(runtime: &mut R) -> Execution {
     let target_count = runtime.target_count();
     let mut prepared = Vec::with_capacity(target_count);
     let mut report = Report {
@@ -106,7 +106,7 @@ pub(super) fn execute<R: Runtime>(runtime: &mut R) -> Execution {
                 report.outcome = Outcome::PreparationFailed;
                 return failed(
                     report,
-                    error_report("agent deployment preparation failed", errors),
+                    error_report("deployment preparation failed", errors),
                 );
             }
         }
@@ -167,10 +167,7 @@ pub(super) fn execute<R: Runtime>(runtime: &mut R) -> Execution {
             };
             return failed(
                 report,
-                error_report(
-                    "agent deployment failed; compensation was attempted",
-                    errors,
-                ),
+                error_report("deployment failed; compensation was attempted", errors),
             );
         }
     }
@@ -181,7 +178,7 @@ pub(super) fn execute<R: Runtime>(runtime: &mut R) -> Execution {
         return failed(
             report,
             error_report(
-                "agent deployment is healthy, but transaction cleanup failed",
+                "deployment is healthy, but transaction cleanup failed",
                 cleanup_errors,
             ),
         );
@@ -371,9 +368,7 @@ mod tests {
         let execution = execute(&mut runtime);
         let error = execution.error.as_ref().unwrap();
 
-        assert!(error
-            .to_string()
-            .contains("agent deployment preparation failed"));
+        assert!(error.to_string().contains("deployment preparation failed"));
         assert_eq!(execution.report.outcome, Outcome::PreparationFailed);
         assert!(matches!(
             execution.report.targets[1].prepare,

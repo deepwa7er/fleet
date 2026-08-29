@@ -11,6 +11,7 @@ host = "deepwa7er"
 port = 8090
 
 [build]
+requirements = ["x86_64-linux-musl"]
 # 1. Pack + sign the extension (build/harbor.crx + build/updates.xml).
 # 2. Static musl cross-compile of harbor-server (in ./server). reqwest+rustls
 #    pulls in `ring`, which needs the target C compiler, not just the linker

@@ -1,9 +1,9 @@
 //! tugboat — a small, manifest-driven deployer for personal VPS services.
 //!
 //! Each service repo carries a `deploy.toml` (and optionally an untracked
-//! `deploy.local.toml`). `tugboat deploy` builds the artifact, ships it, swaps
-//! it in atomically, restarts the unit, health-checks it, and rolls back if the
-//! new build fails to come up — then optionally enrolls the unit in lighthouse.
+//! `deploy.local.toml`). `tugboat deploy` builds and stages every artifact,
+//! activates them, restarts and health-checks the unit, and compensates every
+//! attempted change if activation fails.
 //!
 //! `tugboat fleet …` operates on the whole suite at once (clone, pull, deploy,
 //! status), driven by a `fleet.toml` that lists the member repos.
@@ -22,6 +22,7 @@ mod scope;
 mod selfdeploy;
 mod serve;
 mod subprocess;
+mod transaction;
 mod transport;
 mod user_service;
 mod version;

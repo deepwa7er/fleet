@@ -2,14 +2,16 @@
 //! `deploy.local.toml` overlay for host- and tailnet-specific values that
 //! shouldn't live in git.
 
+use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
 /// A service's deploy description. Committed to the service repo as `deploy.toml`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Manifest {
     /// Service / systemd unit base name (the unit is `{name}.service`).
     pub name: String,
@@ -51,6 +53,7 @@ pub struct Manifest {
 
 /// What of `/var/lib/<name>` the fleet backup preserves.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct StateDecl {
     /// A SQLite database file inside the state dir, snapshotted with SQLite's
     /// online-backup API (a raw copy of a live WAL database can tear).
@@ -62,12 +65,25 @@ pub struct StateDecl {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Build {
     /// Shell command run locally, in the manifest's directory. `{workdir}`
     /// expands to a fresh temp directory for build output; `{workspace}` to the
     /// repository checkout root being built (the cargo workspace root, where
     /// `target/` lives — the manifest's own directory for a standalone repo).
     pub cmd: String,
+    /// Capabilities the otherwise-opaque build command requires from tugboat.
+    /// Declaring these explicitly keeps the deploy engine from reverse-engineering
+    /// build semantics by searching shell text.
+    #[serde(default)]
+    pub requirements: Vec<BuildRequirement>,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BuildRequirement {
+    /// A C compiler, linker driver, and archiver for Rust's static Linux target.
+    #[serde(rename = "x86_64-linux-musl")]
+    X86_64LinuxMusl,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
@@ -81,6 +97,7 @@ pub enum ArtifactKind {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Artifact {
     /// Local path produced by the build, relative to the manifest's directory.
     /// `{workdir}` and `{workspace}` are expanded (a cargo binary in the fleet
@@ -100,6 +117,7 @@ fn default_mode() -> String {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Health {
     /// A URL curled on the host's loopback. Omit to use `systemctl is-active`.
     #[serde(default)]
@@ -117,6 +135,7 @@ fn default_health_interval() -> u64 {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Verify {
     pub url: String,
     #[serde(default = "default_verify_retries")]
@@ -132,6 +151,7 @@ fn default_verify_interval() -> u64 {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Lighthouse {
     /// Enroll the unit in `lighthouse.target` so lighthouse discovers it.
     #[serde(default)]
@@ -141,6 +161,7 @@ pub struct Lighthouse {
 /// The untracked `deploy.local.toml` overlay. Every field is optional and, when
 /// present, replaces the corresponding value from `deploy.toml`.
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct LocalOverride {
     #[serde(default)]
     host: Option<String>,
@@ -218,19 +239,62 @@ pub fn load(path: &Path, host_override: Option<&str>) -> Result<Manifest> {
 /// Validate everything intrinsic to the service description — independent of any
 /// particular deploy. Shared by [`parse`] and [`load`].
 fn validate_structure(manifest: &Manifest) -> Result<()> {
-    if manifest.name.trim().is_empty() {
-        bail!("manifest: `name` is required");
+    if !valid_service_name(&manifest.name) {
+        bail!(
+            "manifest: `name` must begin with an ASCII letter or digit and contain only ASCII letters, digits, `-`, or `_`"
+        );
     }
     if manifest.build.cmd.trim().is_empty() {
         bail!("manifest: `build.cmd` is required");
     }
+    let mut requirements = HashSet::new();
+    for requirement in &manifest.build.requirements {
+        if !requirements.insert(*requirement) {
+            bail!("manifest: duplicate build requirement `{requirement}`");
+        }
+    }
     if manifest.artifacts.is_empty() {
         bail!("manifest: at least one `[[artifacts]]` is required");
     }
+    let mut destinations = HashSet::new();
     for artifact in &manifest.artifacts {
-        if !artifact.dest.starts_with('/') {
-            bail!("manifest: artifact dest must be an absolute path: {}", artifact.dest);
+        if artifact.src.trim().is_empty() {
+            bail!("manifest: artifact `src` must not be empty");
         }
+        if !valid_absolute_path(&artifact.dest) {
+            bail!(
+                "manifest: artifact dest must be a normalized absolute path without `.` or `..`: {}",
+                artifact.dest
+            );
+        }
+        if !destinations.insert(artifact.dest.as_str()) {
+            bail!(
+                "manifest: duplicate artifact destination: {}",
+                artifact.dest
+            );
+        }
+        if artifact.mode.len() != 4
+            || !artifact.mode.starts_with('0')
+            || !artifact
+                .mode
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'7'))
+        {
+            bail!(
+                "manifest: artifact mode must be four octal digits: {}",
+                artifact.mode
+            );
+        }
+    }
+    if let Some(health) = &manifest.health {
+        validate_attempts("health", health.retries, health.interval_ms)?;
+        if let Some(url) = &health.url {
+            validate_http_url("health.url", url)?;
+        }
+    }
+    if let Some(verify) = &manifest.verify {
+        validate_attempts("verify", verify.retries, verify.interval_ms)?;
+        validate_http_url("verify.url", &verify.url)?;
     }
     Ok(())
 }
@@ -238,8 +302,163 @@ fn validate_structure(manifest: &Manifest) -> Result<()> {
 /// Validate that a deploy host has been resolved — required by [`load`] (a
 /// deploy), but not by [`parse`] (inspection).
 fn validate_host(manifest: &Manifest) -> Result<()> {
-    if manifest.host.as_deref().unwrap_or("").is_empty() {
+    let Some(host) = manifest.host.as_deref().filter(|host| !host.is_empty()) else {
         bail!("manifest: a host is required (set `host`, `--host`, or TUGBOAT_HOST)");
+    };
+    if !valid_ssh_host(host) {
+        bail!(
+            "manifest: host must begin with an ASCII letter or digit and contain only ASCII letters, digits, `.`, `-`, or `_`"
+        );
     }
     Ok(())
+}
+
+fn valid_service_name(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn valid_ssh_host(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+}
+
+fn valid_absolute_path(value: &str) -> bool {
+    let path = Path::new(value);
+    path.is_absolute()
+        && value != "/"
+        && !value.ends_with('/')
+        && !value.contains("//")
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'-' | b'_'))
+        && path
+            .components()
+            .any(|component| matches!(component, Component::Normal(_)))
+        && path
+            .components()
+            .all(|component| matches!(component, Component::RootDir | Component::Normal(_)))
+}
+
+fn validate_attempts(section: &str, retries: u32, interval_ms: u64) -> Result<()> {
+    if retries == 0 {
+        bail!("manifest: `{section}.retries` must be greater than zero");
+    }
+    if interval_ms == 0 {
+        bail!("manifest: `{section}.interval_ms` must be greater than zero");
+    }
+    Ok(())
+}
+
+fn validate_http_url(field: &str, url: &str) -> Result<()> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        bail!("manifest: `{field}` must be an http:// or https:// URL");
+    }
+    Ok(())
+}
+
+impl std::fmt::Display for BuildRequirement {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::X86_64LinuxMusl => formatter.write_str("x86_64-linux-musl"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(input: &str) -> Result<Manifest> {
+        let parsed = toml::from_str(input).context("parsing test manifest")?;
+        validate_structure(&parsed)?;
+        Ok(parsed)
+    }
+
+    const VALID: &str = r#"
+name = "example-service"
+host = "deepwa7er"
+
+[build]
+cmd = "cargo build"
+requirements = ["x86_64-linux-musl"]
+
+[[artifacts]]
+src = "target/release/example"
+dest = "/usr/local/bin/example"
+"#;
+
+    #[test]
+    fn accepts_a_fully_validated_manifest() {
+        let parsed = manifest(VALID).unwrap();
+        assert_eq!(
+            parsed.build.requirements,
+            [BuildRequirement::X86_64LinuxMusl]
+        );
+    }
+
+    #[test]
+    fn rejects_values_that_are_unsafe_for_execution() {
+        for (old, replacement) in [
+            ("example-service", "$(touch /tmp/nope)"),
+            ("/usr/local/bin/example", "/usr/local/../tmp/example"),
+            ("/usr/local/bin/example", "/usr/local//bin/example"),
+            ("/usr/local/bin/example", "/usr/local/bin/example/"),
+            ("/usr/local/bin/example", "/usr/local/bin/bad name"),
+            ("target/release/example", "  "),
+            (
+                "cmd = \"cargo build\"",
+                "cmd = \"cargo build\"\nunknown = true",
+            ),
+        ] {
+            let input = VALID.replacen(old, replacement, 1);
+            assert!(
+                manifest(&input).is_err(),
+                "accepted invalid replacement `{replacement}`"
+            );
+        }
+    }
+
+    #[test]
+    fn deploy_host_is_validated_after_overrides_are_applied() {
+        let mut parsed = manifest(VALID).unwrap();
+        assert!(validate_host(&parsed).is_ok());
+        parsed.host = Some("-oProxyCommand=bad".to_owned());
+        assert!(validate_host(&parsed).is_err());
+    }
+
+    #[test]
+    fn rejects_duplicate_destinations_and_requirements() {
+        let duplicate_requirement = VALID.replace(
+            "[\"x86_64-linux-musl\"]",
+            "[\"x86_64-linux-musl\", \"x86_64-linux-musl\"]",
+        );
+        assert!(manifest(&duplicate_requirement).is_err());
+
+        let duplicate_destination =
+            format!("{VALID}\n[[artifacts]]\nsrc = \"other\"\ndest = \"/usr/local/bin/example\"\n");
+        assert!(manifest(&duplicate_destination).is_err());
+    }
+
+    #[test]
+    fn every_committed_fleet_manifest_satisfies_the_validated_schema() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let mut checked = 0;
+        for entry in std::fs::read_dir(root).unwrap() {
+            let path = entry.unwrap().path().join("deploy.toml");
+            if path.is_file() {
+                parse(&path).unwrap_or_else(|error| {
+                    panic!("{} failed validation: {error:#}", path.display())
+                });
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "test did not discover any fleet manifests");
+    }
 }

@@ -2,9 +2,9 @@
 
 A small, manifest-driven deployer for personal services on the `deepwa7er` VPS.
 
-One tool, one convention: each service repo carries a `deploy.toml`. tugboat
-builds the artifact, ships it, swaps it in atomically, restarts the unit,
-health-checks it, and **rolls back if the new build fails to come up** — then
+One tool, one convention: each service repo carries a `deploy.toml`. Tugboat
+builds and prepares every artifact before activation, restarts and health-checks
+the unit, and compensates every attempted change if activation fails. It then
 optionally enrolls the unit in `lighthouse.target` so lighthouse discovers it.
 
 It replaces the per-service `deploy.sh` scripts that had each reinvented (and
@@ -14,9 +14,11 @@ drifted on) the same build → ship → restart → health-check → rollback da
 
 The `[build].cmd` in each `deploy.toml` is the complete, authoritative build
 recipe. Tugboat expands its placeholders and executes it unchanged; it does not
-select a compiler, package manager, or container runtime on the service's
-behalf. This keeps tool-specific behavior in the manifest where it is visible
-and testable.
+infer behavior by inspecting that shell text. Machine capabilities that Tugboat
+must provide are declared separately in `[build].requirements`. The currently
+supported `"x86_64-linux-musl"` requirement resolves and exports the matching C
+compiler/linker and archiver. Package-manager and container-runtime behavior
+remains in the command where it is visible and testable.
 
 Containerized fleet services use Docker and Docker Buildx in their build
 recipes, and their image archives are loaded by Docker on the VPS. A machine
@@ -36,7 +38,7 @@ From a service repo that has a `deploy.toml`:
 
 ```sh
 tugboat deploy                 # build, ship, install, restart, health-check, enroll
-tugboat deploy --dry-run       # print the plan, change nothing
+tugboat deploy --dry-run       # resolve the source and print the exact plan; do not build or ship
 tugboat deploy --host other    # override the SSH host
 tugboat deploy --manifest path/to/deploy.toml
 tugboat deploy --working-tree  # deploy the current checkout as-is (see below)
@@ -96,8 +98,8 @@ tugboat fleet hooks install  # auto-refresh the docs on every commit
 ```
 
 `fleet deploy` reuses the single-service engine per service, so each gets its own
-atomic install + health-check + rollback. It stops at the first failure unless
-`--continue-on-error`.
+prepare → activate → verify → compensate/cleanup transaction. It stops at the
+first failure unless `--continue-on-error`.
 
 A `fleet.toml` member records only `path` (relative to `root`, a leading `~/`
 expands to `$HOME`) and its `repo` remote — deploy details stay in each repo's
@@ -436,6 +438,7 @@ host = "deepwa7er"        # ssh alias; override with --host or TUGBOAT_HOST
 [build]
 # Shell command, run locally in the manifest's directory.
 # {workdir} expands to a fresh temp dir for build output.
+requirements = ["x86_64-linux-musl"]
 cmd = "cargo build --release --target x86_64-unknown-linux-musl"
 
 [[artifacts]]             # one or more files/dirs to install
@@ -462,15 +465,22 @@ url = "https://deepwa7er.tailcfab97.ts.net:8443/commands"
 enroll = true             # systemctl add-wants lighthouse.target {name}.service
 ```
 
-### How install + rollback work
+### How activation + compensation work
 
-Each artifact is shipped to `<dest>.tug-new` next to its destination (same
-filesystem) over rsync — a plain copy for files, `--delete` for dirs (perms
-preserved, but not the local uid/gid). On the host, in one transaction: move the live file/dir
-aside to `<dest>.tug-bak`, rename the new one into place (atomic — safe even
-though a running ELF can't be written in place), restart the unit, then
-health-check. If the check never passes, every artifact is restored from its
-backup and the unit restarted on the old version; tugboat exits non-zero.
+The host first acquires a per-service deployment lock. Every artifact is then
+shipped to a transaction-specific path beside its destination, validated, and
+backed up before activation changes the first live path. Each individual rename
+is atomic; the multi-artifact deployment is a compensating transaction rather
+than pretending the whole set can be renamed atomically.
+
+After activation, Tugboat restarts and health-checks the service. An activation,
+restart, or health failure enters compensation: all artifacts are visited in
+reverse order, previous paths are restored, newly introduced paths are removed,
+and the restored service is restarted and checked. One failed restoration does
+not prevent the remaining restorations from being attempted. If compensation
+cannot complete, its backups and lock are deliberately preserved for recovery.
+Successful deployment and compensation remove transaction state; a failed
+preparation also removes the safe pre-activation state it created.
 
 ## Deploy events (local)
 
@@ -479,9 +489,9 @@ Every deploy attempt appends one JSON line to
 it — the timing breakdown, and the failures that never reach the host at all.
 
 ```json
-{"v":1,"at":1785087648,"name":"tide","host":"deepwa7er","source":"default_branch",
+{"v":2,"at":1785087648,"name":"tide","host":"deepwa7er","source":"default_branch",
  "sha":"a99c146b…","short":"a99c146b","branch":"main","dirty":false,
- "result":"deployed","build_ms":14245,"ship_ms":1786,"install_ms":2364,"total_ms":20173}
+ "result":"deployed","build_ms":14245,"transaction_ms":4150,"total_ms":20173}
 ```
 
 This is **not** the host ledger, and the split is deliberate:
@@ -489,23 +499,22 @@ This is **not** the host ledger, and the split is deliberate:
 | | host ledger (`tugboat-ledger`) | this file |
 |---|---|---|
 | answers | what is this service running *now* | how did the deploy go |
-| written | inside the remote transaction, on the host | locally, after the deploy |
-| durability | must never be lost — a dashboard would lie | best-effort; a lost line costs a chart row |
+| written | on the host after a known deployed/compensated outcome | locally, after the deploy |
+| durability | authoritative host history; write failures are warned | best-effort; a lost line costs a chart row |
 | read by | lighthouse | warehouse (local ingest), eventually |
 
-The ledger's entry is composed *before* the deploy runs (both outcomes are baked
-into the remote script, so the host can pick one inside the same transaction as
-the install) — which is precisely why nothing measured *during* a deploy can go
-there. Hence a second, separate record.
+The ledger contains only host-state outcomes (`deployed` or `rolled_back`). The
+local event also records failures before the host transaction and the richer
+transaction outcomes needed for operational diagnosis.
 
-- `result` is `deployed` or `failed`; `stage` names where a failure happened
-  (`build`, `artifacts`, `ship`, `install`).
-- **`rolled_back` is deliberately absent.** When the remote transaction fails,
-  tugboat sees only a non-zero exit — it can't distinguish a health-check
-  rollback from a failed `sudo` or a dropped ssh connection. The host ledger
-  *does* know, so join the two on `at`: both sides stamp it from the same value,
-  as does the transcript id.
+- `result` is `deployed`, `failed`, `preparation_failed`, `compensated`,
+  `compensation_incomplete`, or `deployed_cleanup_incomplete`; `stage` names
+  where the pipeline ended (`build`, `artifacts`, `ship`, `install`).
+- Transaction results come from the tested state machine report. They are never
+  inferred from an SSH exit code.
 - `build_ms` is absent (not `0`) when the build was skipped.
+- `transaction_ms` covers prepare/ship, activation, verification, compensation
+  when needed, cleanup, and host-ledger recording.
 - Writing is best-effort — a deploy's outcome never changes because an analytics
   write failed; problems are warned about and dropped.
 
@@ -516,19 +525,18 @@ jq -r '[.total_ms,.name,.result]|@tsv' ~/.local/share/tugboat/deploys.jsonl | so
 
 ## Scope and limits
 
-Built for services that **build locally** and ship a binary (± an asset tree).
-The whole fleet cross-compiles to a static musl binary on the dev machine
-(`x86_64-unknown-linux-musl`), so nothing is built on the VPS. Adopters: ferry,
-tidepool (Go), harbor, lighthouse.
+Built for services that **build locally** and ship files or asset trees. The
+artifact can be a native binary, static web output, or a container image archive;
+nothing is built on the VPS. Rust services that need static Linux cross-builds
+declare the `x86_64-linux-musl` build requirement explicitly.
 
 Deliberately **not** handled:
 
 - **Build-on-VPS** — `build.cmd` runs locally only. Cross-compiling instead
   (the ferry model) removed the need; no service requires it.
-- **Unit / config / polkit installation** — tugboat swaps binaries/assets and
-  restarts; it does not install systemd units, `/etc` config, or polkit grants.
-  Those are each service's `provision.sh` / one-time setup, run on infra changes.
-- **Ruby/Python/Docker services** are out of scope.
+- **Host provisioning** — Tugboat can update a declared config artifact, but it
+  does not create systemd units, destination directories, users, or polkit
+  grants. Those remain each service's `provision.sh` / one-time setup.
 
 ### The lighthouse enrollment caveat
 
