@@ -552,6 +552,33 @@ fn load_default_branch_manifest(
     manifest::load_with_overrides(&source_manifest_path, overrides)
 }
 
+fn preview_default_branch_manifest(
+    manifest_path: &Path,
+    project_dir: &Path,
+    overrides: &manifest::RuntimeOverrides,
+) -> Result<Manifest> {
+    let layout = default_branch_layout(project_dir)?;
+    let branch = git::default_branch_local(project_dir)?.with_context(|| {
+        format!(
+            "cannot preview origin's default branch for {}: no local origin/HEAD, origin/main, or origin/master ref",
+            project_dir.display()
+        )
+    })?;
+    let target = format!("origin/{branch}");
+    let relative_manifest = layout.relative_service.join(
+        manifest_path
+            .file_name()
+            .context("manifest path has no filename")?,
+    );
+    let text = git::show_file(&layout.repo, &target, &relative_manifest)?
+        .with_context(|| format!("{target} does not contain {}", relative_manifest.display()))?;
+    manifest::load_text_with_overrides(
+        &text,
+        &format!("{target}:{}", relative_manifest.display()),
+        overrides,
+    )
+}
+
 pub fn run(
     manifest_path: &Path,
     project_dir: &Path,
@@ -561,13 +588,18 @@ pub fn run(
     log: &dyn LogSink,
 ) -> Result<()> {
     let overrides = manifest::runtime_overrides(manifest_path, host_override)?;
-    let request_manifest = manifest::load_with_overrides(manifest_path, &overrides)?;
 
     if dry_run {
+        let preview_manifest = match source {
+            Source::WorkingTree { .. } => manifest::load_with_overrides(manifest_path, &overrides)?,
+            Source::DefaultBranch => {
+                preview_default_branch_manifest(manifest_path, project_dir, &overrides)?
+            }
+        };
         let workdir =
-            std::env::temp_dir().join(format!("tugboat-{}-<workdir>", request_manifest.name));
+            std::env::temp_dir().join(format!("tugboat-{}-<workdir>", preview_manifest.name));
         let plan = DeploymentPlan::preview(
-            &request_manifest,
+            &preview_manifest,
             project_dir,
             source,
             now_unix(),
@@ -578,14 +610,35 @@ pub fn run(
         return Ok(());
     }
 
+    let request_manifest = match source {
+        Source::WorkingTree { .. } => {
+            Some(manifest::load_with_overrides(manifest_path, &overrides)?)
+        }
+        Source::DefaultBranch => None,
+    };
+    let request_name = request_manifest
+        .as_ref()
+        .map(|manifest| manifest.name.clone())
+        .or_else(|| {
+            project_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .context("project directory has no service name")?;
+    let request_host = request_manifest
+        .as_ref()
+        .map(|manifest| manifest.host())
+        .or_else(|| overrides.host());
+
     // Stamp the deploy at its start so the id (transcript filename), the ledger
     // `at`, the deploy event, and the on-host transcript all agree on one
     // timestamp — that shared value is what joins them.
     let at = now_unix();
     let mut recorder = events::Recorder::new(
         at,
-        &request_manifest.name,
-        request_manifest.host(),
+        &request_name,
+        request_host,
         match source {
             Source::WorkingTree { .. } => "working_tree",
             Source::DefaultBranch => "default_branch",
@@ -594,19 +647,20 @@ pub fn run(
 
     let nonce = Uuid::new_v4().simple().to_string();
     let transcript_id = RefCell::new(deploy_id(at, None, &nonce));
-    let transcript_target = RefCell::new((
-        request_manifest.host().to_owned(),
-        request_manifest.name.clone(),
-    ));
+    let transcript_target =
+        RefCell::new(request_host.map(|host| (host.to_owned(), request_name.clone())));
     let outcome = with_transcript(
         log,
         |captured| {
-            let workdir = deploy_workdir(&request_manifest.name)?;
+            let workdir = deploy_workdir(&request_name)?;
             let workdir_path = workdir.path().to_path_buf();
             match source {
                 Source::WorkingTree { skip_build } => {
+                    let request_manifest = request_manifest
+                        .as_ref()
+                        .expect("working-tree manifest loaded above");
                     let plan = DeploymentPlan::working_tree(
-                        &request_manifest,
+                        request_manifest,
                         project_dir,
                         skip_build,
                         at,
@@ -621,10 +675,10 @@ pub fn run(
                     let source_manifest =
                         load_default_branch_manifest(manifest_path, &prepared, &overrides)?;
                     recorder.identity(&source_manifest.name, source_manifest.host());
-                    transcript_target.replace((
+                    transcript_target.replace(Some((
                         source_manifest.host().to_owned(),
                         source_manifest.name.clone(),
-                    ));
+                    )));
                     let plan = DeploymentPlan::default_branch(
                         &source_manifest,
                         prepared,
@@ -639,13 +693,14 @@ pub fn run(
         },
         |transcript| {
             let target = transcript_target.borrow();
-            persist_transcript(
-                &target.0,
-                &target.1,
-                &transcript_id.borrow(),
-                transcript,
-                log,
-            );
+            match target.as_ref() {
+                Some((host, name)) => {
+                    persist_transcript(host, name, &transcript_id.borrow(), transcript, log)
+                }
+                None => log.line(
+                    "    warning: could not persist deploy transcript: deploy host was not resolved",
+                ),
+            }
         },
     );
     events::record(&recorder.finish(&outcome), log);
@@ -1424,11 +1479,7 @@ mod tests {
         git(&clone, &["commit", "-q", "-m", "init"]);
         git(&clone, &["push", "-q", "origin", "main"]);
 
-        std::fs::write(
-            &manifest_path,
-            manifest_text("local build", "local-artifact"),
-        )
-        .unwrap();
+        std::fs::write(&manifest_path, "invalid local manifest {{{").unwrap();
         std::fs::write(
             service.join("deploy.local.toml"),
             "host = \"runtime-host\"\n",
@@ -1463,9 +1514,11 @@ mod tests {
 
     #[test]
     fn dry_run_of_default_branch_does_not_fetch_or_create_a_worktree() {
-        struct Quiet;
-        impl LogSink for Quiet {
-            fn line(&self, _: &str) {}
+        struct Collect(Mutex<Vec<String>>);
+        impl LogSink for Collect {
+            fn line(&self, line: &str) {
+                self.0.lock().unwrap().push(line.to_owned());
+            }
         }
 
         let base = std::env::temp_dir().join(format!("tugboat-preview-{}", std::process::id()));
@@ -1479,6 +1532,12 @@ mod tests {
         let service = clone.join("preview-svc");
         std::fs::create_dir_all(&service).unwrap();
         std::fs::write(service.join("artifact"), "contents").unwrap();
+        let manifest_path = service.join("deploy.toml");
+        std::fs::write(
+            &manifest_path,
+            "name = \"preview-svc\"\nhost = \"deepwa7er\"\n[build]\ncmd = \"origin-build\"\n[[artifacts]]\nsrc = \"artifact\"\ndest = \"/tmp/preview-svc\"\n",
+        )
+        .unwrap();
         git(&clone, &["add", "."]);
         git(&clone, &["commit", "-q", "-m", "init"]);
         git(&clone, &["push", "-q", "origin", "main"]);
@@ -1489,25 +1548,22 @@ mod tests {
 
         let checkout = default_branch_layout(&service).unwrap().checkout_root;
         assert!(!checkout.exists());
-        let manifest_path = service.join("deploy.toml");
-        std::fs::write(
-            &manifest_path,
-            "name = \"preview-svc\"\nhost = \"deepwa7er\"\n[build]\ncmd = \"true\"\n[[artifacts]]\nsrc = \"artifact\"\ndest = \"/tmp/preview-svc\"\n",
-        )
-        .unwrap();
+        std::fs::write(&manifest_path, "invalid local manifest {{{").unwrap();
+        let log = Collect(Mutex::new(Vec::new()));
         run(
             &manifest_path,
             &service,
             Source::DefaultBranch,
             true,
             None,
-            &Quiet,
+            &log,
         )
         .unwrap();
         assert!(
             !checkout.exists(),
             "dry-run must not create its planned worktree"
         );
+        assert!(log.0.lock().unwrap().join("\n").contains("origin-build"));
 
         let _ = std::fs::remove_dir_all(&base);
     }

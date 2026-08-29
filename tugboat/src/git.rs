@@ -199,25 +199,35 @@ pub fn rev_parse(dir: &Path, committish: &str) -> Result<Option<String>> {
 /// Origin's default branch (e.g. `main`) — what a deploy ships and what the
 /// dashboard reports, regardless of which branch the working tree is parked on.
 ///
-/// Reads the local `refs/remotes/origin/HEAD` symref (set at clone time), so it
-/// needs no network in the common case. If that ref is missing it asks the remote
-/// once — `git remote set-head origin --auto`, which also persists the ref so the
-/// next call is local again — then falls back to a conventional `main`/`master`
-/// that exists as a remote-tracking ref.
+/// Reads the local `refs/remotes/origin/HEAD` symref (set at clone time), then
+/// falls back to a conventional local `origin/main` or `origin/master`. If no
+/// local answer exists it asks the remote once with `git remote set-head
+/// origin --auto`.
 pub fn default_branch(dir: &Path) -> Result<String> {
-    if let Some(branch) = origin_head_branch(dir)? {
+    if let Some(branch) = default_branch_local(dir)? {
         return Ok(branch);
     }
     let _ = run(dir, &["remote", "set-head", "origin", "--auto"]);
-    if let Some(branch) = origin_head_branch(dir)? {
+    if let Some(branch) = default_branch_local(dir)? {
         return Ok(branch);
+    }
+    bail!(
+        "could not determine origin's default branch for {}",
+        dir.display()
+    )
+}
+
+/// Resolve origin's default branch from local refs only.
+pub fn default_branch_local(dir: &Path) -> Result<Option<String>> {
+    if let Some(branch) = origin_head_branch(dir)? {
+        return Ok(Some(branch));
     }
     for candidate in ["main", "master"] {
         if rev_parse(dir, &format!("origin/{candidate}"))?.is_some() {
-            return Ok(candidate.to_owned());
+            return Ok(Some(candidate.to_owned()));
         }
     }
-    bail!("could not determine origin's default branch for {}", dir.display())
+    Ok(None)
 }
 
 /// The branch that `refs/remotes/origin/HEAD` points at, from local refs only
@@ -230,6 +240,21 @@ fn origin_head_branch(dir: &Path) -> Result<Option<String>> {
         .strip_prefix("refs/remotes/origin/")
         .map(str::to_owned)
         .filter(|b| !b.is_empty()))
+}
+
+/// Read one repository-relative file from a commit without checking it out.
+pub fn show_file(dir: &Path, committish: &str, path: &Path) -> Result<Option<String>> {
+    let spec = format!("{committish}:{}", path.to_string_lossy());
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["show", &spec])
+        .output()
+        .with_context(|| format!("spawning git show {spec}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
 }
 
 /// Fetch `origin`, updating remote-tracking refs and objects. It never touches

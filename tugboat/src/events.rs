@@ -34,7 +34,7 @@ use crate::transaction::Outcome;
 
 /// Current event schema version. Bump when the shape changes; readers should
 /// ignore versions they don't know rather than misread them.
-pub const EVENT_VERSION: u32 = 3;
+pub const EVENT_VERSION: u32 = 4;
 
 /// Where the fallible pipeline was when it ended. The transaction itself has a
 /// separate typed [`Outcome`], so this stage never has to imply whether
@@ -68,7 +68,8 @@ pub struct DeployEvent {
     /// `at` and with the transcript id, so the three join.
     at: u64,
     name: String,
-    host: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host: Option<String>,
     /// `working_tree` or `default_branch`.
     source: &'static str,
     /// Absent when the project is not a git checkout.
@@ -108,7 +109,7 @@ pub struct Recorder {
     at: u64,
     started: Instant,
     name: String,
-    host: String,
+    host: Option<String>,
     source: &'static str,
     sha: Option<String>,
     short: Option<String>,
@@ -123,12 +124,12 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    pub fn new(at: u64, name: &str, host: &str, source: &'static str) -> Self {
+    pub fn new(at: u64, name: &str, host: Option<&str>, source: &'static str) -> Self {
         Self {
             at,
             started: Instant::now(),
             name: name.to_owned(),
-            host: host.to_owned(),
+            host: host.map(str::to_owned),
             source,
             sha: None,
             short: None,
@@ -145,7 +146,7 @@ impl Recorder {
     /// from the source being deployed.
     pub fn identity(&mut self, name: &str, host: &str) {
         self.name = name.to_owned();
-        self.host = host.to_owned();
+        self.host = Some(host.to_owned());
     }
 
     /// Record which commit the deploy resolved to, once source prep has run.
@@ -269,7 +270,12 @@ mod tests {
     use super::*;
 
     fn recorder() -> Recorder {
-        let mut rec = Recorder::new(1_718_900_000, "clothes", "deepwa7er", "default_branch");
+        let mut rec = Recorder::new(
+            1_718_900_000,
+            "clothes",
+            Some("deepwa7er"),
+            "default_branch",
+        );
         rec.stamped("aaaabbbbccccdddd", "aaaabbbb", Some("main"), false);
         rec
     }
@@ -361,11 +367,19 @@ mod tests {
 
     #[test]
     fn a_non_git_deploy_omits_commit_fields() {
-        let rec = Recorder::new(42, "tidepool", "deepwa7er", "working_tree");
+        let rec = Recorder::new(42, "tidepool", Some("deepwa7er"), "working_tree");
         let value = json(&rec.finish(&Ok(())));
         assert!(value.get("sha").is_none());
         assert!(value.get("short").is_none());
         assert!(value.get("branch").is_none());
+    }
+
+    #[test]
+    fn source_failure_can_record_before_the_host_is_resolved() {
+        let rec = Recorder::new(42, "tidepool", None, "default_branch");
+        let value = json(&rec.finish(&Err(anyhow::anyhow!("fetch failed"))));
+        assert!(value.get("host").is_none());
+        assert_eq!(value["stage"], "source");
     }
 
     #[test]

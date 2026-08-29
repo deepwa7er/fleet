@@ -185,7 +185,7 @@ pub(crate) struct RuntimeOverrides {
 impl Manifest {
     /// The resolved SSH host. Guaranteed present after runtime loading.
     pub fn host(&self) -> &str {
-        self.host.as_deref().expect("host validated in load()")
+        self.host.as_deref().expect("host validated during loading")
     }
 }
 
@@ -193,7 +193,11 @@ impl Manifest {
 /// validation — the shared first step of runtime loading and [`parse`].
 fn read_raw(path: &Path) -> Result<Manifest> {
     let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+    parse_raw(&text, &path.display().to_string())
+}
+
+fn parse_raw(text: &str, source: &str) -> Result<Manifest> {
+    toml::from_str(text).with_context(|| format!("parsing {source}"))
 }
 
 /// Parse a `deploy.toml` for inspection (e.g. doc generation): structural
@@ -240,6 +244,20 @@ pub(crate) fn runtime_overrides(
 pub(crate) fn load_with_overrides(path: &Path, overrides: &RuntimeOverrides) -> Result<Manifest> {
     let manifest = read_raw(path)?;
     finish_load(manifest, overrides)
+}
+
+pub(crate) fn load_text_with_overrides(
+    text: &str,
+    source: &str,
+    overrides: &RuntimeOverrides,
+) -> Result<Manifest> {
+    finish_load(parse_raw(text, source)?, overrides)
+}
+
+impl RuntimeOverrides {
+    pub(crate) fn host(&self) -> Option<&str> {
+        self.host.as_deref().or(self.local.host.as_deref())
+    }
 }
 
 fn finish_load(mut manifest: Manifest, overrides: &RuntimeOverrides) -> Result<Manifest> {
