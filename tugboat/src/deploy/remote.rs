@@ -7,11 +7,12 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
+use tugboat_ledger::LedgerResult;
 
-use super::{ledger_append, DeploymentPlan};
+use super::{ledger_append, RemoteExecutionSpec};
 use crate::manifest::{ArtifactKind, Health};
 use crate::subprocess::{CapturedOutput, LogSink};
-use crate::transaction::{self, Outcome};
+use crate::transaction::{self, PreparationFailure};
 use crate::transport::{self, shell_quote as shq, RsyncKind};
 
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -22,27 +23,35 @@ struct PreparedRemote {
     existed: Vec<bool>,
 }
 
-pub(super) fn execute(plan: &DeploymentPlan<'_>, log: &dyn LogSink) -> transaction::Execution {
-    let mut runtime = RemoteRuntime {
-        plan,
-        log,
-        verified: false,
-    };
-    let execution = transaction::execute(&mut runtime);
-    match execution.report.outcome {
-        Outcome::Deployed | Outcome::DeployedCleanupIncomplete => {
-            append_ledger(plan, "deployed", log)
-        }
-        Outcome::Compensated => append_ledger(plan, "rolled_back", log),
-        Outcome::PreparationFailed | Outcome::CompensationIncomplete => {}
+pub(super) fn execute(
+    spec: &RemoteExecutionSpec<'_, '_>,
+    log: &dyn LogSink,
+) -> transaction::Execution {
+    transaction::execute(&mut RemoteRuntime { spec, log })
+}
+
+pub(super) fn enroll_lighthouse(
+    spec: &RemoteExecutionSpec<'_, '_>,
+    log: &dyn LogSink,
+) -> Result<()> {
+    if !spec.manifest.lighthouse.enroll {
+        return Ok(());
     }
-    execution
+    log.line("==> ENROLL: lighthouse.target");
+    let name = shq(&format!("{}.service", spec.manifest.name));
+    let script = format!(
+        "set -euo pipefail\n{}\n$sudo systemctl add-wants lighthouse.target {name}\n$sudo systemctl daemon-reload",
+        sudo_setup()
+    );
+    let output =
+        transport::ssh_script_capture(spec.manifest.host(), &script, OPERATION_TIMEOUT)?;
+    require_success(output, "lighthouse enrollment")?;
+    Ok(())
 }
 
 struct RemoteRuntime<'plan, 'manifest> {
-    plan: &'plan DeploymentPlan<'manifest>,
+    spec: &'plan RemoteExecutionSpec<'plan, 'manifest>,
     log: &'plan dyn LogSink,
-    verified: bool,
 }
 
 impl transaction::Runtime for RemoteRuntime<'_, '_> {
@@ -53,20 +62,23 @@ impl transaction::Runtime for RemoteRuntime<'_, '_> {
     }
 
     fn target_name(&self, _index: usize) -> &str {
-        &self.plan.manifest.name
+        &self.spec.manifest.name
     }
 
-    fn prepare(&mut self, _index: usize) -> Result<Self::Prepared> {
+    fn prepare(
+        &mut self,
+        _index: usize,
+    ) -> std::result::Result<Self::Prepared, PreparationFailure> {
         self.log.line(&format!(
             "==> PREPARE: {} transaction {}",
-            self.plan.manifest.host(),
-            self.plan.id
+            self.spec.manifest.host(),
+            self.spec.transaction_id
         ));
-        acquire_lock(self.plan)?;
+        acquire_lock(self.spec).map_err(PreparationFailure::cleanup_uncertain)?;
 
         let result = (|| {
-            for artifact in &self.plan.artifacts {
-                let staged = artifact.staged(self.plan);
+            for artifact in self.spec.artifacts {
+                let staged = artifact.staged(self.spec.transaction_id);
                 self.log.line(&format!(
                     "==> SHIP{}: {} → {}:{staged}",
                     if artifact.manifest.kind == ArtifactKind::Dir {
@@ -75,7 +87,7 @@ impl transaction::Runtime for RemoteRuntime<'_, '_> {
                         ""
                     },
                     artifact.src.display(),
-                    self.plan.manifest.host(),
+                    self.spec.manifest.host(),
                 ));
                 let kind = match artifact.manifest.kind {
                     ArtifactKind::File => RsyncKind::File,
@@ -83,22 +95,25 @@ impl transaction::Runtime for RemoteRuntime<'_, '_> {
                 };
                 transport::rsync(
                     &artifact.src,
-                    &format!("{}:{staged}", self.plan.manifest.host()),
+                    &format!("{}:{staged}", self.spec.manifest.host()),
                     kind,
                     self.log,
                 )?;
             }
-            backup_live_artifacts(self.plan)
+            backup_live_artifacts(self.spec)
         })();
 
         match result {
             Ok(existed) => Ok(PreparedRemote { existed }),
             Err(error) => {
-                let cleanup_errors = cleanup_state(self.plan);
+                let cleanup_errors = cleanup_state(self.spec);
                 if cleanup_errors.is_empty() {
-                    Err(error)
+                    Err(PreparationFailure::cleaned(error))
                 } else {
-                    Err(error_report(&format!("{error:#}"), cleanup_errors))
+                    Err(PreparationFailure::cleanup_failed(
+                        error,
+                        error_report("remote transaction cleanup failed", cleanup_errors),
+                    ))
                 }
             }
         }
@@ -107,13 +122,13 @@ impl transaction::Runtime for RemoteRuntime<'_, '_> {
     fn activate(&mut self, _index: usize, _prepared: &Self::Prepared) -> Result<()> {
         self.log.line(&format!(
             "==> ACTIVATE: {} swap artifacts and restart {}",
-            self.plan.manifest.host(),
-            self.plan.manifest.name
+            self.spec.manifest.host(),
+            self.spec.manifest.name
         ));
         require_success(
             transport::ssh_script_capture(
-                self.plan.manifest.host(),
-                &activation_script(self.plan),
+                self.spec.manifest.host(),
+                &activation_script(self.spec),
                 OPERATION_TIMEOUT,
             )?,
             "remote activation",
@@ -124,25 +139,24 @@ impl transaction::Runtime for RemoteRuntime<'_, '_> {
     fn verify(&mut self, _index: usize, _prepared: &Self::Prepared) -> Result<()> {
         self.log
             .line("==> VERIFY HOST: waiting for the installed service");
-        wait_for_health(self.plan)?;
+        wait_for_host_health(self.spec)?;
         self.log.line(&format!(
             "    {} is active and healthy",
-            self.plan.manifest.name
+            self.spec.manifest.name
         ));
-        self.verified = true;
         Ok(())
     }
 
     fn compensate(&mut self, _index: usize, prepared: &Self::Prepared) -> Result<()> {
         self.log.line(&format!(
             "==> COMPENSATE: restoring {} on {}",
-            self.plan.manifest.name,
-            self.plan.manifest.host()
+            self.spec.manifest.name,
+            self.spec.manifest.host()
         ));
         let mut errors = Vec::new();
         match transport::ssh_script_capture(
-            self.plan.manifest.host(),
-            &compensation_script(self.plan, &prepared.existed),
+            self.spec.manifest.host(),
+            &compensation_script(self.spec, &prepared.existed),
             OPERATION_TIMEOUT,
         ) {
             Ok(output) => {
@@ -153,12 +167,12 @@ impl transaction::Runtime for RemoteRuntime<'_, '_> {
             Err(error) => errors.push(format!("restoring artifacts: {error:#}")),
         }
         if errors.is_empty() {
-            if let Err(error) = wait_for_health(self.plan) {
+            if let Err(error) = wait_for_host_health(self.spec) {
                 errors.push(format!("verifying restored service: {error:#}"));
             } else {
                 self.log.line(&format!(
                     "    restored {} is active and healthy",
-                    self.plan.manifest.name
+                    self.spec.manifest.name
                 ));
             }
         }
@@ -170,28 +184,7 @@ impl transaction::Runtime for RemoteRuntime<'_, '_> {
     }
 
     fn cleanup(&mut self, _index: usize, _prepared: &Self::Prepared) -> Result<()> {
-        let mut errors = Vec::new();
-        if self.verified && self.plan.manifest.lighthouse.enroll {
-            self.log.line("==> ENROLL: lighthouse.target");
-            let name = shq(&format!("{}.service", self.plan.manifest.name));
-            let script = format!(
-                "set -euo pipefail\n{}\n$sudo systemctl add-wants lighthouse.target {name}\n$sudo systemctl daemon-reload",
-                sudo_setup()
-            );
-            match transport::ssh_script_capture(
-                self.plan.manifest.host(),
-                &script,
-                OPERATION_TIMEOUT,
-            ) {
-                Ok(output) => {
-                    if let Err(error) = require_success(output, "lighthouse enrollment") {
-                        errors.push(format!("enrolling service: {error:#}"));
-                    }
-                }
-                Err(error) => errors.push(format!("enrolling service: {error:#}")),
-            }
-        }
-        errors.extend(cleanup_state(self.plan));
+        let errors = cleanup_state(self.spec);
         if errors.is_empty() {
             Ok(())
         } else {
@@ -200,26 +193,26 @@ impl transaction::Runtime for RemoteRuntime<'_, '_> {
     }
 }
 
-fn acquire_lock(plan: &DeploymentPlan<'_>) -> Result<()> {
-    let lock = shq(&lock_path(plan));
+fn acquire_lock(spec: &RemoteExecutionSpec<'_, '_>) -> Result<()> {
+    let lock = shq(&lock_path(spec));
     let script = format!(
         "set -euo pipefail\n{}\n$sudo mkdir -p {root}\n$sudo mkdir {lock}",
         sudo_setup(),
         root = shq(LOCK_ROOT),
     );
     require_success(
-        transport::ssh_script_capture(plan.manifest.host(), &script, OPERATION_TIMEOUT)?,
+        transport::ssh_script_capture(spec.manifest.host(), &script, OPERATION_TIMEOUT)?,
         "acquiring remote deployment lock",
     )?;
     Ok(())
 }
 
-fn backup_live_artifacts(plan: &DeploymentPlan<'_>) -> Result<Vec<bool>> {
+fn backup_live_artifacts(spec: &RemoteExecutionSpec<'_, '_>) -> Result<Vec<bool>> {
     let mut script = format!("set -euo pipefail\n{}\n", sudo_setup());
-    for artifact in &plan.artifacts {
-        let staged = shq(&artifact.staged(plan));
+    for artifact in spec.artifacts {
+        let staged = shq(&artifact.staged(spec.transaction_id));
         let live = shq(&artifact.manifest.dest);
-        let backup = shq(&artifact.backup(plan));
+        let backup = shq(&artifact.backup(spec.transaction_id));
         let expected = match artifact.manifest.kind {
             ArtifactKind::File => "-f",
             ArtifactKind::Dir => "-d",
@@ -235,7 +228,7 @@ fn backup_live_artifacts(plan: &DeploymentPlan<'_>) -> Result<Vec<bool>> {
         }
     }
     let output = require_success(
-        transport::ssh_script_capture(plan.manifest.host(), &script, OPERATION_TIMEOUT)?,
+        transport::ssh_script_capture(spec.manifest.host(), &script, OPERATION_TIMEOUT)?,
         "backing up installed artifacts",
     )?;
     let existed: Vec<bool> = output
@@ -247,36 +240,36 @@ fn backup_live_artifacts(plan: &DeploymentPlan<'_>) -> Result<Vec<bool>> {
             other => bail!("unexpected remote backup response `{other}`"),
         })
         .collect::<Result<_>>()?;
-    if existed.len() != plan.artifacts.len() {
+    if existed.len() != spec.artifacts.len() {
         bail!(
             "remote backup reported {} artifacts, expected {}",
             existed.len(),
-            plan.artifacts.len()
+            spec.artifacts.len()
         );
     }
     Ok(existed)
 }
 
-fn activation_script(plan: &DeploymentPlan<'_>) -> String {
+fn activation_script(spec: &RemoteExecutionSpec<'_, '_>) -> String {
     let mut script = format!("set -euo pipefail\n{}\n", sudo_setup());
-    for artifact in &plan.artifacts {
-        let staged = shq(&artifact.staged(plan));
+    for artifact in spec.artifacts {
+        let staged = shq(&artifact.staged(spec.transaction_id));
         let live = shq(&artifact.manifest.dest);
         script.push_str(&format!("$sudo rm -rf {live}\n$sudo mv {staged} {live}\n"));
     }
     script.push_str(&format!(
         "$sudo systemctl restart {}\n",
-        shq(&plan.manifest.name)
+        shq(&spec.manifest.name)
     ));
     script
 }
 
-fn compensation_script(plan: &DeploymentPlan<'_>, existed: &[bool]) -> String {
+fn compensation_script(spec: &RemoteExecutionSpec<'_, '_>, existed: &[bool]) -> String {
     let mut script = format!("set -uo pipefail\n{}\nfailed=0\n", sudo_setup());
-    for (artifact, existed) in plan.artifacts.iter().zip(existed).rev() {
-        let staged = shq(&artifact.staged(plan));
+    for (artifact, existed) in spec.artifacts.iter().zip(existed).rev() {
+        let staged = shq(&artifact.staged(spec.transaction_id));
         let live = shq(&artifact.manifest.dest);
-        let backup = shq(&artifact.backup(plan));
+        let backup = shq(&artifact.backup(spec.transaction_id));
         script.push_str(&format!(
             "if ! $sudo rm -rf {staged}; then echo 'could not remove staged artifact' >&2; failed=1; fi\n"
         ));
@@ -292,13 +285,13 @@ fn compensation_script(plan: &DeploymentPlan<'_>, existed: &[bool]) -> String {
     }
     script.push_str(&format!(
         "if ! $sudo systemctl restart {}; then echo 'could not restart restored service' >&2; failed=1; fi\nexit \"$failed\"\n",
-        shq(&plan.manifest.name)
+        shq(&spec.manifest.name)
     ));
     script
 }
 
-fn wait_for_health(plan: &DeploymentPlan<'_>) -> Result<()> {
-    let (retries, interval_ms, check) = match &plan.manifest.health {
+fn wait_for_host_health(spec: &RemoteExecutionSpec<'_, '_>) -> Result<()> {
+    let (retries, interval_ms, check) = match &spec.manifest.health {
         Some(Health {
             url: Some(url),
             retries,
@@ -312,12 +305,12 @@ fn wait_for_health(plan: &DeploymentPlan<'_>) -> Result<()> {
             url: None,
             retries,
             interval_ms,
-        }) => (*retries, *interval_ms, systemctl_healthcheck(plan)),
-        None => (10, 500, systemctl_healthcheck(plan)),
+        }) => (*retries, *interval_ms, systemctl_healthcheck(spec)),
+        None => (10, 500, systemctl_healthcheck(spec)),
     };
     let mut last_error = None;
     for attempt in 1..=retries {
-        match transport::ssh_script_capture(plan.manifest.host(), &check, HEALTH_ATTEMPT_TIMEOUT) {
+        match transport::ssh_script_capture(spec.manifest.host(), &check, HEALTH_ATTEMPT_TIMEOUT) {
             Ok(output) if output.status.success() => {
                 return Ok(());
             }
@@ -336,33 +329,33 @@ fn wait_for_health(plan: &DeploymentPlan<'_>) -> Result<()> {
     }
     bail!(
         "{} did not become healthy after {retries} attempts: {}",
-        plan.manifest.name,
+        spec.manifest.name,
         last_error.unwrap_or_else(|| "health check made no attempts".to_owned())
     )
 }
 
-fn systemctl_healthcheck(plan: &DeploymentPlan<'_>) -> String {
+fn systemctl_healthcheck(spec: &RemoteExecutionSpec<'_, '_>) -> String {
     format!(
         "set -euo pipefail\n{}\n[ \"$($sudo systemctl is-active {})\" = active ]",
         sudo_setup(),
-        shq(&plan.manifest.name)
+        shq(&spec.manifest.name)
     )
 }
 
-fn cleanup_state(plan: &DeploymentPlan<'_>) -> Vec<String> {
+fn cleanup_state(spec: &RemoteExecutionSpec<'_, '_>) -> Vec<String> {
     let mut script = format!("set -uo pipefail\n{}\nfailed=0\n", sudo_setup());
-    for artifact in &plan.artifacts {
+    for artifact in spec.artifacts {
         script.push_str(&format!(
             "if ! $sudo rm -rf {} {}; then echo 'could not remove transaction artifacts' >&2; failed=1; fi\n",
-            shq(&artifact.staged(plan)),
-            shq(&artifact.backup(plan)),
+            shq(&artifact.staged(spec.transaction_id)),
+            shq(&artifact.backup(spec.transaction_id)),
         ));
     }
     script.push_str(&format!(
         "if ! $sudo rmdir {}; then echo 'could not release deployment lock' >&2; failed=1; fi\nexit \"$failed\"\n",
-        shq(&lock_path(plan)),
+        shq(&lock_path(spec)),
     ));
-    match transport::ssh_script_capture(plan.manifest.host(), &script, OPERATION_TIMEOUT) {
+    match transport::ssh_script_capture(spec.manifest.host(), &script, OPERATION_TIMEOUT) {
         Ok(output) => match require_success(output, "remote transaction cleanup") {
             Ok(_) => Vec::new(),
             Err(error) => vec![format!("{error:#}")],
@@ -371,13 +364,22 @@ fn cleanup_state(plan: &DeploymentPlan<'_>) -> Vec<String> {
     }
 }
 
-fn append_ledger(plan: &DeploymentPlan<'_>, result: &str, log: &dyn LogSink) {
-    let script = ledger_append(&plan.manifest.name, plan.stamp.as_ref(), &plan.id, result);
+pub(super) fn append_ledger(
+    spec: &RemoteExecutionSpec<'_, '_>,
+    result: LedgerResult,
+    log: &dyn LogSink,
+) {
+    let script = ledger_append(
+        &spec.manifest.name,
+        spec.stamp,
+        spec.transaction_id,
+        result,
+    );
     if script.is_empty() {
         return;
     }
     if let Err(error) = transport::ssh_script_capture(
-        plan.manifest.host(),
+        spec.manifest.host(),
         &format!("set -euo pipefail\n{}\n{script}", sudo_setup()),
         OPERATION_TIMEOUT,
     )
@@ -389,8 +391,8 @@ fn append_ledger(plan: &DeploymentPlan<'_>, result: &str, log: &dyn LogSink) {
     }
 }
 
-fn lock_path(plan: &DeploymentPlan<'_>) -> String {
-    format!("{LOCK_ROOT}/{}.lock", plan.manifest.name)
+fn lock_path(spec: &RemoteExecutionSpec<'_, '_>) -> String {
+    format!("{LOCK_ROOT}/{}.lock", spec.manifest.name)
 }
 
 fn sudo_setup() -> &'static str {

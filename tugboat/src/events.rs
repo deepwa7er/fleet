@@ -30,11 +30,11 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::subprocess::LogSink;
-use crate::transaction::Outcome;
+use crate::transaction::{Execution, FailurePhase, Outcome};
 
 /// Current event schema version. Bump when the shape changes; readers should
 /// ignore versions they don't know rather than misread them.
-pub const EVENT_VERSION: u32 = 4;
+pub const EVENT_VERSION: u32 = 5;
 
 /// Where the fallible pipeline was when it ended. The transaction itself has a
 /// separate typed [`Outcome`], so this stage never has to imply whether
@@ -44,8 +44,11 @@ pub enum Stage {
     Source,
     Build,
     Artifacts,
-    Ship,
-    Install,
+    Prepare,
+    Activate,
+    Health,
+    Compensate,
+    Cleanup,
 }
 
 impl Stage {
@@ -54,8 +57,11 @@ impl Stage {
             Stage::Source => "source",
             Stage::Build => "build",
             Stage::Artifacts => "artifacts",
-            Stage::Ship => "ship",
-            Stage::Install => "install",
+            Stage::Prepare => "prepare",
+            Stage::Activate => "activate",
+            Stage::Health => "health",
+            Stage::Compensate => "compensate",
+            Stage::Cleanup => "cleanup",
         }
     }
 }
@@ -94,8 +100,7 @@ pub struct DeployEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     build_ms: Option<u64>,
     /// The complete remote transaction: prepare and ship, activation, health
-    /// verification, compensation when required, cleanup, and host-ledger
-    /// recording.
+    /// verification, compensation when required, and cleanup.
     #[serde(skip_serializing_if = "Option::is_none")]
     transaction_ms: Option<u64>,
     /// Everything, including source prep (fetch + worktree checkout) — what a
@@ -164,15 +169,21 @@ impl Recorder {
 
     /// Preserve the transaction state machine's authoritative outcome. This is
     /// deliberately set from its report rather than inferred from `Result`.
-    pub fn transaction_outcome(&mut self, outcome: Outcome) {
-        self.stage = match outcome {
-            Outcome::PreparationFailed => Stage::Ship,
-            Outcome::Deployed
-            | Outcome::Compensated
-            | Outcome::CompensationIncomplete
-            | Outcome::DeployedCleanupIncomplete => Stage::Install,
-        };
-        self.transaction_outcome = Some(outcome);
+    pub fn transaction(&mut self, execution: &Execution) {
+        if let Some(phase) = execution.failure_phase() {
+            self.stage = match phase {
+                FailurePhase::Prepare => Stage::Prepare,
+                FailurePhase::Activate => Stage::Activate,
+                FailurePhase::Verify => Stage::Health,
+                FailurePhase::Compensate => Stage::Compensate,
+                FailurePhase::Cleanup => Stage::Cleanup,
+            };
+        }
+        self.transaction_outcome = Some(execution.outcome());
+    }
+
+    pub fn transaction_completed(&mut self, elapsed: Instant) {
+        self.transaction_ms = Some(elapsed.elapsed().as_millis() as u64);
     }
 
     /// Store a completed stage's duration.
@@ -180,10 +191,15 @@ impl Recorder {
         let ms = elapsed.elapsed().as_millis() as u64;
         match stage {
             Stage::Build => self.build_ms = Some(ms),
-            Stage::Install => self.transaction_ms = Some(ms),
             // Verifying artifacts exist is a stat() per artifact; timing it
             // would measure nothing.
-            Stage::Source | Stage::Artifacts | Stage::Ship => {}
+            Stage::Source
+            | Stage::Artifacts
+            | Stage::Prepare
+            | Stage::Activate
+            | Stage::Health
+            | Stage::Compensate
+            | Stage::Cleanup => {}
         }
     }
 

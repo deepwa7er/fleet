@@ -50,13 +50,148 @@ impl TargetReport {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Report {
-    pub(crate) outcome: Outcome,
     pub(crate) targets: Vec<TargetReport>,
 }
 
-pub(crate) struct Execution {
-    pub(crate) report: Report,
-    pub(crate) error: Option<anyhow::Error>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FailurePhase {
+    Prepare,
+    Activate,
+    Verify,
+    Compensate,
+    Cleanup,
+}
+
+pub(crate) enum Execution {
+    Deployed {
+        report: Report,
+    },
+    PreparationFailed {
+        report: Report,
+        error: anyhow::Error,
+    },
+    Compensated {
+        report: Report,
+        failed_phase: FailurePhase,
+        error: anyhow::Error,
+    },
+    CompensationIncomplete {
+        report: Report,
+        error: anyhow::Error,
+    },
+    DeployedCleanupIncomplete {
+        report: Report,
+        error: anyhow::Error,
+    },
+}
+
+impl Execution {
+    pub(crate) fn outcome(&self) -> Outcome {
+        match self {
+            Self::Deployed { .. } => Outcome::Deployed,
+            Self::PreparationFailed { .. } => Outcome::PreparationFailed,
+            Self::Compensated { .. } => Outcome::Compensated,
+            Self::CompensationIncomplete { .. } => Outcome::CompensationIncomplete,
+            Self::DeployedCleanupIncomplete { .. } => Outcome::DeployedCleanupIncomplete,
+        }
+    }
+
+    pub(crate) fn report(&self) -> &Report {
+        match self {
+            Self::Deployed { report }
+            | Self::PreparationFailed { report, .. }
+            | Self::Compensated { report, .. }
+            | Self::CompensationIncomplete { report, .. }
+            | Self::DeployedCleanupIncomplete { report, .. } => report,
+        }
+    }
+
+    pub(crate) fn error(&self) -> Option<&anyhow::Error> {
+        match self {
+            Self::Deployed { .. } => None,
+            Self::PreparationFailed { error, .. }
+            | Self::Compensated { error, .. }
+            | Self::CompensationIncomplete { error, .. }
+            | Self::DeployedCleanupIncomplete { error, .. } => Some(error),
+        }
+    }
+
+    pub(crate) fn failure_phase(&self) -> Option<FailurePhase> {
+        match self {
+            Self::Deployed { .. } => None,
+            Self::PreparationFailed { .. } => Some(FailurePhase::Prepare),
+            Self::Compensated { failed_phase, .. } => Some(*failed_phase),
+            Self::CompensationIncomplete { .. } => Some(FailurePhase::Compensate),
+            Self::DeployedCleanupIncomplete { .. } => Some(FailurePhase::Cleanup),
+        }
+    }
+
+    pub(crate) fn deployed(&self) -> bool {
+        matches!(
+            self,
+            Self::Deployed { .. } | Self::DeployedCleanupIncomplete { .. }
+        )
+    }
+
+    pub(crate) fn into_result(self) -> Result<()> {
+        match self {
+            Self::Deployed { .. } => Ok(()),
+            Self::PreparationFailed { error, .. }
+            | Self::Compensated { error, .. }
+            | Self::CompensationIncomplete { error, .. }
+            | Self::DeployedCleanupIncomplete { error, .. } => Err(error),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum PreparationCleanup {
+    NotRequired,
+    Succeeded,
+    Failed(anyhow::Error),
+    Uncertain,
+}
+
+#[derive(Debug)]
+pub(crate) struct PreparationFailure {
+    pub(crate) error: anyhow::Error,
+    pub(crate) cleanup: PreparationCleanup,
+}
+
+impl std::fmt::Display for PreparationFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{:#}", self.error)
+    }
+}
+
+impl PreparationFailure {
+    pub(crate) fn before_state(error: anyhow::Error) -> Self {
+        Self {
+            error,
+            cleanup: PreparationCleanup::NotRequired,
+        }
+    }
+
+    pub(crate) fn cleaned(error: anyhow::Error) -> Self {
+        Self {
+            error,
+            cleanup: PreparationCleanup::Succeeded,
+        }
+    }
+
+    pub(crate) fn cleanup_failed(error: anyhow::Error, cleanup: anyhow::Error) -> Self {
+        Self {
+            error,
+            cleanup: PreparationCleanup::Failed(cleanup),
+        }
+    }
+
+    pub(crate) fn cleanup_uncertain(error: anyhow::Error) -> Self {
+        Self {
+            error,
+            cleanup: PreparationCleanup::Uncertain,
+        }
+    }
 }
 
 /// Machine effects required by the deployment state machine.
@@ -69,7 +204,10 @@ pub(crate) trait Runtime {
 
     fn target_count(&self) -> usize;
     fn target_name(&self, index: usize) -> &str;
-    fn prepare(&mut self, index: usize) -> Result<Self::Prepared>;
+    fn prepare(
+        &mut self,
+        index: usize,
+    ) -> std::result::Result<Self::Prepared, PreparationFailure>;
     fn activate(&mut self, index: usize, prepared: &Self::Prepared) -> Result<()>;
     fn verify(&mut self, index: usize, prepared: &Self::Prepared) -> Result<()>;
     fn compensate(&mut self, index: usize, prepared: &Self::Prepared) -> Result<()>;
@@ -80,7 +218,6 @@ pub(crate) fn execute<R: Runtime>(runtime: &mut R) -> Execution {
     let target_count = runtime.target_count();
     let mut prepared = Vec::with_capacity(target_count);
     let mut report = Report {
-        outcome: Outcome::Deployed,
         targets: (0..target_count)
             .map(|index| TargetReport::new(runtime.target_name(index).to_owned()))
             .collect(),
@@ -94,43 +231,65 @@ pub(crate) fn execute<R: Runtime>(runtime: &mut R) -> Execution {
                 report.targets[index].cleanup = StepOutcome::NotAttempted;
                 prepared.push(state);
             }
-            Err(error) => {
-                report.targets[index].prepare = StepOutcome::Failed(format!("{error:#}"));
-                let mut errors = vec![format!("preparing target `{target_name}`: {error:#}")];
+            Err(failure) => {
+                report.targets[index].prepare =
+                    StepOutcome::Failed(format!("{:#}", failure.error));
+                let mut errors =
+                    vec![format!("preparing target `{target_name}`: {:#}", failure.error)];
+                match failure.cleanup {
+                    PreparationCleanup::NotRequired => {}
+                    PreparationCleanup::Succeeded => {
+                        report.targets[index].cleanup = StepOutcome::Succeeded;
+                    }
+                    PreparationCleanup::Failed(cleanup_error) => {
+                        report.targets[index].cleanup =
+                            StepOutcome::Failed(format!("{cleanup_error:#}"));
+                        report.targets[index].recovery_preserved = true;
+                        errors.push(format!(
+                            "cleaning failed preparation for target `{target_name}`: {cleanup_error:#}; remaining transaction state may require recovery"
+                        ));
+                    }
+                    PreparationCleanup::Uncertain => {
+                        report.targets[index].cleanup = StepOutcome::SkippedPreserved;
+                        report.targets[index].recovery_preserved = true;
+                        errors.push(format!(
+                            "preparation state for target `{target_name}` could not be confirmed; recovery may be required"
+                        ));
+                    }
+                }
                 errors.extend(cleanup_targets(
                     runtime,
                     &prepared,
                     &mut report,
                     0..prepared.len(),
                 ));
-                report.outcome = Outcome::PreparationFailed;
-                return failed(
+                return Execution::PreparationFailed {
                     report,
-                    error_report("deployment preparation failed", errors),
-                );
+                    error: error_report("deployment preparation failed", errors),
+                };
             }
         }
     }
 
     for index in 0..target_count {
         let target_name = runtime.target_name(index).to_owned();
-        let error = match runtime.activate(index, &prepared[index]) {
+        let (error, failed_phase) = match runtime.activate(index, &prepared[index]) {
             Ok(()) => {
                 report.targets[index].activate = StepOutcome::Succeeded;
                 match runtime.verify(index, &prepared[index]) {
                     Ok(()) => {
                         report.targets[index].verify = StepOutcome::Succeeded;
-                        None
+                        (None, FailurePhase::Verify)
                     }
                     Err(error) => {
                         report.targets[index].verify = StepOutcome::Failed(format!("{error:#}"));
-                        Some(error)
+                        (Some(error), FailurePhase::Verify)
                     }
                 }
             }
             Err(error) => {
                 report.targets[index].activate = StepOutcome::Failed(format!("{error:#}"));
-                Some(error)
+                (Some(error), FailurePhase::Activate)
             }
         };
         if let Some(error) = error {
@@ -160,33 +319,32 @@ pub(crate) fn execute<R: Runtime>(runtime: &mut R) -> Execution {
                 &mut report,
                 (0..target_count).filter(|cleanup_index| !preserve[*cleanup_index]),
             ));
-            report.outcome = if preserve.iter().any(|preserved| *preserved) {
-                Outcome::CompensationIncomplete
+            let error = error_report("deployment failed; compensation was attempted", errors);
+            return if preserve.iter().any(|preserved| *preserved) {
+                Execution::CompensationIncomplete { report, error }
             } else {
-                Outcome::Compensated
+                Execution::Compensated {
+                    report,
+                    failed_phase,
+                    error,
+                }
             };
-            return failed(
-                report,
-                error_report("deployment failed; compensation was attempted", errors),
-            );
         }
     }
 
     let cleanup_errors = cleanup_targets(runtime, &prepared, &mut report, 0..target_count);
     if !cleanup_errors.is_empty() {
-        report.outcome = Outcome::DeployedCleanupIncomplete;
-        return failed(
+        return Execution::DeployedCleanupIncomplete {
             report,
-            error_report(
+            error: error_report(
                 "deployment is healthy, but transaction cleanup failed",
                 cleanup_errors,
             ),
-        );
+        };
     }
 
-    Execution {
+    Execution::Deployed {
         report,
-        error: None,
     }
 }
 
@@ -210,13 +368,6 @@ fn cleanup_targets<R: Runtime>(
         }
     }
     errors
-}
-
-fn failed(report: Report, error: anyhow::Error) -> Execution {
-    Execution {
-        report,
-        error: Some(error),
-    }
 }
 
 fn error_report(summary: &str, errors: Vec<String>) -> anyhow::Error {
@@ -293,8 +444,12 @@ mod tests {
             self.targets[index].name
         }
 
-        fn prepare(&mut self, index: usize) -> Result<Self::Prepared> {
-            self.record(Event::Prepare(index), self.targets[index].failures.prepare)?;
+        fn prepare(
+            &mut self,
+            index: usize,
+        ) -> std::result::Result<Self::Prepared, PreparationFailure> {
+            self.record(Event::Prepare(index), self.targets[index].failures.prepare)
+                .map_err(PreparationFailure::before_state)?;
             Ok(index)
         }
 
@@ -331,9 +486,9 @@ mod tests {
 
         let execution = execute(&mut runtime);
 
-        assert!(execution.error.is_none());
-        assert_eq!(execution.report.outcome, Outcome::Deployed);
-        assert!(execution.report.targets.iter().all(|target| {
+        assert!(execution.error().is_none());
+        assert_eq!(execution.outcome(), Outcome::Deployed);
+        assert!(execution.report().targets.iter().all(|target| {
             target.prepare == StepOutcome::Succeeded
                 && target.activate == StepOutcome::Succeeded
                 && target.verify == StepOutcome::Succeeded
@@ -366,16 +521,16 @@ mod tests {
         runtime.fail(1).prepare = true;
 
         let execution = execute(&mut runtime);
-        let error = execution.error.as_ref().unwrap();
+        let error = execution.error().unwrap();
 
         assert!(error.to_string().contains("deployment preparation failed"));
-        assert_eq!(execution.report.outcome, Outcome::PreparationFailed);
+        assert_eq!(execution.outcome(), Outcome::PreparationFailed);
         assert!(matches!(
-            execution.report.targets[1].prepare,
+            execution.report().targets[1].prepare,
             StepOutcome::Failed(_)
         ));
         assert_eq!(
-            execution.report.targets[2].prepare,
+            execution.report().targets[2].prepare,
             StepOutcome::NotAttempted
         );
         assert_eq!(
@@ -390,16 +545,16 @@ mod tests {
         runtime.fail(1).activate = true;
 
         let execution = execute(&mut runtime);
-        let error = execution.error.as_ref().unwrap();
+        let error = execution.error().unwrap();
 
         assert!(error.to_string().contains("compensation was attempted"));
-        assert_eq!(execution.report.outcome, Outcome::Compensated);
+        assert_eq!(execution.outcome(), Outcome::Compensated);
         assert!(matches!(
-            execution.report.targets[1].activate,
+            execution.report().targets[1].activate,
             StepOutcome::Failed(_)
         ));
         assert_eq!(
-            execution.report.targets[1].verify,
+            execution.report().targets[1].verify,
             StepOutcome::NotAttempted
         );
         assert_eq!(
@@ -427,10 +582,10 @@ mod tests {
 
         let execution = execute(&mut runtime);
 
-        assert_eq!(execution.report.outcome, Outcome::Compensated);
-        assert_eq!(execution.report.targets[1].activate, StepOutcome::Succeeded);
+        assert_eq!(execution.outcome(), Outcome::Compensated);
+        assert_eq!(execution.report().targets[1].activate, StepOutcome::Succeeded);
         assert!(matches!(
-            execution.report.targets[1].verify,
+            execution.report().targets[1].verify,
             StepOutcome::Failed(_)
         ));
         assert_eq!(
@@ -459,19 +614,19 @@ mod tests {
         runtime.fail(1).compensate = true;
 
         let execution = execute(&mut runtime);
-        let error = execution.error.as_ref().unwrap();
+        let error = execution.error().unwrap();
 
         assert!(error.to_string().contains("preserved for recovery"));
-        assert_eq!(execution.report.outcome, Outcome::CompensationIncomplete);
+        assert_eq!(execution.outcome(), Outcome::CompensationIncomplete);
         assert!(matches!(
-            execution.report.targets[1].compensate,
+            execution.report().targets[1].compensate,
             StepOutcome::Failed(_)
         ));
         assert_eq!(
-            execution.report.targets[1].cleanup,
+            execution.report().targets[1].cleanup,
             StepOutcome::SkippedPreserved
         );
-        assert!(execution.report.targets[1].recovery_preserved);
+        assert!(execution.report().targets[1].recovery_preserved);
         assert_eq!(
             runtime.events,
             [
@@ -495,12 +650,12 @@ mod tests {
         runtime.fail(0).cleanup = true;
 
         let execution = execute(&mut runtime);
-        let error = execution.error.as_ref().unwrap();
+        let error = execution.error().unwrap();
 
         assert!(error.to_string().contains("deployment is healthy"));
-        assert_eq!(execution.report.outcome, Outcome::DeployedCleanupIncomplete);
+        assert_eq!(execution.outcome(), Outcome::DeployedCleanupIncomplete);
         assert!(matches!(
-            execution.report.targets[0].cleanup,
+            execution.report().targets[0].cleanup,
             StepOutcome::Failed(_)
         ));
         assert_eq!(

@@ -517,7 +517,7 @@ impl<'a> DeploymentPlan<'a> {
         let transaction_started = Instant::now();
         let execution = transaction::execute(self, artifact_hashes);
         let transaction_elapsed = transaction_started.elapsed();
-        let deployed = execution.error.is_none();
+        let deployed = execution.deployed();
         recorder.record_transaction(self, build_elapsed, transaction_elapsed, &execution);
         let result = execution.into_result();
         if deployed {

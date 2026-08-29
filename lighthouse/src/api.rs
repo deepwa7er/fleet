@@ -174,7 +174,7 @@ struct DaemonStatus {
     deployed_is_ancestor: Option<bool>,
 }
 
-use tugboat_ledger::LedgerEntry;
+use tugboat_ledger::{LedgerEntry, LedgerResult};
 
 /// Read a service's deploy ledger through the shared `tugboat-ledger` contract,
 /// oldest entry first. Missing/unreadable → empty. Entries written by a NEWER
@@ -203,7 +203,14 @@ fn read_ledger(version_dir: &std::path::Path, deploy_name: &str) -> Vec<LedgerEn
 /// The currently-running version: the most recent entry that actually deployed.
 /// A trailing `rolled_back` entry means the prior `deployed` one is still live.
 fn current_deployed(entries: &[LedgerEntry]) -> Option<&LedgerEntry> {
-    entries.iter().rev().find(|e| e.result == "deployed")
+    for entry in entries.iter().rev() {
+        match entry.result {
+            LedgerResult::Deployed => return Some(entry),
+            LedgerResult::RolledBack => continue,
+            LedgerResult::Indeterminate => return None,
+        }
+    }
+    None
 }
 
 /// Freshness of one deployable service: how the running version compares to the
@@ -450,7 +457,7 @@ pub async fn deploy_history(
             short: e.short,
             branch: e.branch,
             dirty: e.dirty,
-            result: e.result,
+            result: e.result.as_str().to_owned(),
             at: e.at,
         })
         .collect();
@@ -869,10 +876,11 @@ pub async fn deploy_stream(
 #[cfg(test)]
 mod tests {
     use super::{
-        bucketize, changes_url, commit_url, current_probe, summarize, valid_log_id, worse,
+        bucketize, changes_url, commit_url, current_deployed, current_probe, summarize,
+        valid_log_id, worse,
     };
-    use tugboat_ledger::LedgerEntry;
     use crate::store::{Probe, Sample};
+    use tugboat_ledger::{LedgerEntry, LedgerResult};
 
     fn sample(at: i64, state: &str, mem: Option<i64>, probe: Option<Probe>) -> Sample {
         Sample { at, active_state: state.into(), memory_bytes: mem, probe }
@@ -953,15 +961,23 @@ mod tests {
 
     fn deployed_entry(short: &str) -> LedgerEntry {
         LedgerEntry {
-            v: 2,
+            v: tugboat_ledger::LEDGER_VERSION,
             id: Some(format!("1-{short}")),
             sha: format!("{short}00000000000000000000000000000000"),
             short: short.to_owned(),
             dirty: false,
             branch: Some("main".into()),
-            result: "deployed".into(),
+            result: LedgerResult::Deployed,
             at: 1,
         }
+    }
+
+    #[test]
+    fn indeterminate_recovery_hides_stale_deployed_identity() {
+        let deployed = deployed_entry("deadbeef");
+        let mut indeterminate = deployed_entry("cafebabe");
+        indeterminate.result = LedgerResult::Indeterminate;
+        assert!(current_deployed(&[deployed, indeterminate]).is_none());
     }
 
     #[test]

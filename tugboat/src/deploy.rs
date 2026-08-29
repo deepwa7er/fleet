@@ -18,6 +18,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
+use tugboat_ledger::LedgerResult;
 use uuid::Uuid;
 
 use crate::events;
@@ -25,12 +26,14 @@ use crate::git;
 use crate::manifest::{self, ArtifactKind, BuildRequirement, Health, Manifest, Verify};
 use crate::subprocess::{run_streamed, LogSink};
 use crate::transport::{self, shell_quote as shq};
+use crate::transaction::Outcome;
 
 mod remote;
 
 /// What was deployed, recorded on the host so the dashboard can tell whether a
 /// service is running the latest local code. Written only on a successful
 /// deploy; a rolled-back deploy leaves the previous stamp untouched.
+#[derive(Clone)]
 struct Stamp {
     sha: String,
     short: String,
@@ -158,7 +161,7 @@ struct Prepared {
     /// The ledger stamp for the checked-out default-branch commit.
     stamp: Stamp,
     /// Removes the worktree when dropped; held for the deploy's lifetime.
-    guard: WorktreeGuard,
+    _guard: WorktreeGuard,
 }
 
 /// Read-only local information needed to describe or prepare a default-branch
@@ -176,12 +179,12 @@ struct PlannedArtifact<'a> {
 }
 
 impl PlannedArtifact<'_> {
-    fn staged(&self, plan: &DeploymentPlan<'_>) -> String {
-        format!("{}.tug-new-{}", self.manifest.dest, plan.id)
+    fn staged(&self, transaction_id: &str) -> String {
+        format!("{}.tug-new-{transaction_id}", self.manifest.dest)
     }
 
-    fn backup(&self, plan: &DeploymentPlan<'_>) -> String {
-        format!("{}.tug-backup-{}", self.manifest.dest, plan.id)
+    fn backup(&self, transaction_id: &str) -> String {
+        format!("{}.tug-backup-{transaction_id}", self.manifest.dest)
     }
 }
 
@@ -198,8 +201,6 @@ struct DeploymentPlan<'a> {
     skip_build: bool,
     stamp: Option<Stamp>,
     id: String,
-    /// Keeps a default-branch worktree alive until execution has finished.
-    _worktree: Option<WorktreeGuard>,
 }
 
 struct PlannedSource {
@@ -207,7 +208,13 @@ struct PlannedSource {
     checkout_root: PathBuf,
     stamp: Option<Stamp>,
     skip_build: bool,
-    worktree: Option<WorktreeGuard>,
+}
+
+struct RemoteExecutionSpec<'plan, 'manifest> {
+    manifest: &'manifest Manifest,
+    artifacts: &'plan [PlannedArtifact<'manifest>],
+    stamp: Option<&'plan Stamp>,
+    transaction_id: &'plan str,
 }
 
 impl<'a> DeploymentPlan<'a> {
@@ -224,7 +231,6 @@ impl<'a> DeploymentPlan<'a> {
             checkout_root: working_tree_workspace(project_dir),
             stamp: build_stamp(project_dir, at),
             skip_build,
-            worktree: None,
         };
         Self::resolve(
             manifest,
@@ -238,17 +244,16 @@ impl<'a> DeploymentPlan<'a> {
 
     fn default_branch(
         manifest: &'a Manifest,
-        prepared: Prepared,
+        prepared: &Prepared,
         at: u64,
         workdir: PathBuf,
         nonce: &str,
     ) -> Self {
         let resolved = PlannedSource {
-            build_dir: prepared.build_dir,
-            checkout_root: prepared.checkout_root,
-            stamp: Some(prepared.stamp),
+            build_dir: prepared.build_dir.clone(),
+            checkout_root: prepared.checkout_root.clone(),
+            stamp: Some(prepared.stamp.clone()),
             skip_build: false,
-            worktree: Some(prepared.guard),
         };
         Self::resolve(
             manifest,
@@ -277,7 +282,6 @@ impl<'a> DeploymentPlan<'a> {
                 checkout_root: working_tree_workspace(project_dir),
                 stamp: build_stamp(project_dir, at),
                 skip_build: *skip_build,
-                worktree: None,
             },
             Source::DefaultBranch => {
                 let layout = default_branch_layout(project_dir)?;
@@ -286,7 +290,6 @@ impl<'a> DeploymentPlan<'a> {
                     checkout_root: layout.checkout_root,
                     stamp: None,
                     skip_build: false,
-                    worktree: None,
                 }
             }
         };
@@ -328,7 +331,15 @@ impl<'a> DeploymentPlan<'a> {
             skip_build: resolved.skip_build,
             stamp: resolved.stamp,
             id,
-            _worktree: resolved.worktree,
+        }
+    }
+
+    fn remote(&self) -> RemoteExecutionSpec<'_, 'a> {
+        RemoteExecutionSpec {
+            manifest: self.manifest,
+            artifacts: &self.artifacts,
+            stamp: self.stamp.as_ref(),
+            transaction_id: &self.id,
         }
     }
 
@@ -535,7 +546,7 @@ fn prepare_default_branch(project_dir: &Path, at: u64, log: &dyn LogSink) -> Res
         build_dir: layout.checkout_root.join(layout.relative_service),
         checkout_root: layout.checkout_root,
         stamp,
-        guard,
+        _guard: guard,
     })
 }
 
@@ -681,7 +692,7 @@ pub fn run(
                     )));
                     let plan = DeploymentPlan::default_branch(
                         &source_manifest,
-                        prepared,
+                        &prepared,
                         at,
                         workdir_path,
                         &nonce,
@@ -769,16 +780,34 @@ fn execute(plan: &DeploymentPlan<'_>, log: &dyn LogSink, rec: &mut events::Recor
     // 3. Execute the explicit prepare → activate → verify → compensate/cleanup
     //    state machine. Its report distinguishes a restored deployment from an
     //    ambiguous or incomplete recovery; no inference is made from SSH alone.
-    rec.entering(events::Stage::Install);
     let t = Instant::now();
-    let transaction = remote::execute(plan, log);
-    rec.transaction_outcome(transaction.report.outcome);
-    rec.completed(events::Stage::Install, t);
+    let remote_spec = plan.remote();
+    let transaction = remote::execute(&remote_spec, log);
+    rec.transaction(&transaction);
+    rec.transaction_completed(t);
 
-    if transaction.error.is_none() {
+    match transaction.outcome() {
+        Outcome::Deployed | Outcome::DeployedCleanupIncomplete => {
+            remote::append_ledger(&remote_spec, LedgerResult::Deployed, log)
+        }
+        Outcome::Compensated => {
+            remote::append_ledger(&remote_spec, LedgerResult::RolledBack, log)
+        }
+        Outcome::CompensationIncomplete => {
+            remote::append_ledger(&remote_spec, LedgerResult::Indeterminate, log)
+        }
+        Outcome::PreparationFailed => {}
+    }
+
+    if transaction.deployed() {
+        if let Err(error) = remote::enroll_lighthouse(&remote_spec, log) {
+            log.line(&format!(
+                "    warning: deployment succeeded but lighthouse enrollment failed: {error:#}"
+            ));
+        }
         if let Some(verify_cfg) = &plan.manifest.verify {
-            step(log, "VERIFY", &verify_cfg.url);
-            match verify(verify_cfg, log) {
+            step(log, "PROBE FROM DEPLOYER", &verify_cfg.url);
+            match probe_from_deployer(verify_cfg, log) {
                 Ok(()) => log.line(&format!("    reachable at {}", verify_cfg.url)),
                 Err(err) => log.line(&format!(
                     "    warning: {} not reachable from here ({err}); the service is healthy on the host",
@@ -788,12 +817,19 @@ fn execute(plan: &DeploymentPlan<'_>, log: &dyn LogSink, rec: &mut events::Recor
         }
         log.line(&format!("\n✓ {} deployed to {host}", plan.manifest.name));
     }
-    match transaction.error {
-        Some(error) => {
+    let deployed = transaction.deployed();
+    match transaction.into_result() {
+        Ok(()) => Ok(()),
+        Err(error) if deployed => {
+            log.line(&format!(
+                "!! deployment is live, but transaction cleanup failed: {error:#}"
+            ));
+            Err(error)
+        }
+        Err(error) => {
             log.line(&format!("!! deployment failed: {error:#}"));
             Err(error)
         }
-        None => Ok(()),
     }
 }
 
@@ -955,7 +991,7 @@ fn persist_transcript(
     }
 }
 
-fn verify(cfg: &Verify, log: &dyn LogSink) -> Result<()> {
+fn probe_from_deployer(cfg: &Verify, log: &dyn LogSink) -> Result<()> {
     for attempt in 1..=cfg.retries {
         let mut command = Command::new("curl");
         command.args(["-fs", "-o", "/dev/null", "--max-time", "12", &cfg.url]);
@@ -995,7 +1031,7 @@ fn deploy_id(at: u64, stamp: Option<&Stamp>, nonce: &str) -> String {
 /// One ledger line: the JSON record written for a deploy, through the shared
 /// `tugboat-ledger` contract type — so the writer and lighthouse's reader can
 /// only change together. Kept separate from the bash wrapper for unit tests.
-fn ledger_payload(stamp: &Stamp, id: &str, result: &str) -> String {
+fn ledger_payload(stamp: &Stamp, id: &str, result: LedgerResult) -> String {
     serde_json::to_string(&tugboat_ledger::LedgerEntry {
         v: tugboat_ledger::LEDGER_VERSION,
         id: Some(id.to_owned()),
@@ -1003,7 +1039,7 @@ fn ledger_payload(stamp: &Stamp, id: &str, result: &str) -> String {
         short: stamp.short.clone(),
         dirty: stamp.dirty,
         branch: stamp.branch.clone(),
-        result: result.to_owned(),
+        result,
         at: stamp.deployed_at,
     })
     .expect("a ledger entry always serializes")
@@ -1013,7 +1049,7 @@ fn ledger_payload(stamp: &Stamp, id: &str, result: &str) -> String {
 /// outcome. Empty when there's nothing to record (no git checkout). The append
 /// is a single short line to an `O_APPEND` file, so concurrent or interrupted
 /// writes can't tear an entry.
-fn ledger_append(name: &str, stamp: Option<&Stamp>, id: &str, result: &str) -> String {
+fn ledger_append(name: &str, stamp: Option<&Stamp>, id: &str, result: LedgerResult) -> String {
     let Some(stamp) = stamp else {
         return String::new();
     };

@@ -17,10 +17,27 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Current ledger schema version. v2 added `id`, which names the deploy's
-/// transcript file. Readers should ignore entries with a *newer* version (see
-/// [`LedgerEntry::is_supported`]) rather than misread them.
-pub const LEDGER_VERSION: u32 = 2;
+/// Current ledger schema version. v3 made the host state a closed vocabulary
+/// and added `indeterminate` for failed recovery.
+pub const LEDGER_VERSION: u32 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LedgerResult {
+    Deployed,
+    RolledBack,
+    Indeterminate,
+}
+
+impl LedgerResult {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Deployed => "deployed",
+            Self::RolledBack => "rolled_back",
+            Self::Indeterminate => "indeterminate",
+        }
+    }
+}
 
 /// One deploy's record — a line of `<name>.jsonl`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,8 +60,8 @@ pub struct LedgerEntry {
     pub dirty: bool,
     /// Branch the deploy shipped, when known.
     pub branch: Option<String>,
-    /// `deployed` (came up healthy) or `rolled_back` (it didn't).
-    pub result: String,
+    /// The resulting state of the service on this host.
+    pub result: LedgerResult,
     /// Deploy start, Unix epoch seconds.
     pub at: u64,
 }
@@ -125,12 +142,12 @@ mod tests {
         assert!(!valid_deploy_id("123-"));
     }
 
-    /// The v2 wire shape both sides rely on, plus tolerance for pre-v2 lines
+    /// The current wire shape both sides rely on, plus tolerance for older lines
     /// and retention of future-version entries.
     #[test]
     fn parses_current_legacy_and_future_entries() {
         let text = concat!(
-            r#"{"v":2,"id":"1718900000-1a2b3c4d","sha":"aaaa","short":"1a2b3c4d","dirty":false,"branch":"main","result":"deployed","at":1718900000}"#,
+            r#"{"v":3,"id":"1718900000-1a2b3c4d","sha":"aaaa","short":"1a2b3c4d","dirty":false,"branch":"main","result":"deployed","at":1718900000}"#,
             "\n",
             // pre-v1: no v, no id, no dirty
             r#"{"sha":"bbbb","short":"bbbbbbbb","branch":null,"result":"rolled_back","at":1718000000}"#,
@@ -141,6 +158,7 @@ mod tests {
         let entries = parse_ledger(text);
         assert_eq!(entries.len(), 3, "bad lines skipped, versions kept");
         assert_eq!(entries[0].id.as_deref(), Some("1718900000-1a2b3c4d"));
+        assert_eq!(entries[0].result, LedgerResult::Deployed);
         assert!(entries[0].is_supported());
         assert_eq!(entries[1].v, 0);
         assert!(entries[1].is_supported(), "pre-v1 entries are understood");

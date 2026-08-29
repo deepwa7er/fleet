@@ -19,7 +19,7 @@ use crate::transport::{self, RsyncKind};
 use crate::transaction as policy;
 #[cfg(test)]
 pub(super) use policy::TargetReport;
-pub(super) use policy::{Outcome, Report, StepOutcome};
+pub(super) use policy::{FailurePhase, Outcome, Report, StepOutcome};
 
 const HEALTH_PROTOCOL: u32 = 1;
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(60);
@@ -42,27 +42,41 @@ struct PreparedTarget {
 }
 
 pub(super) struct Execution {
-    pub report: Report,
+    transaction: policy::Execution,
     pub artifact_hashes: Vec<String>,
-    pub error: Option<anyhow::Error>,
 }
 
 impl Execution {
+    pub fn report(&self) -> &Report {
+        self.transaction.report()
+    }
+
+    pub fn outcome(&self) -> Outcome {
+        self.transaction.outcome()
+    }
+
+    pub fn error(&self) -> Option<&anyhow::Error> {
+        self.transaction.error()
+    }
+
+    pub fn failure_phase(&self) -> Option<FailurePhase> {
+        self.transaction.failure_phase()
+    }
+
+    pub fn deployed(&self) -> bool {
+        self.transaction.deployed()
+    }
+
     pub fn into_result(self) -> Result<()> {
-        match self.error {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
+        self.transaction.into_result()
     }
 }
 
 pub(super) fn execute(plan: &DeploymentPlan<'_>, artifact_hashes: Vec<String>) -> Execution {
     let mut runtime = MachineRuntime::new(plan, artifact_hashes);
-    let policy::Execution { report, error } = policy::execute(&mut runtime);
     Execution {
-        report,
+        transaction: policy::execute(&mut runtime),
         artifact_hashes: runtime.artifact_hashes,
-        error,
     }
 }
 
@@ -94,7 +108,10 @@ impl policy::Runtime for MachineRuntime<'_, '_> {
         &self.plan.targets[index].target.name
     }
 
-    fn prepare(&mut self, index: usize) -> Result<Self::Prepared> {
+    fn prepare(
+        &mut self,
+        index: usize,
+    ) -> std::result::Result<Self::Prepared, policy::PreparationFailure> {
         let planned = &self.plan.targets[index];
         println!(
             "\n════ PREPARE {} → {} ════",
@@ -165,7 +182,7 @@ fn prepare_target(
     transaction: &str,
     artifact_hash: String,
     baseline: Option<HealthStatus>,
-) -> Result<PreparedTarget> {
+) -> std::result::Result<PreparedTarget, policy::PreparationFailure> {
     let original_hash = match &planned.target.location {
         Location::Local => prepare_local(planned, transaction),
         Location::Ssh { host } => prepare_remote(host, planned, transaction),
@@ -177,18 +194,23 @@ fn prepare_target(
     })
 }
 
-fn prepare_local(planned: &PlannedTarget<'_>, transaction: &str) -> Result<String> {
-    let paths = LocalPaths::new(planned.target, transaction)?;
+fn prepare_local(
+    planned: &PlannedTarget<'_>,
+    transaction: &str,
+) -> std::result::Result<String, policy::PreparationFailure> {
+    let paths = LocalPaths::new(planned.target, transaction)
+        .map_err(policy::PreparationFailure::before_state)?;
     if let Some(parent) = paths.live.parent() {
         std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating install dir {}", parent.display()))?;
+            .with_context(|| format!("creating install dir {}", parent.display()))
+            .map_err(policy::PreparationFailure::before_state)?;
     }
     std::fs::create_dir(&paths.lock).with_context(|| {
         format!(
             "acquiring deployment lock {}; another deployment or an interrupted transaction may own it",
             paths.lock.display()
         )
-    })?;
+    }).map_err(policy::PreparationFailure::before_state)?;
 
     let result = (|| {
         if !paths.live.is_file() {
@@ -226,15 +248,22 @@ fn prepare_local(planned: &PlannedTarget<'_>, transaction: &str) -> Result<Strin
         Err(error) => {
             let cleanup_errors = cleanup_local(&paths);
             if cleanup_errors.is_empty() {
-                Err(error)
+                Err(policy::PreparationFailure::cleaned(error))
             } else {
-                Err(error_report(&format!("{error:#}"), cleanup_errors))
+                Err(policy::PreparationFailure::cleanup_failed(
+                    error,
+                    error_report("local preparation cleanup failed", cleanup_errors),
+                ))
             }
         }
     }
 }
 
-fn prepare_remote(host: &str, planned: &PlannedTarget<'_>, transaction: &str) -> Result<String> {
+fn prepare_remote(
+    host: &str,
+    planned: &PlannedTarget<'_>,
+    transaction: &str,
+) -> std::result::Result<String, policy::PreparationFailure> {
     let paths = RemotePaths::new(planned.target, transaction);
     let preflight = format!(
         "set -euo pipefail\nmkdir -p \"$(dirname {live})\"\nmkdir {lock}\ntrap 'rm -f {staged} {backup}; rmdir {lock}' ERR\ntest -f {live}\ntest ! -e {staged}\ntest ! -e {backup}",
@@ -243,9 +272,13 @@ fn prepare_remote(host: &str, planned: &PlannedTarget<'_>, transaction: &str) ->
         staged = paths.staged,
         backup = paths.backup,
     );
-    let output = transport::ssh_script_capture(host, &preflight, OPERATION_TIMEOUT)
-        .with_context(|| format!("preflighting {host}:{}", paths.live))?;
-    require_success(output, "remote deployment preflight")?;
+    let preflight_result = (|| {
+        let output = transport::ssh_script_capture(host, &preflight, OPERATION_TIMEOUT)
+            .with_context(|| format!("preflighting {host}:{}", paths.live))?;
+        require_success(output, "remote deployment preflight")?;
+        Ok(())
+    })();
+    preflight_result.map_err(policy::PreparationFailure::cleanup_uncertain)?;
 
     let result = (|| {
         println!(
@@ -279,9 +312,12 @@ fn prepare_remote(host: &str, planned: &PlannedTarget<'_>, transaction: &str) ->
         Err(error) => {
             let cleanup_errors = cleanup_remote(host, &paths);
             if cleanup_errors.is_empty() {
-                Err(error)
+                Err(policy::PreparationFailure::cleaned(error))
             } else {
-                Err(error_report(&format!("{error:#}"), cleanup_errors))
+                Err(policy::PreparationFailure::cleanup_failed(
+                    error,
+                    error_report("remote preparation cleanup failed", cleanup_errors),
+                ))
             }
         }
     }

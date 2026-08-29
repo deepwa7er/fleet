@@ -233,8 +233,9 @@ fn transaction_record(
     plan: &DeploymentPlan<'_>,
     execution: &Execution,
 ) -> Result<JournalRecord> {
+    let report = execution.report();
     ensure!(
-        plan.targets.len() == execution.report.targets.len(),
+        plan.targets.len() == report.targets.len(),
         "transaction report targets do not match the deployment plan"
     );
     ensure!(
@@ -245,7 +246,7 @@ fn transaction_record(
         .targets
         .iter()
         .zip(&execution.artifact_hashes)
-        .zip(&execution.report.targets)
+        .zip(&report.targets)
         .map(|((planned, artifact_hash), report)| TargetRecord {
             name: report.name.clone(),
             location: location_name(&planned.target.location).to_owned(),
@@ -264,9 +265,9 @@ fn transaction_record(
         at,
         transaction: plan.transaction.clone(),
         name: plan.name.to_owned(),
-        result: outcome_name(execution.report.outcome),
-        failed_stage: failed_stage(&execution.report),
-        error: execution.error.as_ref().map(|error| format!("{error:#}")),
+        result: outcome_name(execution.outcome()),
+        failed_stage: execution.failure_phase().map(failure_phase_name),
+        error: execution.error().map(|error| format!("{error:#}")),
         build_ms: millis(build_elapsed),
         transaction_ms: Some(millis(transaction_elapsed)),
         total_ms: millis(total_elapsed),
@@ -274,17 +275,13 @@ fn transaction_record(
     })
 }
 
-fn failed_stage(report: &super::transaction::Report) -> Option<&'static str> {
-    match report.outcome {
-        Outcome::Deployed => None,
-        Outcome::PreparationFailed => Some("prepare"),
-        Outcome::Compensated | Outcome::CompensationIncomplete => report
-            .targets
-            .iter()
-            .any(|target| matches!(target.verify, StepOutcome::Failed(_)))
-            .then_some("verify")
-            .or(Some("activate")),
-        Outcome::DeployedCleanupIncomplete => Some("cleanup"),
+fn failure_phase_name(phase: super::transaction::FailurePhase) -> &'static str {
+    match phase {
+        super::transaction::FailurePhase::Prepare => "prepare",
+        super::transaction::FailurePhase::Activate => "activate",
+        super::transaction::FailurePhase::Verify => "verify",
+        super::transaction::FailurePhase::Compensate => "compensate",
+        super::transaction::FailurePhase::Cleanup => "cleanup",
     }
 }
 
