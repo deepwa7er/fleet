@@ -4,13 +4,16 @@
 //! provide typed values and complete scripts; this module owns the child-process
 //! shapes used to deliver them.
 
+use std::fs::File;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
-use crate::subprocess::{run_captured_timeout, run_streamed, CapturedOutput, LogSink};
+use crate::subprocess::{
+    run_captured_timeout, run_captured_timeout_file, run_streamed, CapturedOutput, LogSink,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RsyncKind {
@@ -69,20 +72,17 @@ pub fn ssh_script_capture(host: &str, script: &str, timeout: Duration) -> Result
     run_captured_timeout(command, Some(script.as_bytes()), timeout).context("spawning ssh")
 }
 
-/// Execute a remote command while feeding bytes to its stdin. Successful
-/// commands stay silent; failures include the captured stderr. This is the
-/// transport for plumbing payloads such as deploy transcripts, where streaming
-/// the payload back into the transcript would be recursive.
-pub fn ssh_pipe_quiet(
+/// Execute a remote command with a file streamed directly to stdin.
+pub fn ssh_pipe_file_quiet(
     host: &str,
     remote_command: &str,
-    stdin_data: &[u8],
+    stdin: File,
     timeout: Duration,
 ) -> Result<()> {
     let mut command = Command::new("ssh");
     command.arg(host).arg(remote_command);
-    let output = run_captured_timeout(command, Some(stdin_data), timeout)
-        .context("running remote command")?;
+    let output =
+        run_captured_timeout_file(command, stdin, timeout).context("running remote command")?;
     if !output.status.success() {
         bail!("ssh exited {}: {}", output.status, output.stderr.trim());
     }

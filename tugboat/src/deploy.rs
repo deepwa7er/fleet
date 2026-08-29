@@ -10,6 +10,8 @@
 //! attached.
 
 use std::cell::RefCell;
+use std::fs::File;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -20,7 +22,7 @@ use uuid::Uuid;
 
 use crate::events;
 use crate::git;
-use crate::manifest::{ArtifactKind, BuildRequirement, Health, Manifest, Verify};
+use crate::manifest::{self, ArtifactKind, BuildRequirement, Health, Manifest, Verify};
 use crate::subprocess::{run_streamed, LogSink};
 use crate::transport::{self, shell_quote as shq};
 
@@ -42,25 +44,56 @@ struct Stamp {
 /// whether the live sink is the CLI's stdout or the daemon's SSE channel.
 struct CapturingSink<'a> {
     inner: &'a dyn LogSink,
-    lines: Mutex<Vec<String>>,
+    capture: Mutex<CaptureState>,
 }
+
+struct CaptureState {
+    file: File,
+    error: Option<String>,
+}
+
 impl<'a> CapturingSink<'a> {
-    fn new(inner: &'a dyn LogSink) -> Self {
-        Self {
+    fn new(inner: &'a dyn LogSink) -> Result<Self> {
+        Ok(Self {
             inner,
-            lines: Mutex::new(Vec::new()),
-        }
+            capture: Mutex::new(CaptureState {
+                file: tempfile::tempfile().context("creating deploy transcript spool")?,
+                error: None,
+            }),
+        })
     }
-    /// The accumulated transcript as one newline-joined string.
-    fn transcript(&self) -> String {
-        self.lines.lock().expect("transcript lock").join("\n")
+
+    fn into_reader(self) -> Result<File> {
+        let mut capture = self
+            .capture
+            .into_inner()
+            .map_err(|_| anyhow::anyhow!("deploy transcript lock was poisoned"))?;
+        if let Some(error) = capture.error {
+            bail!("writing deploy transcript spool: {error}");
+        }
+        capture
+            .file
+            .flush()
+            .context("flushing deploy transcript spool")?;
+        capture
+            .file
+            .seek(SeekFrom::Start(0))
+            .context("rewinding deploy transcript spool")?;
+        Ok(capture.file)
     }
 }
+
 impl LogSink for CapturingSink<'_> {
     fn line(&self, line: &str) {
+        let Ok(mut capture) = self.capture.lock() else {
+            self.inner.line(line);
+            return;
+        };
         self.inner.line(line);
-        if let Ok(mut lines) = self.lines.lock() {
-            lines.push(line.to_owned());
+        if capture.error.is_none() {
+            if let Err(error) = writeln!(capture.file, "{line}") {
+                capture.error = Some(error.to_string());
+            }
         }
     }
 }
@@ -72,11 +105,11 @@ impl LogSink for CapturingSink<'_> {
 fn with_transcript<T>(
     live_log: &dyn LogSink,
     attempt: impl FnOnce(&dyn LogSink) -> Result<T>,
-    finalize: impl FnOnce(&str),
+    finalize: impl FnOnce(Result<File>),
 ) -> Result<T> {
-    let capture = CapturingSink::new(live_log);
+    let capture = CapturingSink::new(live_log)?;
     let outcome = attempt(&capture);
-    finalize(&capture.transcript());
+    finalize(capture.into_reader());
     outcome
 }
 
@@ -86,14 +119,6 @@ fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
-}
-
-/// A temp directory that is removed when this guard drops.
-struct WorkDir(PathBuf);
-impl Drop for WorkDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
 }
 
 /// Where a deploy gets the code it builds and ships.
@@ -186,40 +211,53 @@ struct PlannedSource {
 }
 
 impl<'a> DeploymentPlan<'a> {
-    fn create(
+    fn working_tree(
         manifest: &'a Manifest,
         project_dir: &Path,
-        source: Source,
+        skip_build: bool,
         at: u64,
         workdir: PathBuf,
         nonce: &str,
-        log: &dyn LogSink,
-    ) -> Result<Self> {
-        let resolved = match &source {
-            Source::WorkingTree { skip_build } => {
-                let root = working_tree_workspace(project_dir);
-                PlannedSource {
-                    build_dir: project_dir.to_path_buf(),
-                    checkout_root: root,
-                    stamp: build_stamp(project_dir, at),
-                    skip_build: *skip_build,
-                    worktree: None,
-                }
-            }
-            Source::DefaultBranch => {
-                let prepared = prepare_default_branch(project_dir, at, log)?;
-                PlannedSource {
-                    build_dir: prepared.build_dir,
-                    checkout_root: prepared.checkout_root,
-                    stamp: Some(prepared.stamp),
-                    skip_build: false,
-                    worktree: Some(prepared.guard),
-                }
-            }
+    ) -> Self {
+        let resolved = PlannedSource {
+            build_dir: project_dir.to_path_buf(),
+            checkout_root: working_tree_workspace(project_dir),
+            stamp: build_stamp(project_dir, at),
+            skip_build,
+            worktree: None,
         };
-        Ok(Self::resolve(
-            manifest, source, at, workdir, nonce, resolved,
-        ))
+        Self::resolve(
+            manifest,
+            Source::WorkingTree { skip_build },
+            at,
+            workdir,
+            nonce,
+            resolved,
+        )
+    }
+
+    fn default_branch(
+        manifest: &'a Manifest,
+        prepared: Prepared,
+        at: u64,
+        workdir: PathBuf,
+        nonce: &str,
+    ) -> Self {
+        let resolved = PlannedSource {
+            build_dir: prepared.build_dir,
+            checkout_root: prepared.checkout_root,
+            stamp: Some(prepared.stamp),
+            skip_build: false,
+            worktree: Some(prepared.guard),
+        };
+        Self::resolve(
+            manifest,
+            Source::DefaultBranch,
+            at,
+            workdir,
+            nonce,
+            resolved,
+        )
     }
 
     /// Resolve the plan without fetching, changing refs, or creating a
@@ -272,9 +310,11 @@ impl<'a> DeploymentPlan<'a> {
             .artifacts
             .iter()
             .map(|artifact| PlannedArtifact {
-                src: resolved
-                    .build_dir
-                    .join(subst(&artifact.src, &workdir_string, &checkout_string)),
+                src: resolved.build_dir.join(subst(
+                    &artifact.src,
+                    &workdir_string,
+                    &checkout_string,
+                )),
                 manifest: artifact,
             })
             .collect();
@@ -499,19 +539,35 @@ fn prepare_default_branch(project_dir: &Path, at: u64, log: &dyn LogSink) -> Res
     })
 }
 
+fn load_default_branch_manifest(
+    manifest_path: &Path,
+    prepared: &Prepared,
+    overrides: &manifest::RuntimeOverrides,
+) -> Result<Manifest> {
+    let source_manifest_path = prepared.build_dir.join(
+        manifest_path
+            .file_name()
+            .context("manifest path has no filename")?,
+    );
+    manifest::load_with_overrides(&source_manifest_path, overrides)
+}
+
 pub fn run(
-    manifest: &Manifest,
+    manifest_path: &Path,
     project_dir: &Path,
     source: Source,
     dry_run: bool,
+    host_override: Option<&str>,
     log: &dyn LogSink,
 ) -> Result<()> {
-    let workdir =
-        std::env::temp_dir().join(format!("tugboat-{}-{}", manifest.name, std::process::id()));
+    let overrides = manifest::runtime_overrides(manifest_path, host_override)?;
+    let request_manifest = manifest::load_with_overrides(manifest_path, &overrides)?;
 
     if dry_run {
+        let workdir =
+            std::env::temp_dir().join(format!("tugboat-{}-<workdir>", request_manifest.name));
         let plan = DeploymentPlan::preview(
-            manifest,
+            &request_manifest,
             project_dir,
             source,
             now_unix(),
@@ -528,8 +584,8 @@ pub fn run(
     let at = now_unix();
     let mut recorder = events::Recorder::new(
         at,
-        &manifest.name,
-        manifest.host(),
+        &request_manifest.name,
+        request_manifest.host(),
         match source {
             Source::WorkingTree { .. } => "working_tree",
             Source::DefaultBranch => "default_branch",
@@ -538,36 +594,54 @@ pub fn run(
 
     let nonce = Uuid::new_v4().simple().to_string();
     let transcript_id = RefCell::new(deploy_id(at, None, &nonce));
+    let transcript_target = RefCell::new((
+        request_manifest.host().to_owned(),
+        request_manifest.name.clone(),
+    ));
     let outcome = with_transcript(
         log,
         |captured| {
-            std::fs::create_dir_all(&workdir)
-                .with_context(|| format!("creating work dir {}", workdir.display()))?;
-            let _workdir = WorkDir(workdir.clone());
-            let plan = DeploymentPlan::create(
-                manifest,
-                project_dir,
-                source,
-                at,
-                workdir,
-                &nonce,
-                captured,
-            )?;
-            transcript_id.replace(plan.id.clone());
-            if let Some(stamp) = &plan.stamp {
-                recorder.stamped(
-                    &stamp.sha,
-                    &stamp.short,
-                    stamp.branch.as_deref(),
-                    stamp.dirty,
-                );
+            let workdir = deploy_workdir(&request_manifest.name)?;
+            let workdir_path = workdir.path().to_path_buf();
+            match source {
+                Source::WorkingTree { skip_build } => {
+                    let plan = DeploymentPlan::working_tree(
+                        &request_manifest,
+                        project_dir,
+                        skip_build,
+                        at,
+                        workdir_path,
+                        &nonce,
+                    );
+                    record_plan(&plan, &transcript_id, &mut recorder);
+                    execute(&plan, captured, &mut recorder)
+                }
+                Source::DefaultBranch => {
+                    let prepared = prepare_default_branch(project_dir, at, captured)?;
+                    let source_manifest =
+                        load_default_branch_manifest(manifest_path, &prepared, &overrides)?;
+                    recorder.identity(&source_manifest.name, source_manifest.host());
+                    transcript_target.replace((
+                        source_manifest.host().to_owned(),
+                        source_manifest.name.clone(),
+                    ));
+                    let plan = DeploymentPlan::default_branch(
+                        &source_manifest,
+                        prepared,
+                        at,
+                        workdir_path,
+                        &nonce,
+                    );
+                    record_plan(&plan, &transcript_id, &mut recorder);
+                    execute(&plan, captured, &mut recorder)
+                }
             }
-            execute(&plan, captured, &mut recorder)
         },
         |transcript| {
+            let target = transcript_target.borrow();
             persist_transcript(
-                manifest.host(),
-                &manifest.name,
+                &target.0,
+                &target.1,
                 &transcript_id.borrow(),
                 transcript,
                 log,
@@ -576,6 +650,29 @@ pub fn run(
     );
     events::record(&recorder.finish(&outcome), log);
     outcome
+}
+
+fn deploy_workdir(name: &str) -> Result<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .prefix(&format!("tugboat-{name}-"))
+        .tempdir()
+        .context("creating deploy work directory")
+}
+
+fn record_plan(
+    plan: &DeploymentPlan<'_>,
+    transcript_id: &RefCell<String>,
+    recorder: &mut events::Recorder,
+) {
+    transcript_id.replace(plan.id.clone());
+    if let Some(stamp) = &plan.stamp {
+        recorder.stamped(
+            &stamp.sha,
+            &stamp.short,
+            stamp.branch.as_deref(),
+            stamp.dirty,
+        );
+    }
 }
 
 fn execute(plan: &DeploymentPlan<'_>, log: &dyn LogSink, rec: &mut events::Recorder) -> Result<()> {
@@ -767,7 +864,22 @@ const TRANSCRIPT_KEEP: usize = 50;
 /// Best-effort: any failure is surfaced as a warning and otherwise ignored, so a
 /// transcript hiccup can never change a deploy's outcome. The transcript arrives
 /// on stdin (→ `tee`), so its contents never have to be shell-quoted.
-fn persist_transcript(host: &str, name: &str, id: &str, content: &str, log: &dyn LogSink) {
+fn persist_transcript(
+    host: &str,
+    name: &str,
+    id: &str,
+    transcript: Result<File>,
+    log: &dyn LogSink,
+) {
+    let transcript = match transcript {
+        Ok(transcript) => transcript,
+        Err(error) => {
+            log.line(&format!(
+                "    warning: could not finalize deploy transcript: {error:#}"
+            ));
+            return;
+        }
+    };
     let dir = format!("/var/lib/tugboat/{name}");
     let file = format!("{dir}/{id}.log");
     let remote = format!(
@@ -780,7 +892,7 @@ fn persist_transcript(host: &str, name: &str, id: &str, content: &str, log: &dyn
         keep = TRANSCRIPT_KEEP + 1,
     );
     if let Err(err) =
-        transport::ssh_pipe_quiet(host, &remote, content.as_bytes(), Duration::from_secs(30))
+        transport::ssh_pipe_file_quiet(host, &remote, transcript, Duration::from_secs(30))
     {
         log.line(&format!(
             "    warning: could not persist deploy transcript: {err}"
@@ -1096,11 +1208,7 @@ mod tests {
                 && r.bytes()
                     .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
         };
-        assert!(is_valid(&deploy_id(
-            1_718_900_000,
-            Some(&stamp),
-            nonce
-        )));
+        assert!(is_valid(&deploy_id(1_718_900_000, Some(&stamp), nonce)));
         assert!(is_valid(&deploy_id(42, None, nonce)));
         assert_ne!(
             deploy_id(42, Some(&stamp), "0000000000000000"),
@@ -1151,6 +1259,16 @@ mod tests {
     }
 
     #[test]
+    fn each_deploy_gets_a_fresh_work_directory() {
+        let first = deploy_workdir("service").unwrap();
+        std::fs::write(first.path().join("stale-artifact"), "old").unwrap();
+        let second = deploy_workdir("service").unwrap();
+
+        assert_ne!(first.path(), second.path());
+        assert!(std::fs::read_dir(second.path()).unwrap().next().is_none());
+    }
+
+    #[test]
     fn dry_run_renders_the_same_resolved_plan_execution_consumes() {
         use crate::manifest::{Artifact, Build, Lighthouse};
 
@@ -1184,16 +1302,14 @@ mod tests {
             lighthouse: Lighthouse::default(),
         };
         let log = Collect(Mutex::new(Vec::new()));
-        let plan = DeploymentPlan::create(
+        let plan = DeploymentPlan::working_tree(
             &manifest,
             project.path(),
-            Source::WorkingTree { skip_build: false },
+            false,
             42,
             workdir.clone(),
             "0123456789abcdef",
-            &log,
-        )
-        .unwrap();
+        );
 
         assert_eq!(
             plan.build_cmd,
@@ -1281,8 +1397,76 @@ mod tests {
     }
 
     #[test]
+    fn default_branch_uses_its_committed_manifest_with_local_runtime_overrides() {
+        let base =
+            std::env::temp_dir().join(format!("tugboat-source-manifest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let origin = base.join("origin.git");
+        std::fs::create_dir_all(&origin).unwrap();
+        git(&origin, &["init", "-q", "--bare", "-b", "main"]);
+        let clone = base.join("clone");
+        git(&base, &["clone", "-q", "origin.git", "clone"]);
+        let service = clone.join("source-svc");
+        std::fs::create_dir_all(&service).unwrap();
+        let manifest_path = service.join("deploy.toml");
+        let manifest_text = |build: &str, artifact: &str| {
+            format!(
+                "name = \"source-svc\"\nhost = \"origin-host\"\n[build]\ncmd = \"{build}\"\n[[artifacts]]\nsrc = \"{artifact}\"\ndest = \"/tmp/source-svc\"\n"
+            )
+        };
+        std::fs::write(
+            &manifest_path,
+            manifest_text("origin build", "origin-artifact"),
+        )
+        .unwrap();
+        git(&clone, &["add", "."]);
+        git(&clone, &["commit", "-q", "-m", "init"]);
+        git(&clone, &["push", "-q", "origin", "main"]);
+
+        std::fs::write(
+            &manifest_path,
+            manifest_text("local build", "local-artifact"),
+        )
+        .unwrap();
+        std::fs::write(
+            service.join("deploy.local.toml"),
+            "host = \"runtime-host\"\n",
+        )
+        .unwrap();
+
+        struct Quiet;
+        impl LogSink for Quiet {
+            fn line(&self, _: &str) {}
+        }
+        let overrides = manifest::runtime_overrides(&manifest_path, Some("runtime-host")).unwrap();
+        let prepared = prepare_default_branch(&service, 42, &Quiet).unwrap();
+        let source_manifest =
+            load_default_branch_manifest(&manifest_path, &prepared, &overrides).unwrap();
+        let plan = DeploymentPlan::default_branch(
+            &source_manifest,
+            prepared,
+            42,
+            base.join("work"),
+            "nonce",
+        );
+
+        assert_eq!(plan.build_cmd, "origin build");
+        assert_eq!(
+            plan.artifacts[0].src,
+            plan.build_dir.join("origin-artifact")
+        );
+        assert_eq!(plan.manifest.host(), "runtime-host");
+        drop(plan);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn dry_run_of_default_branch_does_not_fetch_or_create_a_worktree() {
-        use crate::manifest::{Artifact, Build, Lighthouse};
+        struct Quiet;
+        impl LogSink for Quiet {
+            fn line(&self, _: &str) {}
+        }
 
         let base = std::env::temp_dir().join(format!("tugboat-preview-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
@@ -1305,32 +1489,21 @@ mod tests {
 
         let checkout = default_branch_layout(&service).unwrap().checkout_root;
         assert!(!checkout.exists());
-        let manifest = Manifest {
-            name: "preview-svc".to_owned(),
-            description: None,
-            host: Some("deepwa7er".to_owned()),
-            port: None,
-            state: None,
-            build: Build {
-                cmd: "true".to_owned(),
-                requirements: Vec::new(),
-            },
-            artifacts: vec![Artifact {
-                src: "artifact".to_owned(),
-                dest: "/tmp/preview-svc".to_owned(),
-                kind: ArtifactKind::File,
-                mode: "0755".to_owned(),
-            }],
-            health: None,
-            verify: None,
-            lighthouse: Lighthouse::default(),
-        };
-        struct Quiet;
-        impl LogSink for Quiet {
-            fn line(&self, _: &str) {}
-        }
-
-        run(&manifest, &service, Source::DefaultBranch, true, &Quiet).unwrap();
+        let manifest_path = service.join("deploy.toml");
+        std::fs::write(
+            &manifest_path,
+            "name = \"preview-svc\"\nhost = \"deepwa7er\"\n[build]\ncmd = \"true\"\n[[artifacts]]\nsrc = \"artifact\"\ndest = \"/tmp/preview-svc\"\n",
+        )
+        .unwrap();
+        run(
+            &manifest_path,
+            &service,
+            Source::DefaultBranch,
+            true,
+            None,
+            &Quiet,
+        )
+        .unwrap();
         assert!(
             !checkout.exists(),
             "dry-run must not create its planned worktree"
@@ -1339,9 +1512,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// CapturingSink forwards to its inner sink and accumulates the transcript.
+    /// CapturingSink forwards to its inner sink and spools the transcript.
     #[test]
-    fn capturing_sink_tees_and_accumulates() {
+    fn capturing_sink_tees_and_spools() {
+        use std::io::Read;
+
         struct Collect(Mutex<Vec<String>>);
         impl LogSink for Collect {
             fn line(&self, line: &str) {
@@ -1349,10 +1524,15 @@ mod tests {
             }
         }
         let inner = Collect(Mutex::new(Vec::new()));
-        let cap = CapturingSink::new(&inner);
+        let cap = CapturingSink::new(&inner).unwrap();
         cap.line("first");
         cap.line("second");
-        assert_eq!(cap.transcript(), "first\nsecond");
+        let mut transcript = String::new();
+        cap.into_reader()
+            .unwrap()
+            .read_to_string(&mut transcript)
+            .unwrap();
+        assert_eq!(transcript, "first\nsecond\n");
         assert_eq!(inner.0.lock().unwrap().as_slice(), ["first", "second"]);
     }
 
@@ -1373,7 +1553,11 @@ mod tests {
                 bail!("build failed")
             },
             |transcript| {
-                assert_eq!(transcript, "build output before failure");
+                use std::io::Read;
+                let mut transcript = transcript.unwrap();
+                let mut text = String::new();
+                transcript.read_to_string(&mut text).unwrap();
+                assert_eq!(text, "build output before failure\n");
                 finalized.set(true);
             },
         );

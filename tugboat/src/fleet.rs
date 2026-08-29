@@ -13,7 +13,7 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
-use crate::{deploy, git, manifest};
+use crate::{deploy, git};
 
 /// The fleet manifest, `fleet.toml`.
 #[derive(Debug, Clone, Deserialize)]
@@ -445,16 +445,14 @@ pub fn deploy(
 
     for d in &deployables {
         println!("\n════ {} ════", d.name);
-        let result = (|| -> Result<()> {
-            let manifest = manifest::load(&d.manifest_path, None)?;
-            deploy::run(
-                &manifest,
-                &d.dir,
-                deploy::Source::DefaultBranch,
-                dry_run,
-                &crate::subprocess::StdoutSink,
-            )
-        })();
+        let result = deploy::run(
+            &d.manifest_path,
+            &d.dir,
+            deploy::Source::DefaultBranch,
+            dry_run,
+            None,
+            &crate::subprocess::StdoutSink,
+        );
 
         match result {
             Ok(()) => deployed.push(d.name.clone()),

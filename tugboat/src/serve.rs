@@ -36,7 +36,6 @@ use crate::deploy;
 use crate::docs;
 use crate::fleet::{self, Fleet};
 use crate::git;
-use crate::manifest;
 use crate::scope;
 use crate::subprocess::LogSink;
 use crate::version::BuildInfo;
@@ -719,8 +718,14 @@ fn start_deploy_job(
             let project_dir = manifest_path
                 .parent()
                 .context("manifest has no parent directory")?;
-            let manifest = manifest::load(&manifest_path, None)?;
-            deploy::run(&manifest, project_dir, deploy::Source::DefaultBranch, false, &sink)
+            deploy::run(
+                &manifest_path,
+                project_dir,
+                deploy::Source::DefaultBranch,
+                false,
+                None,
+                &sink,
+            )
         })();
         finish(&job, result);
         state_for_task.in_flight.lock().unwrap().remove(&name_for_task);

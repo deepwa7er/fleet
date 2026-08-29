@@ -150,7 +150,7 @@ fn default_verify_interval() -> u64 {
     2000
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Lighthouse {
     /// Enroll the unit in `lighthouse.target` so lighthouse discovers it.
@@ -160,7 +160,7 @@ pub struct Lighthouse {
 
 /// The untracked `deploy.local.toml` overlay. Every field is optional and, when
 /// present, replaces the corresponding value from `deploy.toml`.
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Clone, Default)]
 #[serde(deny_unknown_fields)]
 struct LocalOverride {
     #[serde(default)]
@@ -173,71 +173,98 @@ struct LocalOverride {
     lighthouse: Option<Lighthouse>,
 }
 
+/// Machine-local deploy settings, kept separate from the committed manifest so
+/// a default-branch deployment can apply them to the manifest from that branch
+/// without importing build or installation fields from the working tree.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RuntimeOverrides {
+    local: LocalOverride,
+    host: Option<String>,
+}
+
 impl Manifest {
-    /// The resolved SSH host. Guaranteed present after [`load`] validates it.
+    /// The resolved SSH host. Guaranteed present after runtime loading.
     pub fn host(&self) -> &str {
         self.host.as_deref().expect("host validated in load()")
     }
 }
 
 /// Read and deserialize a `deploy.toml` without overlay, host resolution, or
-/// validation — the shared first step of [`load`] and [`parse`].
+/// validation — the shared first step of runtime loading and [`parse`].
 fn read_raw(path: &Path) -> Result<Manifest> {
     let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
 /// Parse a `deploy.toml` for inspection (e.g. doc generation): structural
-/// validation only. Unlike [`load`], it applies no `deploy.local.toml` overlay
-/// and does not require a deploy host — a host is a *deploy*-time concern, not a
-/// property of the service being described.
+/// validation only. It applies no `deploy.local.toml` overlay and does not
+/// require a deploy host — a host is a *deploy*-time concern, not a property of
+/// the service being described.
 pub fn parse(path: &Path) -> Result<Manifest> {
     let manifest = read_raw(path)?;
     validate_structure(&manifest)?;
     Ok(manifest)
 }
 
-/// Load `deploy.toml`, apply the optional `deploy.local.toml` overlay and the
-/// `--host` override, then validate (structure and a resolved host).
-pub fn load(path: &Path, host_override: Option<&str>) -> Result<Manifest> {
-    let mut manifest = read_raw(path)?;
-
+/// Read only the machine-local settings associated with a manifest path.
+pub(crate) fn runtime_overrides(
+    path: &Path,
+    host_override: Option<&str>,
+) -> Result<RuntimeOverrides> {
     let local_path = path.with_file_name("deploy.local.toml");
-    if local_path.exists() {
+    let local = if local_path.exists() {
         let local_text = fs::read_to_string(&local_path)
             .with_context(|| format!("reading {}", local_path.display()))?;
-        let local: LocalOverride = toml::from_str(&local_text)
-            .with_context(|| format!("parsing {}", local_path.display()))?;
-        if local.host.is_some() {
-            manifest.host = local.host;
-        }
-        if local.health.is_some() {
-            manifest.health = local.health;
-        }
-        if local.verify.is_some() {
-            manifest.verify = local.verify;
-        }
-        if let Some(lighthouse) = local.lighthouse {
-            manifest.lighthouse = lighthouse;
-        }
-    }
+        toml::from_str(&local_text).with_context(|| format!("parsing {}", local_path.display()))?
+    } else {
+        LocalOverride::default()
+    };
 
     // Host precedence: --host > TUGBOAT_HOST > overlay/manifest.
-    if let Some(host) = host_override {
-        manifest.host = Some(host.to_string());
+    let host = if let Some(host) = host_override {
+        Some(host.to_owned())
     } else if let Ok(host) = std::env::var("TUGBOAT_HOST") {
         if !host.is_empty() {
-            manifest.host = Some(host);
+            Some(host)
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
+    Ok(RuntimeOverrides { local, host })
+}
 
+/// Load and validate a committed manifest with previously captured local
+/// runtime settings.
+pub(crate) fn load_with_overrides(path: &Path, overrides: &RuntimeOverrides) -> Result<Manifest> {
+    let manifest = read_raw(path)?;
+    finish_load(manifest, overrides)
+}
+
+fn finish_load(mut manifest: Manifest, overrides: &RuntimeOverrides) -> Result<Manifest> {
+    if let Some(host) = &overrides.local.host {
+        manifest.host = Some(host.clone());
+    }
+    if let Some(health) = &overrides.local.health {
+        manifest.health = Some(health.clone());
+    }
+    if let Some(verify) = &overrides.local.verify {
+        manifest.verify = Some(verify.clone());
+    }
+    if let Some(lighthouse) = &overrides.local.lighthouse {
+        manifest.lighthouse = lighthouse.clone();
+    }
+    if let Some(host) = &overrides.host {
+        manifest.host = Some(host.clone());
+    }
     validate_structure(&manifest)?;
     validate_host(&manifest)?;
     Ok(manifest)
 }
 
 /// Validate everything intrinsic to the service description — independent of any
-/// particular deploy. Shared by [`parse`] and [`load`].
+/// particular deploy. Shared by [`parse`] and runtime loading.
 fn validate_structure(manifest: &Manifest) -> Result<()> {
     if !valid_service_name(&manifest.name) {
         bail!(
@@ -299,8 +326,8 @@ fn validate_structure(manifest: &Manifest) -> Result<()> {
     Ok(())
 }
 
-/// Validate that a deploy host has been resolved — required by [`load`] (a
-/// deploy), but not by [`parse`] (inspection).
+/// Validate that a deploy host has been resolved — required at deploy time, but
+/// not by [`parse`] (inspection).
 fn validate_host(manifest: &Manifest) -> Result<()> {
     let Some(host) = manifest.host.as_deref().filter(|host| !host.is_empty()) else {
         bail!("manifest: a host is required (set `host`, `--host`, or TUGBOAT_HOST)");
@@ -431,6 +458,47 @@ dest = "/usr/local/bin/example"
         assert!(validate_host(&parsed).is_ok());
         parsed.host = Some("-oProxyCommand=bad".to_owned());
         assert!(validate_host(&parsed).is_err());
+    }
+
+    #[test]
+    fn runtime_overrides_do_not_import_working_tree_build_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let working = dir.path().join("working");
+        let source = dir.path().join("source");
+        std::fs::create_dir_all(&working).unwrap();
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            working.join("deploy.toml"),
+            VALID.replace("cargo build", "local build"),
+        )
+        .unwrap();
+        std::fs::write(
+            working.join("deploy.local.toml"),
+            "[health]\nurl = \"http://127.0.0.1:9000/health\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("deploy.toml"),
+            VALID
+                .replace("cargo build", "origin build")
+                .replace("target/release/example", "origin/example"),
+        )
+        .unwrap();
+
+        let overrides =
+            runtime_overrides(&working.join("deploy.toml"), Some("runtime-host")).unwrap();
+        let loaded = load_with_overrides(&source.join("deploy.toml"), &overrides).unwrap();
+
+        assert_eq!(loaded.build.cmd, "origin build");
+        assert_eq!(loaded.artifacts[0].src, "origin/example");
+        assert_eq!(loaded.host(), "runtime-host");
+        assert_eq!(
+            loaded
+                .health
+                .as_ref()
+                .and_then(|health| health.url.as_deref()),
+            Some("http://127.0.0.1:9000/health")
+        );
     }
 
     #[test]

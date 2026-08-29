@@ -34,13 +34,14 @@ use crate::transaction::Outcome;
 
 /// Current event schema version. Bump when the shape changes; readers should
 /// ignore versions they don't know rather than misread them.
-pub const EVENT_VERSION: u32 = 2;
+pub const EVENT_VERSION: u32 = 3;
 
 /// Where the fallible pipeline was when it ended. The transaction itself has a
 /// separate typed [`Outcome`], so this stage never has to imply whether
 /// compensation succeeded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
+    Source,
     Build,
     Artifacts,
     Ship,
@@ -50,6 +51,7 @@ pub enum Stage {
 impl Stage {
     fn as_str(self) -> &'static str {
         match self {
+            Stage::Source => "source",
             Stage::Build => "build",
             Stage::Artifacts => "artifacts",
             Stage::Ship => "ship",
@@ -132,11 +134,18 @@ impl Recorder {
             short: None,
             branch: None,
             dirty: false,
-            stage: Stage::Build,
+            stage: Stage::Source,
             build_ms: None,
             transaction_ms: None,
             transaction_outcome: None,
         }
+    }
+
+    /// Replace provisional request identity with the manifest identity resolved
+    /// from the source being deployed.
+    pub fn identity(&mut self, name: &str, host: &str) {
+        self.name = name.to_owned();
+        self.host = host.to_owned();
     }
 
     /// Record which commit the deploy resolved to, once source prep has run.
@@ -173,7 +182,7 @@ impl Recorder {
             Stage::Install => self.transaction_ms = Some(ms),
             // Verifying artifacts exist is a stat() per artifact; timing it
             // would measure nothing.
-            Stage::Artifacts | Stage::Ship => {}
+            Stage::Source | Stage::Artifacts | Stage::Ship => {}
         }
     }
 
@@ -294,6 +303,9 @@ mod tests {
 
     #[test]
     fn failure_is_attributed_to_the_stage_that_was_running() {
+        let value = json(&recorder().finish(&Err(anyhow::anyhow!("fetch failed"))));
+        assert_eq!(value["stage"], "source");
+
         let mut rec = recorder();
         rec.entering(Stage::Build);
         let value = json(&rec.finish(&Err(anyhow::anyhow!("build failed"))));
@@ -305,6 +317,15 @@ mod tests {
         rec.entering(Stage::Install);
         let value = json(&rec.finish(&Err(anyhow::anyhow!("remote install failed"))));
         assert_eq!(value["stage"], "install");
+    }
+
+    #[test]
+    fn resolved_manifest_replaces_provisional_request_identity() {
+        let mut rec = recorder();
+        rec.identity("origin-name", "origin-host");
+        let value = json(&rec.finish(&Ok(())));
+        assert_eq!(value["name"], "origin-name");
+        assert_eq!(value["host"], "origin-host");
     }
 
     #[test]

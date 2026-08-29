@@ -49,10 +49,12 @@ tugboat deploy --working-tree --skip-build   # …and reuse its existing build
 
 By default `tugboat deploy` ships **origin's default branch**: it fetches
 `origin`, checks the default branch (`main`/…) out into a fresh **detached
-worktree**, and builds *that*. The deploy is therefore reproducible from committed
-history and **independent of whatever branch the working tree happens to be on** —
-so a stray `git checkout`, or the drydock worker leaving a repo parked on a feature
-branch, can never change what ships. The worktree is removed when the deploy ends.
+worktree**, loads that checkout's committed `deploy.toml`, and builds *that*.
+Only typed runtime settings from `deploy.local.toml`, `--host`, and
+`TUGBOAT_HOST` cross into the plan. Build commands, artifacts, destinations, and
+service identity therefore come from the same commit as the source, independent
+of whichever branch the working tree happens to be on. The worktree and unique,
+initially empty build directory are removed when the deploy ends.
 
 For local iteration or to smoke-test a branch on the VPS before merging, pass
 `--working-tree`: it builds the current checkout exactly as it is (current branch,

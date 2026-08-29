@@ -4,6 +4,7 @@
 //! deployer, documentation shipper, and HTTP daemon can share process plumbing
 //! without depending on one another's orchestration modules.
 
+use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::process::{Command, ExitStatus, Stdio};
 use std::time::Duration;
@@ -40,12 +41,10 @@ pub struct CapturedOutput {
 /// Regular OS pipes can deadlock when a parent waits before draining a verbose
 /// child. Temporary files keep the wait bounded regardless of output volume.
 pub fn run_captured_timeout(
-    mut command: Command,
+    command: Command,
     stdin_data: Option<&[u8]>,
     timeout: Duration,
 ) -> Result<CapturedOutput> {
-    let mut stdout = tempfile::tempfile().context("creating stdout capture")?;
-    let mut stderr = tempfile::tempfile().context("creating stderr capture")?;
     let stdin = if let Some(data) = stdin_data {
         let mut file = tempfile::tempfile().context("creating stdin buffer")?;
         file.write_all(data).context("buffering child stdin")?;
@@ -55,6 +54,26 @@ pub fn run_captured_timeout(
     } else {
         Stdio::null()
     };
+    run_captured_timeout_with_stdin(command, stdin, timeout)
+}
+
+/// Run a child with a file connected directly to stdin and a hard deadline.
+/// The file is consumed without first copying it into memory.
+pub fn run_captured_timeout_file(
+    command: Command,
+    stdin: File,
+    timeout: Duration,
+) -> Result<CapturedOutput> {
+    run_captured_timeout_with_stdin(command, Stdio::from(stdin), timeout)
+}
+
+fn run_captured_timeout_with_stdin(
+    mut command: Command,
+    stdin: Stdio,
+    timeout: Duration,
+) -> Result<CapturedOutput> {
+    let mut stdout = tempfile::tempfile().context("creating stdout capture")?;
+    let mut stderr = tempfile::tempfile().context("creating stderr capture")?;
     command
         .stdout(Stdio::from(
             stdout.try_clone().context("cloning stdout capture")?,
@@ -179,6 +198,20 @@ mod tests {
         assert!(output.status.success());
         assert_eq!(output.stdout, "out:value");
         assert_eq!(output.stderr, "err:value");
+    }
+
+    #[test]
+    fn captured_process_streams_file_stdin() {
+        let mut stdin = tempfile::tempfile().unwrap();
+        stdin.write_all(b"value\n").unwrap();
+        stdin.seek(SeekFrom::Start(0)).unwrap();
+        let mut command = Command::new("sh");
+        command.args(["-c", "read -r value; printf '%s' \"$value\""]);
+
+        let output = run_captured_timeout_file(command, stdin, Duration::from_secs(1)).unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout, "value");
     }
 
     #[test]

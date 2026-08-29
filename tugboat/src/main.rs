@@ -304,8 +304,6 @@ fn run_deploy(args: DeployArgs) -> Result<()> {
         .context("manifest has no parent directory")?
         .to_path_buf();
 
-    let manifest = manifest::load(&manifest_path, args.host.as_deref())?;
-
     let source = if args.working_tree {
         deploy::Source::WorkingTree { skip_build: args.skip_build }
     } else {
@@ -321,10 +319,11 @@ fn run_deploy(args: DeployArgs) -> Result<()> {
     // The daemon discovers deployables from their deploy.toml, so a new service
     // is fleet-visible the moment it has one — nothing to register here.
     deploy::run(
-        &manifest,
+        &manifest_path,
         &project_dir,
         source,
         args.dry_run,
+        args.host.as_deref(),
         &subprocess::StdoutSink,
     )
 }
