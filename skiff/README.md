@@ -66,23 +66,17 @@ Breakwater, or directly at `http://fedora.tailcfab97.ts.net:8120` on the
 tailnet. Breakwater must preserve HTTP Upgrade because all reads use the one
 WebSocket.
 
-## Complete the Rails cutover
+## Rails retirement (completed)
 
-The desktop installer deliberately leaves the old VPS deployment alone. Keep
-that rollback copy until the installer has committed **and** Breakwater has
-been deployed with its `skiff` route pointing at the desktop. Then retire the
-VPS copy from a machine with the `vps` SSH alias:
+The former Rails deployment and Node bridge have been retired from the VPS.
+Their container, image tag, systemd unit, `/opt/skiff` application directory,
+bridge resolver, runtime environment, secrets, and Lighthouse enrollment are
+not part of the live system. Do not restore them: DW-004's Rust `skiffd` and
+React client are the only current Skiff implementation.
 
-```sh
-ssh vps 'bash -s' < skiff/deploy/retire-vps.sh
-```
-
-The retirement script is idempotent and guarded. It requires the canonical
-`/healthz` endpoint to return Skiffd's exact `ok` response, refuses an unknown
-unit or any unexpected file under `/opt/skiff`, removes the Rails container,
-image tag, systemd unit, bridge resolver, runtime environment, secrets and
-Lighthouse enrollment, and preserves the Tugboat deployment ledger as
-historical evidence.
+`deploy/retire-vps.sh` remains as a guarded, idempotent record of the completed
+cleanup. It refuses unknown artifacts and preserves Tugboat's deployment ledger
+as historical evidence; it is not a Skiff deployment path.
 
 ## Security and failure behavior
 

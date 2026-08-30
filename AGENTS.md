@@ -13,6 +13,12 @@ Reference: [DW-001](docs/deepwater-style-guide.md) · [specimen](docs/deepwater-
 
 The card→branch→PR workflow was retired at the cutover (2026-08-23). Before working on `jj`, the `dw` CLI, the change/round/annotation model, the review in `skiff`, or the record/timeline, read [DW-002](docs/source-control-redesign.md) and [DW-003](docs/public-record.md) — they record alternatives that were tried and rejected, and re-deriving that reasoning costs more than reading it.
 
+Skiff's only live implementation is the Rust `skiffd` service and React client
+defined by [DW-004](docs/skiff-architecture.md). The former Rails application
+and Node bridge were deleted at the 2026-08-24 cutover and must not be restored
+or used as the basis for new work. Rails and bridge passages in DW-002 describe
+historical delivery only; DW-004 supersedes them operationally.
+
 ## Workflow — desktop curation or Mac manual jj
 
 For any fleet change, read `.agents/skills/fleet/SKILL.md` first. The Fedora
@@ -34,7 +40,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 TUGBOAT_FLEET=$PWD/fleet.toml cargo run -q -p tugboat -- fleet gen --check
 ```
 
-`fleet gen --check` verifies the generated registries (`breakwater/breakwater.toml`, `fleet-backup/state.sh`) still match each service's `deploy.toml`. Also `bun run build` in `<app>/web` for any web app touched — nothing else typechecks it. Also `cargo test && cargo clippy --all-targets -- -D warnings` from `ide/` if you touched `ide/` — it is its own Cargo workspace (heavy gpui deps, see `ide/README.md`), so the workspace-wide gates above never compile it. Also, for the SwiftPM packages — `loom/` (the macOS window manager), `filament/` (the Swift UI reconciler it renders through), and `shutter/` (the macOS screenshot tool) — no Cargo gate reaches any of them. Gate whichever you touched; loom depends on filament by path, so a filament change must be gated by both:
+`fleet gen --check` verifies the generated registries (`breakwater/breakwater.toml`, `fleet-backup/state.sh`) still match each service's `deploy.toml`. Also `bun run build` in `<app>/web` for any web app touched — nothing else typechecks it; for Skiff, run `(cd skiff/web && bun run build && bun run test)`. Also `cargo test && cargo clippy --all-targets -- -D warnings` from `ide/` if you touched `ide/` — it is its own Cargo workspace (heavy gpui deps, see `ide/README.md`), so the workspace-wide gates above never compile it. Also, for the SwiftPM packages — `loom/` (the macOS window manager), `filament/` (the Swift UI reconciler it renders through), and `shutter/` (the macOS screenshot tool) — no Cargo gate reaches any of them. Gate whichever you touched; loom depends on filament by path, so a filament change must be gated by both:
 
 ```bash
 (cd loom && make build)
@@ -52,7 +58,7 @@ Adjust the path to the Xcode that is actually installed. `loom` and `shutter` ha
 
 Skills live in `.agents/skills/<name>/SKILL.md`:
 
-- `fleet` — the workflow above, card → branch → PR → human merges
+- `fleet` — the workflow above, card → jj change → Skiff or editor review → human-approved landing
 - `fizzy` — the Fizzy card CLI: `cargo run -p fizzy -- boards | stream | show | create` (a workspace member, not a binary on `PATH`)
 - `pull-card` — shortcut: pull the most recent open card and summarize what closing it needs
 

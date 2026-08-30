@@ -146,12 +146,13 @@ cargo clippy --workspace --all-targets -- -D warnings
 TUGBOAT_FLEET=$PWD/fleet.toml cargo run -q -p tugboat -- fleet gen --check
 ```
 
-Plus the per-area gates when touched, unchanged from before: `bun run
-build` in `<app>/web`; `cargo test && cargo clippy --all-targets -- -D
-warnings` from `ide/`; `(cd loom && make build)`, `(cd filament && swift
-test)`, `(cd shutter && make build)` on macOS; `node --test
-bridge/test/*.test.js` from `skiff/` for the bridge; `bin/ci` from `skiff/`
-for Rails; `node --test timeline/test/` for `timeline/`.
+Plus the per-area gates when touched: `bun run build` in `<app>/web`;
+`(cd skiff/web && bun run build && bun run test)` for Skiff's React client
+(Skiff's Rust service is covered by the workspace gates); `cargo test && cargo
+clippy --all-targets -- -D warnings` from `ide/`; `(cd loom && make build)`,
+`(cd filament && swift test)`, `(cd shutter && make build)` on macOS; and
+`node --test timeline/test/` for `timeline/`. The former Skiff Rails app and
+Node bridge were deleted at the DW-004 cutover and have no gates.
 
 ## 5. Stop — the desktop human closes the curated loop
 
