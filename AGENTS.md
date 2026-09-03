@@ -19,6 +19,19 @@ and Node bridge were deleted at the 2026-08-24 cutover and must not be restored
 or used as the basis for new work. Rails and bridge passages in DW-002 describe
 historical delivery only; DW-004 supersedes them operationally.
 
+## Keep — the fleet's data warehouse (long-term direction)
+
+Keep ([DW-005](docs/keep.md)) is the fleet's central database and the long-term
+primary store for service data — the data warehouse, not just a backup target.
+Owner direction (2026-09-03): migrate as much service data into keep as
+possible, redesigning services to integrate where their current storage shape
+does not fit (file configs, non-SQLite stores), rather than leaving them on
+local files plus fleet-backup. DW-005's pilot order and v1 limits (Rust clients
+only) are the starting sequence, not the ceiling; its dated addenda carry the
+current scope. Caching and performance issues from a migration are solved as
+they arise, against measurements — never a speculative reason to keep data out
+of keep, and never via hacks (see Quality below).
+
 ## Workflow — desktop curation or Mac manual jj
 
 For any fleet change, read `.agents/skills/fleet/SKILL.md` first. The Fedora

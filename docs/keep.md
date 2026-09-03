@@ -211,6 +211,19 @@ read-through fallbacks while the store is down, lagoon enrollment, and any
 GraphQL-style query surface over the data. None of these change the
 foundation; all of them are easier after keep exists.
 
+## Direction (2026-09-03) — keep as the fleet's data warehouse
+
+Owner direction, recorded so agents stop re-deriving it: keep is the fleet's
+data warehouse and the long-term primary store for as much service data as
+possible. Services whose storage shape does not fit keep today are redesigned
+to integrate — ferry's TOML command file is the first such case — rather than
+left on local files plus fleet-backup. The pilot order above is the starting
+sequence, not the ceiling; v1's Rust-only client support constrains sequencing,
+not the destination. Caching and performance issues from a migration are solved
+as they arise, against measurements — not speculated about in advance, and
+never via workarounds. fleet-backup keeps covering whatever keep cannot yet
+reach and shrinks honestly as migrations land (see Architecture above).
+
 ## Provenance
 
 Designed in conversation, 2026-08-29. REV. A chose sqld; REV. B, same day,
