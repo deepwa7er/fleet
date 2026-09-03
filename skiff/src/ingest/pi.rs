@@ -14,10 +14,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde_json::{Value, json};
 
+use super::loop_services::{HealthSource, home};
 use super::source::{Discovered, ParsedBatch, Source};
 use crate::model::{Capabilities, Entry, Harness, SessionKey, SessionSummary, leaf_path};
-
-pub const SOURCE: &str = "pi";
 
 /// pi can rename a session, toggle its orchestrator, and switch model.
 pub const CAPABILITIES: Capabilities =
@@ -33,10 +32,6 @@ pub fn default_session_dir() -> PathBuf {
         return PathBuf::from(dir);
     }
     home().join(".pi").join("agent").join("sessions")
-}
-
-fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// A session id is the file's basename — pi's own naming, and the reason
@@ -91,7 +86,7 @@ impl Pi {
 
 impl Source for Pi {
     fn name(&self) -> &'static str {
-        SOURCE
+        HealthSource::Pi.as_str()
     }
 
     fn harness(&self) -> Harness {
@@ -131,16 +126,6 @@ impl Source for Pi {
         // written yet. Either way it must not appear in the list.
         let header = state?.get("header")?;
         Some(summarize(key, Some(header), entries))
-    }
-}
-
-impl ParsedBatch {
-    /// Carry the stored state forward when this batch produced none.
-    fn keeping(mut self, previous: Option<&Value>) -> Self {
-        if self.state.is_none() {
-            self.state = previous.cloned();
-        }
-        self
     }
 }
 

@@ -4,7 +4,7 @@ use tokio::sync::broadcast;
 
 use skiff::change_watch::ChangeWatch;
 use skiff::config::Config;
-use skiff::ingest::opencode::OpencodeIngest;
+use skiff::ingest::opencode::{LIVE_BUFFER, OpencodeClient, OpencodeIngest};
 use skiff::ingest::{Ingest, Topic};
 use skiff::run::Runs;
 use skiff::run::muse_exec::MuseConfig;
@@ -34,6 +34,10 @@ async fn main() -> Result<()> {
     // shut down that outliving the process would help.
     Ingest::new(store.clone(), config.sources(), topics.clone()).spawn();
 
+    // One client, built once and handed to both sides. Neither side builds one
+    // for the other to reclaim — that round-trip was the ownership tangle.
+    let opencode_client = OpencodeClient::new(&config.opencode_url);
+
     let runs = Runs::new(
         store.clone(),
         topics.clone(),
@@ -45,16 +49,21 @@ async fn main() -> Result<()> {
             session_dir: config.muse_dir(),
             session_dir_explicit: config.muse_session_dir.is_some(),
         },
-        &config.opencode_url,
+        opencode_client.clone(),
     );
 
+    // Live observations travel as broadcast, symmetric with how file-ingest
+    // topics drive `Runs::session_changed` below: the ingest publishes, the
+    // run side reacts, and neither names the other.
+    let (opencode_live, opencode_live_rx) = broadcast::channel(LIVE_BUFFER);
     OpencodeIngest::new(
-        runs.opencode().client(),
+        opencode_client,
         store.clone(),
-        runs.opencode(),
+        opencode_live,
         topics.clone(),
     )
     .spawn();
+    runs.opencode().spawn_forwarding(opencode_live_rx);
 
     // A finished reply is handed over to the transcript, and a sent prompt
     // retired, when the session's file actually changes — not when pi says so.

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use crate::ingest::loop_services::home;
 use crate::ingest::{muse, pi};
 
 /// The agent desk: harness sessions and fleet changes as live queries.
@@ -97,6 +98,5 @@ fn state_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("XDG_STATE_HOME") {
         return PathBuf::from(dir).join("skiff");
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
-    home.join(".local/state/skiff")
+    home().join(".local/state/skiff")
 }

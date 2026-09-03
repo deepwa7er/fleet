@@ -10,6 +10,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message as SocketMessage;
 
+use skiff::ingest::opencode::OpencodeClient;
 use skiff::ingest::source::Source;
 use skiff::ingest::{Ingest, muse};
 use skiff::run::Runs;
@@ -107,7 +108,7 @@ async fn start() -> Harness {
             session_dir: sessions,
             session_dir_explicit: true,
         },
-        "http://127.0.0.1:1",
+        OpencodeClient::new("http://127.0.0.1:1"),
     );
     tokio::spawn({
         let runs = runs.clone();

@@ -30,21 +30,17 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde_json::{Value, json};
 
+use super::loop_services::{HealthSource, home, truncate_tool_output};
 use super::source::{Discovered, ParsedBatch, Source};
 use crate::content::parse;
 use crate::model::{
     Capabilities, Entry, Harness, Message, Part, Role, SessionKey, SessionSummary, ToolStatus,
 };
 
-pub const SOURCE: &str = "muse";
-
 /// muse names its own sessions, has no orchestrator, and takes no model
 /// command — so the client offers none of those controls.
 pub const CAPABILITIES: Capabilities =
     Capabilities { rename: false, orchestrator: false, model: false };
-
-/// A single tool dump must not balloon a whole transcript. Same cap as pi.
-const TOOL_OUTPUT_LIMIT: usize = 2_000;
 
 /// A session with no name of its own is titled by its first prompt, as muse's
 /// own session index does — so no real session ever reads "untitled".
@@ -60,10 +56,6 @@ pub fn default_session_dir() -> PathBuf {
     data.join("muse").join("sessions")
 }
 
-fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
-}
-
 pub struct Muse {
     root: PathBuf,
 }
@@ -76,7 +68,7 @@ impl Muse {
 
 impl Source for Muse {
     fn name(&self) -> &'static str {
-        SOURCE
+        HealthSource::Muse.as_str()
     }
 
     fn harness(&self) -> Harness {
@@ -127,7 +119,7 @@ impl Source for Muse {
                 // makes the shared leaf-path walk a no-op rather than a
                 // special case.
                 parent_id: (seq > 0).then(|| previous_id(&entries, seq)),
-                mapped: map_record(&record, payload_type, model.as_deref()),
+                mapped: map_record(&record, model.as_deref()),
                 raw: record,
             });
         }
@@ -298,22 +290,10 @@ fn truncate_title(prompt: String) -> String {
     format!("{cut}…")
 }
 
-fn truncate_output(text: &str) -> String {
-    if text.len() <= TOOL_OUTPUT_LIMIT {
-        return text.to_owned();
-    }
-    let mut end = TOOL_OUTPUT_LIMIT;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &text[..end])
-}
-
 /// Map one record to the message it renders as, or `None` when it renders
 /// nothing — task lifecycle, context diagnostics, subagent control, cron, and
 /// the encrypted reasoning records.
-fn map_record(record: &Value, payload_type: &str, model: Option<&str>) -> Option<Message> {
-    let _ = payload_type;
+fn map_record(record: &Value, model: Option<&str>) -> Option<Message> {
     let event = run_event(record)?;
     let created = timestamp_ms(record);
     let record_id = record.get("id").and_then(Value::as_str).unwrap_or_default();
@@ -396,7 +376,7 @@ fn map_record(record: &Value, payload_type: &str, model: Option<&str>) -> Option
                                 .to_owned(),
                             name: String::new(),
                             status: ToolStatus::Completed,
-                            output: Some(truncate_output(
+                            output: Some(truncate_tool_output(
                                 result.get("text").and_then(Value::as_str).unwrap_or_default(),
                             )),
                         })

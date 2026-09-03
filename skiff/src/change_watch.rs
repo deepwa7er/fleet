@@ -6,15 +6,12 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use notify::{RecursiveMode, Watcher};
 use tokio::sync::broadcast;
 
 use crate::ingest::Topic;
-
-const DEBOUNCE: Duration = Duration::from_millis(50);
-const FLOOR_SCAN: Duration = Duration::from_secs(15);
+use crate::ingest::loop_services::{FLOOR_SCAN, Settled, WatchPolicy};
 
 pub struct ChangeWatch {
     store: change::Store,
@@ -57,10 +54,12 @@ impl ChangeWatch {
 
         self.announce_floor();
         loop {
-            match events_rx.recv_timeout(FLOOR_SCAN) {
-                Ok(first) => {
-                    let mut paths = event_paths(first);
-                    while let Ok(event) = events_rx.recv_timeout(DEBOUNCE) {
+            // The same watch-debounce-floor policy as the session ingest;
+            // only the settled payload differs (paths, not a rescan flag).
+            match WatchPolicy::FILE.wait(&events_rx) {
+                Settled::Events(events) => {
+                    let mut paths = HashSet::new();
+                    for event in events {
                         paths.extend(event_paths(event));
                     }
                     let mut announced = false;
@@ -72,8 +71,8 @@ impl ChangeWatch {
                         let _ = self.topics.send(Topic::ChangeList);
                     }
                 }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => self.announce_floor(),
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                Settled::Floor => self.announce_floor(),
+                Settled::Disconnected => {
                     watcher = None;
                     self.announce_floor();
                     std::thread::sleep(FLOOR_SCAN);

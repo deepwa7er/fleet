@@ -7,10 +7,11 @@ use anyhow::{Context, Result, bail};
 use tokio::sync::{Mutex, broadcast};
 
 use crate::ingest::Topic;
-use crate::ingest::opencode::OpencodeClient;
+use crate::ingest::loop_services::now_ms;
+use crate::ingest::opencode::{LiveEvent, OpencodeClient};
 use crate::model::{Harness, Message, SessionKey};
 
-use super::{LiveState, PendingPrompt, now_ms};
+use super::{LiveState, PendingPrompt};
 
 #[derive(Default)]
 struct State {
@@ -36,10 +37,6 @@ impl OpencodeRuns {
         })
     }
 
-    pub fn client(&self) -> Result<OpencodeClient, String> {
-        self.client.clone()
-    }
-
     pub async fn live(&self, session: &SessionKey) -> LiveState {
         self.sessions
             .lock()
@@ -47,6 +44,39 @@ impl OpencodeRuns {
             .get(session)
             .map(|state| state.live.clone())
             .unwrap_or_default()
+    }
+
+    /// Forward live observations from the ingest to this run state.
+    ///
+    /// The single home for the ingest→run half of the topic-driven wiring, so
+    /// the composition root and the integration harness share it instead of
+    /// each hand-rolling the loop. A lagged subscription heals on the next
+    /// poll: every poll re-observes every session it sees.
+    pub fn spawn_forwarding(
+        self: &Arc<Self>,
+        mut live: broadcast::Receiver<LiveEvent>,
+    ) -> tokio::task::JoinHandle<()> {
+        let runs = self.clone();
+        tokio::spawn(async move {
+            loop {
+                match live.recv().await {
+                    Ok(LiveEvent::Observed(observation)) => {
+                        runs
+                            .observed(
+                                observation.session,
+                                observation.pending,
+                                observation.users,
+                            )
+                            .await;
+                    }
+                    Ok(LiveEvent::Forgot(session)) => {
+                        runs.forgot(&session).await;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        })
     }
 
     pub async fn send(&self, session: &SessionKey, text: &str, client_id: &str) -> Result<()> {

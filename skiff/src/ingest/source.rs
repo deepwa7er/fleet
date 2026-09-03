@@ -1,9 +1,15 @@
-//! The seam between a harness's own format and the domain model (DW-004 §4).
+//! The seam between a harness's own file format and the domain model (DW-004 §4).
 //!
-//! One implementation per external truth. An adapter's whole job is to turn
-//! its native format into domain records; it never touches HTTP, SQL, or
-//! views, and nothing above it knows that pi writes a `parentId` tree while
-//! muse writes a flat event log.
+//! This is the **file-tailed** contract: one implementation per harness that
+//! owns session files (pi, muse). An adapter's whole job is to turn its native
+//! format into domain records; it never touches HTTP, SQL, or views, and
+//! nothing above it knows that pi writes a `parentId` tree while muse writes
+//! a flat event log.
+//!
+//! OpenCode is deliberately not a `Source`: it owns its sessions behind
+//! `opencode serve`, where there is no directory to tail, so
+//! [`super::opencode::OpencodeIngest`] polls HTTP/SSE instead. The two
+//! pipelines share the services in [`super::loop_services`], not this trait.
 //!
 //! ## Source state
 //!
@@ -39,6 +45,16 @@ pub struct ParsedBatch {
     /// What to remember for the next read. `None` leaves the stored value
     /// alone — the honest answer when this batch learned nothing new.
     pub state: Option<Value>,
+}
+
+impl ParsedBatch {
+    /// Carry the stored state forward when this batch produced none.
+    pub fn keeping(mut self, previous: Option<&Value>) -> Self {
+        if self.state.is_none() {
+            self.state = previous.cloned();
+        }
+        self
+    }
 }
 
 pub trait Source: Send + Sync {

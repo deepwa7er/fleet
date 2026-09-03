@@ -1,17 +1,23 @@
 //! Ingest: harness sources → the derived read model (DW-004 §4).
 //!
-//! One adapter per external truth. An adapter's whole job is to turn its
-//! native format into domain records; it never touches HTTP, SQL, or views.
-//! This module owns the loop around them — watching, watermarking, persisting,
-//! and announcing what changed.
+//! Two pipelines, honestly separated. [`Source`] is the **file-tailed**
+//! contract: pi and muse own session files, and this module owns the loop
+//! around those adapters — watching, watermarking, persisting, and announcing
+//! what changed. OpenCode owns its sessions behind `opencode serve`, where
+//! there is no directory to tail; [`opencode::OpencodeIngest`] is a deliberate
+//! second pipeline over HTTP and SSE that shares the loop *services* in
+//! [`loop_services`] (health, debounce/floor policy, stale forgetting) but not
+//! the loop itself.
 //!
 //! **A missing source degrades, it never kills.** A harness whose session
 //! directory is absent becomes a named error on that source, surfaced to the
 //! client. It is never a dead service and never a silently short session list.
 //!
 //! **Restart is not destructive.** Everything ingested here re-derives from
-//! files, so skiffd restarting loses nothing durable — the next scan converges.
+//! files (or refetches from OpenCode), so skiffd restarting loses nothing
+//! durable — the next scan converges.
 
+pub mod loop_services;
 pub mod muse;
 pub mod opencode;
 pub mod pi;
@@ -21,14 +27,14 @@ mod tail;
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use notify::{RecursiveMode, Watcher};
 use tokio::sync::broadcast;
 
-use crate::model::{SessionKey, SourceHealth};
+use crate::model::SessionKey;
 use crate::store::{SessionIngest, Store};
+use loop_services::{HealthSource, Settled, WatchPolicy, forget_sessions, record_health, stale_sessions};
 use source::{Discovered, Source};
 
 /// What changed. Subscriptions declare the topics they care about; an
@@ -52,19 +58,6 @@ pub enum Topic {
     /// A source's reachability changed.
     SourceHealth,
 }
-
-/// How long a burst of filesystem events is allowed to settle before a scan.
-/// A live harness writes many lines per second; coalescing them into one pass
-/// is the difference between a scan per line and a scan per burst.
-const DEBOUNCE: Duration = Duration::from_millis(50);
-
-/// A floor scan, run even when the watcher reports nothing.
-///
-/// This is a safety net, not the mechanism — inotify cannot watch a directory
-/// that does not exist yet, silently drops events under queue overflow, and
-/// does not work at all on some filesystems. Without a floor, any of those
-/// turns into a session list that is quietly and permanently stale.
-const FLOOR_SCAN: Duration = Duration::from_secs(15);
 
 pub struct Ingest {
     store: Store,
@@ -137,16 +130,16 @@ impl Ingest {
             }
 
             // Block until something happens or the floor expires, then let the
-            // burst settle before scanning again.
-            match events_rx.recv_timeout(FLOOR_SCAN) {
-                Ok(_) => while events_rx.recv_timeout(DEBOUNCE).is_ok() {},
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            // burst settle before scanning again. The policy lives in
+            // `loop_services` so the change watcher waits the same way.
+            match WatchPolicy::FILE.wait(&events_rx) {
+                Settled::Events(_) | Settled::Floor => {}
+                Settled::Disconnected => {
                     // The watcher was dropped or died. The floor scan is still
                     // a correct, if slower, ingest.
                     watching.clear();
                     watcher = None;
-                    std::thread::sleep(FLOOR_SCAN);
+                    std::thread::sleep(loop_services::FLOOR_SCAN);
                 }
             }
         }
@@ -176,16 +169,12 @@ impl Ingest {
                 Some(format!("{err:#}"))
             }
         };
-        let health =
-            SourceHealth { source: source.name().to_owned(), error, checked_ms: now_ms() };
-        let previous = self
-            .store
-            .source_health()?
-            .into_iter()
-            .find(|h| h.source == health.source)
-            .map(|h| h.error);
-        self.store.set_source_health(&health)?;
-        if previous.as_ref() != Some(&health.error) {
+        if record_health(
+            &self.store,
+            &self.topics,
+            HealthSource::for_harness(source.harness()),
+            error,
+        )? {
             changed.insert(Topic::SourceHealth);
         }
         Ok(())
@@ -214,13 +203,8 @@ impl Ingest {
             }
         }
 
-        for stale in self.store.sessions()? {
-            if stale.harness == source.harness() && !seen.contains(&stale.id) {
-                self.store.forget_session(&stale.id)?;
-                changed.insert(Topic::Session(stale.id));
-                changed.insert(Topic::SessionList);
-            }
-        }
+        let stale = stale_sessions(&self.store.sessions()?, source.harness(), &seen);
+        forget_sessions(&self.store, &stale, changed)?;
         Ok(())
     }
 
@@ -268,13 +252,6 @@ impl Ingest {
         self.store.set_cursor(source.name(), &cursor_key, tail.cursor)?;
         Ok(true)
     }
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

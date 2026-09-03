@@ -20,10 +20,11 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{Mutex, broadcast, oneshot};
 
-use super::{LiveState, PendingPrompt, now_ms};
+use super::{LiveState, PendingPrompt};
 use crate::content::parse;
 use crate::ingest::Topic;
-use crate::model::{Harness, Message, Part, Role, SessionKey, SourceHealth};
+use crate::ingest::loop_services::{HealthSource, now_ms, record_health};
+use crate::model::{Harness, Message, Part, Role, SessionKey};
 use crate::store::Store;
 
 const STDERR_TAIL_LIMIT: usize = 4_096;
@@ -93,15 +94,10 @@ impl MuseRuns {
             .err()
             .cloned()
             .or_else(|| data_home.as_ref().err().cloned());
-        let health = SourceHealth {
-            source: "muse runner".to_owned(),
-            error: runtime_error,
-            checked_ms: now_ms(),
-        };
-        if let Err(error) = store.set_source_health(&health) {
+        if let Err(error) =
+            record_health(&store, &topics, HealthSource::MuseRunner, runtime_error)
+        {
             tracing::warn!(%error, "could not record Muse runner health");
-        } else {
-            let _ = topics.send(Topic::SourceHealth);
         }
         Self {
             binary,

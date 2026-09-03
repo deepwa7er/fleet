@@ -13,6 +13,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
+use skiff::ingest::opencode::OpencodeClient;
 use skiff::ingest::{Ingest, pi};
 use skiff::ingest::source::Source;
 use skiff::run::Runs;
@@ -60,7 +61,7 @@ async fn start() -> Harness {
             session_dir: sessions.path().join("muse/sessions"),
             session_dir_explicit: true,
         },
-        "http://127.0.0.1:1",
+        OpencodeClient::new("http://127.0.0.1:1"),
     );
 
     let dist = tempfile::tempdir().unwrap();

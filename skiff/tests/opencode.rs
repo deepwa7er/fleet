@@ -20,7 +20,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{Mutex, broadcast};
 use tokio_tungstenite::tungstenite::Message as SocketMessage;
 
-use skiff::ingest::opencode::OpencodeIngest;
+use skiff::ingest::opencode::{LIVE_BUFFER, OpencodeClient, OpencodeIngest};
 use skiff::model::{Message, Role};
 use skiff::run::Runs;
 use skiff::run::muse_exec::MuseConfig;
@@ -191,6 +191,7 @@ async fn start() -> Harness {
     let store = Store::in_memory().unwrap();
     let (topics, _) = broadcast::channel(256);
     let missing = tempfile::tempdir().unwrap();
+    let opencode_client = OpencodeClient::new(&format!("http://{api_addr}"));
     let runs = Runs::new(
         store.clone(),
         topics.clone(),
@@ -202,15 +203,13 @@ async fn start() -> Harness {
             session_dir: missing.path().join("data/muse/sessions"),
             session_dir_explicit: true,
         },
-        &format!("http://{api_addr}"),
+        opencode_client.clone(),
     );
-    OpencodeIngest::new(
-        runs.opencode().client(),
-        store.clone(),
-        runs.opencode(),
-        topics.clone(),
-    )
-    .spawn();
+    // The same live-forwarding wiring `main` installs.
+    let (opencode_live, opencode_live_rx) = broadcast::channel(LIVE_BUFFER);
+    OpencodeIngest::new(opencode_client, store.clone(), opencode_live, topics.clone())
+        .spawn();
+    runs.opencode().spawn_forwarding(opencode_live_rx);
 
     let dist = tempfile::tempdir().unwrap();
     std::fs::write(dist.path().join("index.html"), "<!doctype html>").unwrap();

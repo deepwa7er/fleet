@@ -10,6 +10,7 @@ use change::{
 };
 use futures_util::{SinkExt, StreamExt};
 use skiff::ingest::Topic;
+use skiff::ingest::opencode::OpencodeClient;
 use skiff::run::Runs;
 use skiff::run::muse_exec::MuseConfig;
 use skiff::server::{AppState, router};
@@ -150,7 +151,7 @@ for line in sys.stdin:
             session_dir: root.path().join("muse-sessions"),
             session_dir_explicit: true,
         },
-        "http://127.0.0.1:1",
+        OpencodeClient::new("http://127.0.0.1:1"),
     );
     let state = AppState::with_changes(
         store,

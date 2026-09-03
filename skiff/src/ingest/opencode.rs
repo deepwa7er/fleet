@@ -1,12 +1,18 @@
 //! OpenCode's native HTTP and event-stream adapter.
 //!
 //! OpenCode owns its sessions behind `opencode serve`; there is no directory
-//! for Skiff to tail. The client below accepts only a loopback base URL, maps
-//! raw server shapes into Skiff's domain, and leaves persistence and topic
-//! invalidation to [`OpencodeIngest`].
+//! for Skiff to tail, so this is a deliberate second pipeline rather than a
+//! [`super::source::Source`]: it polls HTTP, follows the SSE event stream,
+//! persists snapshots, and announces durable topics itself. The loop *services*
+//! (floor interval, event debounce, health, stale forgetting) come from
+//! [`super::loop_services`], shared with the file pumps.
+//!
+//! Layering: this module knows nothing of `run/`. Durable changes leave as
+//! [`super::Topic`]s and live observations leave as [`LiveEvent`]s; the
+//! composition root forwards the latter to the run side, symmetric with how
+//! file-ingest topics drive `Runs::session_changed`.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -17,15 +23,15 @@ use tokio::sync::broadcast;
 
 use crate::content::parse;
 use crate::model::{
-    Capabilities, Entry, Harness, Message, Part, Role, SessionKey, SessionSummary, SourceHealth,
-    ToolStatus,
+    Capabilities, Entry, Harness, Message, Part, Role, SessionKey, SessionSummary, ToolStatus,
 };
-use crate::run::opencode::OpencodeRuns;
 use crate::store::{SessionIngest, Store};
 
 use super::Topic;
+use super::loop_services::{
+    EVENT_DEBOUNCE, FLOOR_SCAN, HealthSource, forget_sessions, record_health,
+};
 
-pub const SOURCE: &str = "opencode";
 pub const DEFAULT_URL: &str = "http://127.0.0.1:4130";
 pub const CAPABILITIES: Capabilities = Capabilities {
     rename: true,
@@ -33,10 +39,34 @@ pub const CAPABILITIES: Capabilities = Capabilities {
     model: false,
 };
 
+/// Broadcast capacity for live observations. Falling behind costs a stale
+/// overlay until the next poll repairs it, so this is generous.
+pub const LIVE_BUFFER: usize = 256;
+
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-const FLOOR_SCAN: Duration = Duration::from_secs(15);
-const EVENT_DEBOUNCE: Duration = Duration::from_millis(100);
 const RECONNECT_DELAY: Duration = Duration::from_secs(1);
+
+/// What one poll observed about a session's live run.
+///
+/// Durable entries go to the store; this carries what the store must never
+/// hold — the in-flight reply and the user count the pending prompt resolves
+/// against — to the run side via broadcast.
+#[derive(Debug, Clone)]
+pub struct LiveObservation {
+    pub session: SessionKey,
+    pub pending: Option<Message>,
+    pub users: usize,
+}
+
+/// The live half of one poll, published for the run side.
+///
+/// The composition root subscribes and forwards to `OpencodeRuns`; this module
+/// never names that type.
+#[derive(Debug, Clone)]
+pub enum LiveEvent {
+    Observed(LiveObservation),
+    Forgot(SessionKey),
+}
 
 #[derive(Clone)]
 pub struct OpencodeClient {
@@ -217,7 +247,7 @@ impl Invalidation {
 pub struct OpencodeIngest {
     client: Result<OpencodeClient, String>,
     store: Store,
-    runs: Arc<OpencodeRuns>,
+    live: broadcast::Sender<LiveEvent>,
     topics: broadcast::Sender<Topic>,
 }
 
@@ -225,13 +255,13 @@ impl OpencodeIngest {
     pub fn new(
         client: Result<OpencodeClient, String>,
         store: Store,
-        runs: Arc<OpencodeRuns>,
+        live: broadcast::Sender<LiveEvent>,
         topics: broadcast::Sender<Topic>,
     ) -> Self {
         Self {
             client,
             store,
-            runs,
+            live,
             topics,
         }
     }
@@ -330,16 +360,18 @@ impl OpencodeIngest {
                 .context("the OpenCode store task panicked")
                 .and_then(|result| result);
         match applied {
-            Ok((topics, lives, forgotten)) => {
+            Ok(applied) => {
                 self.record_health_ok().await;
-                for topic in topics {
+                for topic in applied.topics {
                     let _ = self.topics.send(topic);
                 }
-                for (session, pending, users) in lives {
-                    self.runs.observed(session, pending, users).await;
+                // Live observations leave as broadcast, never as direct calls:
+                // the composition root forwards them to the run side.
+                for observation in applied.lives {
+                    let _ = self.live.send(LiveEvent::Observed(observation));
                 }
-                for session in forgotten {
-                    self.runs.forgot(&session).await;
+                for session in applied.forgotten {
+                    let _ = self.live.send(LiveEvent::Forgot(session));
                 }
             }
             Err(error) => self.record_health(format!("{error:#}")).await,
@@ -347,39 +379,25 @@ impl OpencodeIngest {
     }
 
     async fn record_health_ok(&self) {
-        self.set_health(SOURCE, None).await;
+        self.set_health(HealthSource::Opencode, None).await;
     }
 
     async fn record_health(&self, error: String) {
-        self.set_health(SOURCE, Some(error)).await;
+        self.set_health(HealthSource::Opencode, Some(error)).await;
     }
 
     async fn record_event_health(&self, error: Option<String>) {
-        self.set_health("opencode events", error).await;
+        self.set_health(HealthSource::OpencodeEvents, error).await;
     }
 
-    async fn set_health(&self, source: &str, error: Option<String>) {
+    async fn set_health(&self, source: HealthSource, error: Option<String>) {
         let store = self.store.clone();
-        let health = SourceHealth {
-            source: source.to_owned(),
-            error,
-            checked_ms: super::now_ms(),
-        };
-        let result = tokio::task::spawn_blocking(move || {
-            let previous = store
-                .source_health()?
-                .into_iter()
-                .find(|item| item.source == health.source)
-                .map(|item| item.error);
-            store.set_source_health(&health)?;
-            Ok::<_, anyhow::Error>(previous.as_ref() != Some(&health.error))
-        })
-        .await;
+        let topics = self.topics.clone();
+        let result =
+            tokio::task::spawn_blocking(move || record_health(&store, &topics, source, error))
+                .await;
         match result {
-            Ok(Ok(true)) => {
-                let _ = self.topics.send(Topic::SourceHealth);
-            }
-            Ok(Ok(false)) => {}
+            Ok(Ok(_)) => {}
             Ok(Err(error)) => tracing::warn!(%error, "could not record OpenCode health"),
             Err(error) => tracing::warn!(%error, "OpenCode health task panicked"),
         }
@@ -453,18 +471,26 @@ async fn build_snapshot(client: &OpencodeClient, session: Value) -> Result<Snaps
     })
 }
 
-type LiveObservation = (SessionKey, Option<Message>, usize);
-
 enum ScanScope {
     All,
     Selected(HashSet<SessionKey>),
+}
+
+/// What one store pass produced: durable topics plus live observations.
+///
+/// A named struct rather than a tuple so the return type stays readable at
+/// the call site.
+struct Applied {
+    topics: HashSet<Topic>,
+    lives: Vec<LiveObservation>,
+    forgotten: Vec<SessionKey>,
 }
 
 fn apply_snapshots(
     store: &Store,
     snapshots: &[Snapshot],
     scope: ScanScope,
-) -> Result<(HashSet<Topic>, Vec<LiveObservation>, Vec<SessionKey>)> {
+) -> Result<Applied> {
     let mut topics = HashSet::new();
     let seen: HashSet<_> = snapshots
         .iter()
@@ -491,11 +517,11 @@ fn apply_snapshots(
             topics.insert(Topic::Session(snapshot.summary.id.clone()));
             topics.insert(Topic::SessionList);
         }
-        lives.push((
-            snapshot.summary.id.clone(),
-            snapshot.pending.clone(),
-            snapshot.user_count,
-        ));
+        lives.push(LiveObservation {
+            session: snapshot.summary.id.clone(),
+            pending: snapshot.pending.clone(),
+            users: snapshot.user_count,
+        });
     }
     let stale: Vec<_> = match scope {
         ScanScope::All => existing
@@ -505,13 +531,15 @@ fn apply_snapshots(
             .collect(),
         ScanScope::Selected(missing) => missing.into_iter().collect(),
     };
-    for stale in stale {
-        store.forget_session(&stale)?;
-        forgotten.push(stale.clone());
-        topics.insert(Topic::Session(stale));
-        topics.insert(Topic::SessionList);
-    }
-    Ok((topics, lives, forgotten))
+    // Forgetting is one policy — a store delete plus its topics — shared with
+    // the file pump in `loop_services`.
+    forget_sessions(store, &stale, &mut topics)?;
+    forgotten.extend(stale);
+    Ok(Applied {
+        topics,
+        lives,
+        forgotten,
+    })
 }
 
 fn map_session(value: &Value) -> Result<SessionSummary> {

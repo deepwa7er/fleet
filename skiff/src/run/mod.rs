@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -32,8 +32,10 @@ use serde_json::{Value, json};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use ts_rs::TS;
 
+use crate::ingest::loop_services::{HealthSource, home, now_ms, record_health};
 use crate::ingest::{Topic, pi};
-use crate::model::{Harness, Message, ModelCatalog, ModelOption, SessionKey, SourceHealth};
+use crate::ingest::opencode::OpencodeClient;
+use crate::model::{Harness, Message, ModelCatalog, ModelOption, SessionKey};
 use crate::store::Store;
 use overlay::{Overlay, RunId};
 use pi_rpc::{COMMAND_TIMEOUT, PiConfig, PiProcess};
@@ -153,7 +155,7 @@ impl Runs {
         pi_dir: PathBuf,
         pi_dir_explicit: bool,
         muse_config: MuseConfig,
-        opencode_url: &str,
+        opencode_client: Result<OpencodeClient, String>,
     ) -> Arc<Self> {
         let binary = resolve::binary(&binary);
         match &binary {
@@ -161,21 +163,20 @@ impl Runs {
             // Warned at startup, not swallowed until someone sends a prompt.
             Err(err) => tracing::warn!("{err} — pi sessions can be read but not run"),
         }
-        let pi_health = SourceHealth {
-            source: "pi runner".to_owned(),
-            error: binary.as_ref().err().cloned(),
-            checked_ms: now_ms(),
-        };
-        if let Err(error) = store.set_source_health(&pi_health) {
+        // The runner health row follows the same diff-and-announce policy as
+        // every ingest source; see `loop_services::record_health`.
+        if let Err(error) = record_health(
+            &store,
+            &topics,
+            HealthSource::PiRunner,
+            binary.as_ref().err().cloned(),
+        ) {
             tracing::warn!(%error, "could not record Pi runner health");
-        } else {
-            let _ = topics.send(Topic::SourceHealth);
         }
         let muse = MuseRuns::new(muse_config, store.clone(), topics.clone());
-        let opencode = OpencodeRuns::new(
-            crate::ingest::opencode::OpencodeClient::new(opencode_url),
-            topics.clone(),
-        );
+        // The client is constructed once at the composition root and handed to
+        // both sides; `Runs` never builds one for the ingest to reclaim.
+        let opencode = OpencodeRuns::new(opencode_client, topics.clone());
         Arc::new(Self {
             sessions: Mutex::default(),
             store,
@@ -793,17 +794,4 @@ fn drop_unresolved(state: &mut SessionRun) {
     if !state.resolving {
         state.overlay = None;
     }
-}
-
-fn home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or_default()
 }

@@ -21,11 +21,9 @@
 
 use serde_json::Value;
 
+use super::loop_services::truncate_tool_output;
 use crate::content::parse;
 use crate::model::{Entry, Message, Part, Role, ToolStatus};
-
-/// A single tool dump must not balloon a whole transcript response.
-const TOOL_OUTPUT_LIMIT: usize = 2_000;
 
 /// Map one entry to the message it renders as, or `None` when it renders
 /// nothing.
@@ -115,7 +113,7 @@ fn tool_result(entry: &Entry, message: &Value) -> Message {
                 .to_owned(),
             name: message.get("toolName").and_then(Value::as_str).unwrap_or_default().to_owned(),
             status,
-            output: Some(truncate(&content_text(message.get("content")))),
+            output: Some(truncate_tool_output(&content_text(message.get("content")))),
         }],
     }
 }
@@ -178,19 +176,6 @@ fn content_text(content: Option<&Value>) -> String {
         .map(|block| block.get("text").and_then(Value::as_str).unwrap_or_default())
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-fn truncate(text: &str) -> String {
-    if text.len() <= TOOL_OUTPUT_LIMIT {
-        return text.to_owned();
-    }
-    // Cut on a character boundary: slicing mid-codepoint would panic on any
-    // tool output containing non-ASCII.
-    let mut end = TOOL_OUTPUT_LIMIT;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &text[..end])
 }
 
 #[cfg(test)]
@@ -329,7 +314,10 @@ mod tests {
         let Part::Tool { output, .. } = &message.parts[0] else { panic!() };
         let output = output.as_deref().unwrap();
         assert!(output.ends_with('…'));
-        assert!(output.len() <= TOOL_OUTPUT_LIMIT + '…'.len_utf8());
+        assert!(
+            output.len()
+                <= crate::ingest::loop_services::TOOL_OUTPUT_LIMIT + '…'.len_utf8()
+        );
     }
 
     #[test]
