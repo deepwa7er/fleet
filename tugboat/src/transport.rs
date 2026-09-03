@@ -34,6 +34,14 @@ pub fn rsync(local: &Path, remote: &str, kind: RsyncKind, log: &dyn LogSink) -> 
 fn rsync_command(local: &Path, remote: &str, kind: RsyncKind) -> (Command, String, String) {
     let mut command = Command::new("rsync");
     command.args(["-az", "--no-owner", "--no-group"]);
+    // The remote rsync runs under sudo: deploy targets land as root (old
+    // VPS) or as a sudo-capable user (OVH's fedora), while staged artifacts
+    // sit beside root-owned destinations (/usr/local/bin). As root sudo is
+    // a pass-through; with NOPASSWD sudo it elevates non-interactively —
+    // the same assumption the $sudo remote scripts already rely on. Both
+    // fleet hosts carry sudo, so this is unconditional rather than a
+    // per-host flag that every future non-root box would have to set.
+    command.args(["--rsync-path", "sudo rsync"]);
 
     let (from, to) = match kind {
         RsyncKind::File => (local.display().to_string(), remote.to_owned()),
@@ -121,6 +129,8 @@ mod tests {
                 "-az",
                 "--no-owner",
                 "--no-group",
+                "--rsync-path",
+                "sudo rsync",
                 "/tmp/tool",
                 "host:~/.local/bin/tool.tug-new"
             ]
@@ -143,6 +153,8 @@ mod tests {
                 "-az",
                 "--no-owner",
                 "--no-group",
+                "--rsync-path",
+                "sudo rsync",
                 "--delete",
                 "/tmp/site/",
                 "host:/srv/site.tug-new/"
