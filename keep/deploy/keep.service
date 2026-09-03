@@ -1,0 +1,48 @@
+[Unit]
+Description=keep — the fleet's central database service
+Documentation=https://github.com/deepwa7er/fleet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=keep
+Group=keep
+# Creates /var/lib/keep (owned by keep, writable under ProtectSystem=strict)
+# for the live databases, the VACUUM INTO staging dir, and restic's cache.
+StateDirectory=keep
+# Tailnet-only listener: binding OVH's tailnet address is what keeps keep off
+# the public internet. There is no firewall rule to drift — the socket itself
+# does not exist anywhere else.
+Environment=KEEP_ADDR=100.73.64.99:8106
+Environment=KEEP_DATA_DIR=/var/lib/keep
+# `name token` per line, installed by deploy/provision.sh (root:keep, 0640).
+# keep reads it once at startup: token changes restart the service.
+Environment=KEEP_TOKENS_FILE=/etc/keep/tokens
+Environment=KEEP_SNAPSHOT_DIR=/var/lib/keep/snapshots
+# restic's cache under the state dir (ProtectHome hides the real HOME).
+Environment=XDG_CACHE_HOME=/var/lib/keep/.cache
+# R2 repository + credentials (same contract as fleet-backup's restic.env).
+# Optional: without it keep still serves and still snapshots locally, but the
+# off-box half is missing and it warns so at startup. See
+# deploy/restic.env.example.
+EnvironmentFile=-/etc/keep/restic.env
+ExecStart=/usr/local/bin/keep serve
+Restart=on-failure
+RestartSec=2
+
+# Hardening — keep writes only its state dir, reads one secrets file out of
+# /etc, and speaks tailnet HTTP inbound plus R2 HTTPS outbound.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

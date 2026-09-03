@@ -62,7 +62,7 @@ member; a third-party daemon is a dependency with a roadmap we don't control.
 | Auth | One bearer token per database; tokens live in per-app `/etc` env files |
 | Data layout | **One database per app** — the 1:1 continuation of today's one-file-per-app, and every app is already a single writer |
 | API | SQL + bound params + transactions over HTTP/JSON (sketch below) |
-| Backup | Full-file snapshots every minute (checkpoint + copy → restic → R2) **and** a nightly `.dump` kept 7d/4w/6mo |
+| Backup | `VACUUM INTO` snapshots every minute → restic → R2, plus a nightly long-retention tier (7d/4w/6mo); snapshots are plain SQLite, no `.dump` needed |
 | Migration | One service at a time; recipes pilots |
 | Store-down posture | Apps hard-fail (v1); a dead store takes the fleet's writes with it, visibly |
 
@@ -70,7 +70,7 @@ SQLite dialect is the load-bearing choice: every fleet service already speaks
 it, so fleet-common's open/migrate plumbing grows a keep client backend
 instead of every app rewriting its data layer.
 
-## API surface (sketch — the contract is designed in card #144's first change)
+## API surface (designed in card #144 — `keep/README.md` is the contract)
 
 - `POST /v1/{db}/query` — `{sql, params}` → rows; single statement,
   autocommit. Errors use fleet-common's `{"error": …}` shape.
@@ -94,11 +94,13 @@ exact shape (server around an embedded SQLite) for a decade.
 - **fleet-common** gains the keep client so the open/migrate dance keeps its
   single home. Apps keep running their own schema migrations at startup, now
   against their database in keep.
-- **One build question, flagged not hidden**: turso's async I/O uses
-  io_uring, which may complicate tugboat's static musl cross-compile
-  (liburing linkage). If so, the fallback is a glibc-dynamic native build on
-  the VPS itself — still a plain binary under systemd, still no Docker. That
-  decision gets made out loud in card #144, not smuggled.
+- **Build, verified not flagged**: turso's `io_uring` is an opt-in
+  non-default feature the `turso` facade crate does not forward — it is not
+  in the build and never was the risk (checked against turso 0.8.0-pre.7's
+  manifest during card #144). keep builds with `default-features = false`
+  (system allocator, no FTS — it needs neither, and shedding them drops the
+  C the defaults pull in); the slimmed tree check-compiles for
+  `x86_64-unknown-linux-musl` cleanly. No glibc fallback, no Docker.
 - **`[state]` shrinks honestly.** As each app migrates, its `db =` declaration
   leaves `deploy.toml` and `fleet gen --check` keeps the backup set honest
   during the transition — a service is either on file backup or in keep, and
@@ -112,16 +114,22 @@ exact shape (server around an embedded SQLite) for a decade.
 
 The scale insight that shapes everything: **the fleet's data is kilobytes to a
 few megabytes**, so "continuous backup" is simply *snapshot the whole file
-every minute* — keep checkpoints each database, copies the file, and hands it
-to restic → R2. Deduplication makes each snapshot tiny; the recovery point is
+every minute* — keep runs `VACUUM INTO` per database (a consistent
+plain-SQLite single file, no WAL sidecar) and hands the snapshot dir to
+restic → R2. Deduplication makes each snapshot tiny; the recovery point is
 sixty seconds; restore is "copy the file back." No WAL-streaming machinery,
-no CDC plumbing, no restore-replay tooling.
+no CDC plumbing, no restore-replay tooling. (`VACUUM INTO` over a
+checkpoint-and-copy: the turso facade exposes no checkpoint call, and a raw
+copy of a live database can catch a torn write — the verified path wins.)
 
-Two independent paths, because backups are the reason keep exists:
+Two retention tiers, because backups are the reason keep exists:
 
-1. **Primary — minute snapshots to R2** via the snapshot loop above.
-2. **Fallback — nightly `.dump` per database**, retained 7d/4w/6mo, restorable
-   into any SQLite-compatible engine without keep-specific code.
+1. **Primary — minute snapshots to R2**, forgotten past 48h: the recovery
+   point, not an archive.
+2. **Fallback — nightly snapshots**, retained 7d/4w/6mo, restorable into any
+   SQLite-compatible engine without keep-specific code (verified against
+   stock SQLite before this shipped — there is deliberately no SQL-text
+   `.dump` path; the files already satisfy the property the dump was for).
 
 **The restore drill is a hard gate** (card #144): before the first app
 migrates, a restore from *both* paths must be performed into a scratch keep
@@ -133,11 +141,14 @@ the load-bearing safety mechanism, not a formality.
 
 recipes (pilot — small, real data, low blast radius, and the beta engine's
 trust-building run) → mirror (its DB is a rebuildable Fizzy cache; safe
-second) → notes → blog → readout → public_site (the four `/opt` gaps close
-here). One jj change per app, full gates each time. Lagoon (external repo,
-iOS) is deferred and keeps its file for now; Fizzy and Jellyfin (Docker/Rails)
-are out of scope permanently for this design. Card #145 carries the sequence;
-card #32 gets its closure comment updated as each `/opt` app lands.
+second). One jj change per app, full gates each time. The Rails services
+(notes, blog, readout, public_site) retire in place — no Ruby client is
+built for dying services, so their `/opt` gap (card #32) stays open until
+they retire; their future Rust rewrites are keep-native from birth. Lagoon
+(external repo, iOS) is deferred and keeps its file for now; Fizzy and
+Jellyfin (Docker/Rails) are out of scope permanently for this design. Card
+#145 carries the sequence; card #32 stays open until the Rails retirements
+land it.
 
 ## Rejected alternatives — and why, so they stay rejected
 
@@ -183,8 +194,10 @@ card #32 gets its closure comment updated as each `/opt` app lands.
   SQLite-compatible engine.
 - **The API seam is ours forever.** keep's HTTP contract and the fleet-common
   client are this repo's code, maintained like everything else here.
-- **The io_uring/musl build question** may force a glibc-dynamic build.
-  Flagged; decided at build time, out loud.
+- **Dependency weight.** turso pulls ~300 crates including C sources; the
+  pre-release engine upgrades deliberately (version pinned exactly), and
+  `default-features = false` holds the C surface to what the slimmed tree
+  needs. The musl cross-compile is verified, not assumed.
 - **Single writer per database.** True of every app today (one connection
   behind a mutex); it is a ceiling, not a defect, at this fleet's scale.
 - **A dead store stops the fleet's writes.** Hard-fail is v1's honest answer;
@@ -205,3 +218,7 @@ replaced it with the fleet's own server over the turso engine. Cards: #143
 (this doc), #144 (build keep + drill), #145 (service migrations). Companion
 reading: card #32 (the `/opt` backup gap), `fleet-backup/README.md` (the
 system keep shrinks).
+
+Corrected 2026-09-03 during #144's build: io_uring was never in the build
+(opt-in non-default — a design-room worry, struck after reading the
+manifest); scope narrowed to Rust services, Rails retire (see card #145).

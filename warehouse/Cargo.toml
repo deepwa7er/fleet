@@ -31,8 +31,8 @@ ignore = "0.4"
 git2 = "0.19"
 blake3 = "1.5"
 rusqlite = { version = "0.32", features = ["bundled"] }
-arrow = { version = "53", features = ["prettyprint"] }
-parquet = { version = "53", features = ["arrow"] }
+arrow = { version = "54", features = ["prettyprint"] }
+parquet = { version = "54", features = ["arrow"] }
 aws-config = "1.6"
 aws-sdk-s3 = "1.66"
 dotenvy = "0.15"

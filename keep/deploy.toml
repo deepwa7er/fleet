@@ -1,0 +1,40 @@
+# tugboat deploy manifest — deepwa7er fleet
+#   deploy:  tugboat deploy      (from this directory)
+#
+# keep is the fleet's central database service (Fizzy #144, DW-005): the turso
+# engine embedded in a small axum server, holding one database per fleet
+# service. It is the fleet's FIRST service on the OVH box (`host = "ovh"`),
+# reached by apps over the tailnet — never by users, so there is deliberately
+# NO `port` field and `fleet gen` builds no breakwater route for it (same
+# shape as shutter-relay). The tailnet port is recorded here so future `ss`
+# checks don't have to guess: 8106 (next free fleet-wide after notes' 8105).
+name = "keep"
+description = "The fleet's central database service: embedded turso behind an authenticated SQL-over-HTTP API."
+host = "ovh"
+
+# NO [state] BLOCK, and that absence is load-bearing. keep's databases are
+# backed up by keep itself (VACUUM INTO snapshots → restic → R2 every minute,
+# plus a nightly long-retention tier — see keep/README.md), not by
+# fleet-backup; and fleet-backup runs on the old VPS, where these files don't
+# exist. A [state] block here would enroll them in the wrong backup on the
+# wrong box while looking like coverage.
+
+[build]
+requirements = ["x86_64-linux-musl"]
+# Static musl release build, same shape as recipes/mirror. turso rides along
+# with default-features = false (no mimalloc, no FTS — and none of the C
+# either pulls in), which is what keeps this cross-compile clean.
+cmd = "(rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1 || true) && cargo build --release --target x86_64-unknown-linux-musl -p keep"
+
+[[artifacts]]
+src = "{workspace}/target/x86_64-unknown-linux-musl/release/keep"
+dest = "/usr/local/bin/keep"
+
+# keep binds OVH's tailnet address (see deploy/keep.service), so this health
+# URL works from the deploy machine and from the box alike.
+[health]
+url = "http://100.73.64.99:8106/healthz"
+
+[lighthouse]
+# Monitor keep from the fleet dashboard (status + logs).
+enroll = true

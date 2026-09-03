@@ -12,6 +12,7 @@
 //! that apply.
 
 pub mod http;
+pub mod keep;
 pub mod store;
 pub mod util;
 

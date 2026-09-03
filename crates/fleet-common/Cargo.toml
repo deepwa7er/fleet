@@ -2,11 +2,19 @@
 name = "fleet-common"
 version = "0.1.0"
 edition = "2021"
-description = "Shared scaffolding for fleet services: SQLite open/migrate with the FK-off bracket and migration hashing, the uniform {\"error\"} JSON contract, /healthz, SPA serving, and small env/path/time helpers."
+description = "Shared scaffolding for fleet services: SQLite open/migrate with the FK-off bracket and migration hashing, the uniform {\"error\"} JSON contract, /healthz, SPA serving, the keep database client, and small env/path/time helpers."
 
 [dependencies]
 axum = { workspace = true }
-rusqlite = { workspace = true }
+# rustls, not the platform TLS: the workspace disables reqwest's default TLS
+# backends so the static-musl builds stay clean (same choice as mirror).
+reqwest = { workspace = true, features = ["rustls-tls", "json"] }
+# "bundled": compile SQLite from source. fleet-common is rusqlite's actual
+# user (store.rs), so it must carry the feature that makes every downstream
+# static-musl cross-build link — relying on each service to re-enable it
+# transitively is how keep's first musl link failed with `-lsqlite3`.
+rusqlite = { workspace = true, features = ["bundled"] }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tower-http = { workspace = true, features = ["fs", "trace"] }

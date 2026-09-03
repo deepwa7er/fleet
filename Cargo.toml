@@ -19,6 +19,7 @@ members = [
     "ferry",
     "harbor/server",
     "harness",
+    "keep",
     "lighthouse",
     "mirror",
     "recipes",

@@ -1,0 +1,27 @@
+[package]
+name = "keep"
+version = "0.1.0"
+edition = "2021"
+description = "The fleet's central database service: the turso engine embedded behind a small authenticated SQL-over-HTTP API, self-backing-up to R2."
+
+[dev-dependencies]
+# Locks the exit-path guarantee: snapshots must open in stock SQLite, not
+# just in turso. (The server itself never touches rusqlite.)
+rusqlite = { workspace = true }
+
+[dependencies]
+fleet-common = { path = "../crates/fleet-common" }
+anyhow = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "time", "process"] }
+tower-http = { workspace = true, features = ["trace"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+# Pinned exactly: a beta engine under the fleet's data upgrades deliberately,
+# never by `cargo update` drift. No default features — keep needs neither the
+# mimalloc allocator nor full-text search, and shedding them (plus the C they
+# pull in) is what keeps the static-musl cross-build clean.
+turso = { version = "=0.8.0-pre.7", default-features = false }
