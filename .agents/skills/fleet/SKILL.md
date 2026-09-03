@@ -57,6 +57,26 @@ the VSCodium-open working copy only when `jj status` contains no unrelated
 work. Otherwise create a named jj workspace and tell the human which folder to
 open in VSCodium. `origin/main` is the only synchronization boundary.
 
+### Muse agents — provision with jj, scope with --workspace
+
+Provision isolation with jj, never `muse -w`: one jj workspace per parallel
+writer (`jj workspace add .workspaces/<slug>`). Muse's `--worktree create`
+provisions an ephemeral git dir outside any jj workspace, so work done there
+is not a jj change and cannot become a round; `--worktree existing` rejects
+jj workspaces outright (a secondary workspace contains no `.git`).
+
+Scope Muse to the provisioned workspace with its own flag instead: launch
+with `muse --workspace .workspaces/<slug>`, which roots the session there.
+Subagent children likewise take no `isolation` request — each gets an
+assigned workspace path and works only inside it, never the main checkout
+or another track's.
+
+- Read-only tracks (search, investigation) may share any checkout.
+- A single-writer run needs no extra workspace; use the current checkout.
+- Forget finished workspaces from the main checkout (`jj workspace forget
+  <name>`, then remove `.workspaces/<slug>`) in every lane, not just the
+  desktop lane.
+
 **Undo is scoped to you — hard rule (DW-002 §3).** The op log is shared by
 every workspace. Never run bare `jj undo`: it reverses the *globally* most
 recent operation, which may be another agent's or the human's. If you must
