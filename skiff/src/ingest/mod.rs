@@ -224,11 +224,11 @@ impl Ingest {
         }
 
         // A restarted read means the file is not the one the watermark
-        // described. Whatever was derived from the old one is now wrong.
-        if tail.restarted {
-            self.store.clear_entries(key)?;
-        }
-
+        // described. Whatever was derived from the old one is now wrong — and
+        // it is replaced atomically below, never cleared first: a
+        // clear-then-fill window would let concurrent readers (views, run
+        // handovers) observe a partial session whose counts only move
+        // backwards, wedging the next send until restart.
         let stored = if tail.restarted { None } else { self.store.source_state(key)? };
         let parsed = source.parse(&tail.lines, tail.first_line, stored.as_ref());
 
@@ -244,11 +244,16 @@ impl Ingest {
             return Ok(false);
         };
 
-        self.store.ingest_session(SessionIngest {
+        let batch = SessionIngest {
             summary: &summary,
             state: parsed.state.as_ref(),
             entries: &parsed.entries,
-        })?;
+        };
+        if tail.restarted {
+            self.store.replace_session(batch)?;
+        } else {
+            self.store.ingest_session(batch)?;
+        }
         self.store.set_cursor(source.name(), &cursor_key, tail.cursor)?;
         Ok(true)
     }

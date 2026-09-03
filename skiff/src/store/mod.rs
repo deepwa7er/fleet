@@ -186,15 +186,6 @@ impl Store {
         })
     }
 
-    /// Drop every entry for a session, keeping its summary row. Used when a
-    /// file was rewritten under the same name and the read restarts from zero.
-    pub fn clear_entries(&self, session: &SessionKey) -> Result<()> {
-        self.with(|conn| {
-            conn.execute("DELETE FROM entry WHERE session_id = ?1", params![session.to_string()])?;
-            Ok(())
-        })
-    }
-
     /// What the source last asked to remember about this session.
     pub fn source_state(&self, session: &SessionKey) -> Result<Option<serde_json::Value>> {
         self.with(|conn| {
@@ -513,12 +504,22 @@ mod tests {
     }
 
     #[test]
-    fn clearing_entries_keeps_the_session_row() {
+    fn replacing_a_session_swaps_entries_leaving_no_partial_state() {
+        // A rewritten file re-reads from zero: the old rows must go in the
+        // same transaction that writes the new ones, so a concurrent reader
+        // never observes the session emptied halfway through the swap.
         let store = Store::in_memory().unwrap();
         let key: SessionKey = "pi:a".parse().unwrap();
-        ingest(&store, &summary("pi:a", 1), &[entry(1, "a", None)]);
-        store.clear_entries(&key).unwrap();
-        assert!(store.entries(&key).unwrap().is_empty());
+        ingest(&store, &summary("pi:a", 1), &[entry(1, "a", None), entry(2, "b", Some("a"))]);
+        store
+            .replace_session(SessionIngest {
+                summary: &summary("pi:a", 2),
+                state: None,
+                entries: &[entry(1, "c", None)],
+            })
+            .unwrap();
+        let got = store.entries(&key).unwrap();
+        assert_eq!(got.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["c"]);
         assert_eq!(store.sessions().unwrap().len(), 1);
     }
 

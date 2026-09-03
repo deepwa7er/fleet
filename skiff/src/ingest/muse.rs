@@ -92,6 +92,13 @@ impl Source for Muse {
 
     fn parse(&self, lines: &[String], first_line: i64, state: Option<&Value>) -> ParsedBatch {
         let mut model = state.and_then(|s| s.get("model")).and_then(Value::as_str).map(str::to_owned);
+        // The chain tip the previous batch ended on. An incremental batch's
+        // first entry names it as its parent, keeping one chain across
+        // batches; without it the fallback below would name a synthetic id
+        // nothing stored carries, and the leaf walk would stop at every batch
+        // boundary — hiding history and freezing the run handover's counts.
+        let prev_id =
+            state.and_then(|s| s.get("last_id")).and_then(Value::as_str).map(str::to_owned);
         let mut entries = Vec::new();
 
         for (offset, line) in lines.iter().enumerate() {
@@ -106,6 +113,16 @@ impl Source for Muse {
                 model = Some(configured);
             }
 
+            // A flat log: each record's parent is the one before it, which
+            // makes the shared leaf-path walk a no-op rather than a
+            // special case.
+            let parent_id = if seq == 0 {
+                None
+            } else if offset == 0 {
+                Some(prev_id.clone().unwrap_or_else(|| format!("r{}", seq - 1)))
+            } else {
+                Some(previous_id(&entries, seq))
+            };
             entries.push(Entry {
                 seq,
                 // The record's own id, so an entry keeps its identity across a
@@ -115,16 +132,17 @@ impl Source for Muse {
                     .and_then(Value::as_str)
                     .map(str::to_owned)
                     .unwrap_or_else(|| format!("r{seq}")),
-                // A flat log: each record's parent is the one before it, which
-                // makes the shared leaf-path walk a no-op rather than a
-                // special case.
-                parent_id: (seq > 0).then(|| previous_id(&entries, seq)),
+                parent_id,
                 mapped: map_record(&record, model.as_deref()),
                 raw: record,
             });
         }
 
-        ParsedBatch { entries, state: model.map(|model| json!({ "model": model })) }
+        // The whole state is replaced on persist, so the carried model rides
+        // along with the new tip; an empty batch persists nothing and keeps
+        // both.
+        let state = entries.last().map(|last| json!({ "model": model, "last_id": last.id }));
+        ParsedBatch { entries, state }
     }
 
     fn summarize(
@@ -451,6 +469,32 @@ mod tests {
     }
 
     #[test]
+    fn an_incremental_batch_reconnects_to_the_previous_batches_tip() {
+        // The leaf walk must cross batch boundaries, or every scan would hide
+        // the history the previous scans ingested.
+        let first = vec![
+            run("r1", 1, serde_json::json!({ "kind": "started", "prompt": "one" })),
+            run(
+                "r2",
+                2,
+                serde_json::json!({
+                    "kind": "assistant_message_committed", "message_id": "m1", "text": "uno"
+                }),
+            ),
+        ];
+        let batch1 = muse().parse(&first, 0, None);
+        let second =
+            vec![run("r3", 3, serde_json::json!({ "kind": "started", "prompt": "two" }))];
+        let batch2 = muse().parse(&second, 2, batch1.state.as_ref());
+        assert_eq!(batch2.entries[0].parent_id.as_deref(), Some("r2"));
+        assert_eq!(
+            batch2.state.as_ref().and_then(|s| s.get("last_id")).and_then(Value::as_str),
+            Some("r3"),
+            "the tip advances for the batch after that"
+        );
+    }
+
+    #[test]
     fn microsecond_timestamps_become_milliseconds() {
         // muse records microseconds; the domain carries milliseconds. Getting
         // this wrong would date every session a thousand years out.
@@ -500,7 +544,7 @@ mod tests {
             "record": { "model_id": "muse-1" }
         }))];
         let carried = parse_all(&first).state;
-        assert_eq!(carried, Some(serde_json::json!({ "model": "muse-1" })));
+        assert_eq!(carried, Some(serde_json::json!({ "model": "muse-1", "last_id": "r1" })));
 
         let second =
             vec![run("r2", 2, serde_json::json!({ "kind": "assistant_message_committed", "text": "x" }))];

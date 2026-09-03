@@ -124,6 +124,12 @@ impl MuseRuns {
         if text.trim().is_empty() {
             bail!("an empty prompt has nothing to ask");
         }
+        // Reconcile before refusing: the registry entry is retired when the
+        // session's file changes, and a missed handover would otherwise wedge
+        // the session until restart — every later send failing with "already
+        // active" though no run exists. Re-checking here makes the refusal
+        // below describe the present instead of the past.
+        self.session_changed(session).await;
         let binary = self.binary.clone().map_err(anyhow::Error::msg)?;
         let data_home = self.data_home.clone().map_err(anyhow::Error::msg)?;
         let (cwd, user_count, assistant_count) = self.session_facts(session).await?;
@@ -448,5 +454,109 @@ mod tests {
     fn an_inconsistent_explicit_root_is_rejected() {
         let error = muse_data_home(Path::new("/tmp/sessions"), true).unwrap_err();
         assert!(error.contains("/muse/sessions"));
+    }
+
+    fn test_message(id: &str, role: crate::model::Role) -> crate::model::Message {
+        crate::model::Message {
+            id: id.to_owned(),
+            role,
+            agent: None,
+            created_ms: None,
+            completed_ms: None,
+            parts: Vec::new(),
+        }
+    }
+
+    /// A missed transcript handover must not wedge the session: if the
+    /// registry still holds a finished run whose prompt and reply are already
+    /// in the store, the next send retires it and starts a new run instead of
+    /// refusing with "a run is already active".
+    #[tokio::test]
+    async fn send_retires_a_stale_registry_entry_before_refusing() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("fake-muse");
+        std::fs::write(&fake, "#!/bin/sh\necho '{\"payload_type\":\"ready\"}'\n").unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let key = SessionKey::new(Harness::Muse, "stale-session");
+        let summary = crate::model::SessionSummary {
+            id: key.clone(),
+            harness: Harness::Muse,
+            capabilities: crate::ingest::muse::CAPABILITIES,
+            title: None,
+            directory: Some(dir.path().to_string_lossy().into_owned()),
+            created_ms: None,
+            updated_ms: None,
+            model: None,
+            orchestrator_active: false,
+        };
+        let entries = vec![
+            crate::model::Entry {
+                seq: 1,
+                id: "e1".to_owned(),
+                parent_id: None,
+                raw: serde_json::json!({}),
+                mapped: Some(test_message("m1", crate::model::Role::User)),
+            },
+            crate::model::Entry {
+                seq: 2,
+                id: "e2".to_owned(),
+                parent_id: Some("e1".to_owned()),
+                raw: serde_json::json!({}),
+                mapped: Some(test_message("m2", crate::model::Role::Assistant)),
+            },
+        ];
+        let store = Store::in_memory().unwrap();
+        store
+            .ingest_session(crate::store::SessionIngest {
+                summary: &summary,
+                state: None,
+                entries: &entries,
+            })
+            .unwrap();
+
+        let (topics, _) = broadcast::channel(16);
+        let runs = MuseRuns::new(
+            MuseConfig {
+                binary: fake,
+                session_dir: dir.path().join("sessions"),
+                session_dir_explicit: false,
+            },
+            store,
+            topics,
+        );
+        // The finished run the handover missed: nothing working, but the
+        // refusal below would treat it as active.
+        runs.sessions.lock().await.insert(
+            key.clone(),
+            Arc::new(Mutex::new(MuseState {
+                pid: 0,
+                run_id: "run:stale".to_owned(),
+                started_ms: 0,
+                output: "stale output".to_owned(),
+                working: false,
+                aborted: false,
+                pending_prompt: Some(PendingPrompt {
+                    client_id: "old".to_owned(),
+                    text: "old prompt".to_owned(),
+                    sent_ms: 0,
+                }),
+                user_count_at_send: 0,
+                assistant_count_at_send: 0,
+            })),
+        );
+
+        runs.send(&key, "hello", "c-1").await.unwrap();
+
+        let sessions = runs.sessions.lock().await;
+        let state = sessions.get(&key).expect("a new run is registered");
+        let state = state.lock().await;
+        assert_eq!(
+            state.pending_prompt.as_ref().map(|prompt| prompt.text.as_str()),
+            Some("hello"),
+            "the stale entry was retired and the new prompt registered"
+        );
     }
 }
