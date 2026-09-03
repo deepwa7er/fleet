@@ -83,7 +83,7 @@ every deploy is that main stays deployable: workspace tests, `clippy -D
 warnings`, and a check that generated registries match their declarations
 (`tugboat fleet gen --check`). These run before every PR — see
 `.agents/skills/fleet/SKILL.md` §3. CI was archived 2026-08-13 and there is no
-automated gate on `origin/main`; see `ci.ARCHIVED.md`.
+automated gate on `origin/main`; see `docs/archive/ci.ARCHIVED.md`.
 
 ## Threat model
 

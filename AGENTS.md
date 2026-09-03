@@ -62,7 +62,7 @@ Skills live in `.agents/skills/<name>/SKILL.md`:
 - `fizzy` — the Fizzy card CLI: `cargo run -p fizzy -- boards | stream | show | create` (a workspace member, not a binary on `PATH`)
 - `pull-card` — shortcut: pull the most recent open card and summarize what closing it needs
 
-Archived, both 2026-08-13: the drydock autonomous worker (`drydock.ARCHIVED.md`, tag `archive/drydock-2026-08-13`) and CI (`ci.ARCHIVED.md`, tag `archive/ci-2026-08-13`). Nothing in this workflow writes to `~/code/.drydock`.
+Archived, both 2026-08-13: the drydock autonomous worker (`docs/archive/drydock.ARCHIVED.md`, tag `archive/drydock-2026-08-13`) and CI (`docs/archive/ci.ARCHIVED.md`, tag `archive/ci-2026-08-13`). Nothing in this workflow writes to `~/code/.drydock`.
 
 ## Imported upstreams — this repo is the only copy
 

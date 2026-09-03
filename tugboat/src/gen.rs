@@ -19,7 +19,7 @@
 //! `--check` rewrites nothing: it fails (with a diff summary) when a file
 //! doesn't match what the declarations produce. It is a pre-PR gate in
 //! `.agents/skills/fleet/SKILL.md` §3 — CI was archived 2026-08-13
-//! (`ci.ARCHIVED.md`), so nothing runs it automatically. Skip it after adding a
+//! (`docs/archive/ci.ARCHIVED.md`), so nothing runs it automatically. Skip it after adding a
 //! service and the registries drift silently until deploy time.
 //!
 //! Only in-monorepo deployables feed generation, deliberately: generation must
