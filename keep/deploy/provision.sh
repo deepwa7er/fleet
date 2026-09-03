@@ -7,9 +7,12 @@
 #     StateDirectory= on first start, owned by the service user)
 #   - restic + sqlite3 via dnf (snapshot shipping and drill verification)
 #
-# Run this for first-time setup and whenever the unit changes. Routine code
-# deploys go through tugboat (deploy.toml at the crate root), not this
-# script — so this does not build, install the binary, or start the service.
+# Run this for first-time setup and whenever the unit or tokens change.
+# Routine code deploys go through tugboat (deploy.toml at the crate root),
+# not this script — so this does not build or install the binary. It does
+# restart a RUNNING keep when the unit or tokens changed (and waits for it
+# to answer /healthz); it never starts a stopped one behind your back, and
+# a no-op re-run never bounces the service at all.
 #
 # The tokens file is NOT in this repo and never should be. Write one locally
 # (`name token` per line, e.g. `recipes <64 hex chars>` — mint with
@@ -56,10 +59,14 @@ echo ">> Provisioning on $HOST ..."
 ssh "$HOST" 'bash -s' <<'REMOTE'
 set -euo pipefail
 P=/opt/keep/provision
+# Must match KEEP_ADDR in keep.service.
+HEALTH_URL="http://100.73.64.99:8106/healthz"
+RESTART=0
+TOKENS_STATUS="unchanged"
 
-# --- Packages (snapshot shipping + drill verification) ----------------------
-if ! command -v restic >/dev/null 2>&1; then
-  sudo dnf install -y restic sqlite3
+# --- Packages (snapshot shipping, drill verification, health gate) -----------
+if ! command -v restic >/dev/null 2>&1 || ! command -v sqlite3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+  sudo dnf install -y restic sqlite3 curl
 fi
 
 # --- Service user (least privilege) -----------------------------------------
@@ -70,20 +77,61 @@ fi
 # --- Secrets ----------------------------------------------------------------
 sudo mkdir -p /etc/keep
 if [[ -s "$P/tokens.incoming" ]]; then
-  sudo install -o root -g keep -m640 "$P/tokens.incoming" /etc/keep/tokens
+  if ! sudo cmp -s "$P/tokens.incoming" /etc/keep/tokens 2>/dev/null; then
+    sudo install -o root -g keep -m640 "$P/tokens.incoming" /etc/keep/tokens
+    RESTART=1
+    TOKENS_STATUS="updated just now"
+  fi
   rm -f "$P/tokens.incoming"
 fi
 
 # --- Unit -------------------------------------------------------------------
-sudo install -m644 "$P/keep.service" /etc/systemd/system/keep.service
-sudo systemctl daemon-reload
+if ! sudo cmp -s "$P/keep.service" /etc/systemd/system/keep.service 2>/dev/null; then
+  sudo install -m644 "$P/keep.service" /etc/systemd/system/keep.service
+  sudo systemctl daemon-reload
+  RESTART=1
+fi
 sudo systemctl enable keep >/dev/null
+
+# --- Restart, only when something changed and only when running --------------
+# A restart bounces the fleet's writes, so a no-op re-run never triggers
+# one; and a deliberately stopped keep is never started behind your back.
+# `restart` alone only proves systemd forked — the health poll proves keep
+# actually came back (a malformed tokens file would otherwise crash-loop
+# silently behind a zero exit).
+if [[ "$RESTART" == 1 ]]; then
+  if sudo systemctl -q is-active keep; then
+    echo ">> Unit/tokens changed; restarting keep ..."
+    sudo systemctl restart keep
+    HEALTHY=0
+    for ((i = 0; i < 15; i++)); do
+      if curl -sf -m2 "$HEALTH_URL" >/dev/null 2>&1; then
+        HEALTHY=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "$HEALTHY" == 1 ]]; then
+      echo "   keep: restarted and healthy"
+    else
+      echo "!! keep restarted but is not answering /healthz — investigate before deploying" >&2
+      exit 1
+    fi
+  else
+    echo "   keep: not running — unit/tokens changes apply on next start"
+  fi
+fi
 
 echo ">> Provisioned:"
 echo "   user:   $(id keep)"
 echo "   unit:   $(systemctl is-enabled keep)"
+echo "   active: $(systemctl is-active keep)"
 if [[ -f /etc/keep/tokens ]]; then
-  echo "   tokens: $(wc -l < /etc/keep/tokens) database(s)"
+  # Deliberately generic: this is operator feedback, and the report path
+  # should never need privilege to read a 640 secret back just to display
+  # it. Whether the file changed is known locally (see TOKENS_STATUS),
+  # not by re-reading it.
+  echo "   tokens: present (${TOKENS_STATUS})"
 else
   echo "   tokens: MISSING — re-run with KEEP_TOKENS_FILE before deploying"
 fi
