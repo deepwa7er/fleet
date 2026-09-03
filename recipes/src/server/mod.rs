@@ -150,18 +150,18 @@ impl RecipeReq {
 // ---- handlers -----------------------------------------------------------------
 
 async fn list_recipes(State(st): State<AppState>) -> Result<Json<Vec<Recipe>>> {
-    Ok(Json(st.store.recipes()?))
+    Ok(Json(st.store.recipes().await?))
 }
 
 async fn get_recipe(State(st): State<AppState>, Path(id): Path<i64>) -> Result<Json<Recipe>> {
-    Ok(Json(st.store.recipe(id)?))
+    Ok(Json(st.store.recipe(id).await?))
 }
 
 async fn create_recipe(
     State(st): State<AppState>,
     Json(req): Json<RecipeReq>,
 ) -> Result<(StatusCode, Json<Recipe>)> {
-    let recipe = st.store.create_recipe(req.into_new()?)?;
+    let recipe = st.store.create_recipe(req.into_new()?).await?;
     Ok((StatusCode::CREATED, Json(recipe)))
 }
 
@@ -170,10 +170,10 @@ async fn update_recipe(
     Path(id): Path<i64>,
     Json(req): Json<RecipeReq>,
 ) -> Result<Json<Recipe>> {
-    Ok(Json(st.store.update_recipe(id, req.into_update()?)?))
+    Ok(Json(st.store.update_recipe(id, req.into_update()?).await?))
 }
 
 async fn delete_recipe(State(st): State<AppState>, Path(id): Path<i64>) -> Result<StatusCode> {
-    st.store.delete_recipe(id)?;
+    st.store.delete_recipe(id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

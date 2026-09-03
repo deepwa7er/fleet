@@ -2,7 +2,7 @@
 name = "recipes"
 version = "0.1.0"
 edition = "2021"
-description = "Recipe book — a single binary serving a web view and JSON API over one SQLite store, for creating, viewing, and editing recipes."
+description = "Recipe book — a single binary serving a web view and JSON API over keep (the fleet's central database), for creating, viewing, and editing recipes."
 
 [dependencies]
 fleet-common = { path = "../crates/fleet-common" }
@@ -15,3 +15,8 @@ clap = { workspace = true, features = ["derive"] }
 chrono = { workspace = true, features = ["serde"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[dev-dependencies]
+# Embedded keep for the store tests: a real server behind the real client,
+# so the tests pin actual behavior instead of mocking the wire.
+keep = { path = "../keep" }

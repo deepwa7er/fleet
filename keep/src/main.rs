@@ -18,16 +18,13 @@
 //! - restic (`RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, R2 credentials) comes
 //!   from the environment via the unit's `EnvironmentFile`.
 
-mod backup;
-mod server;
-mod store;
-
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use fleet_common::util::env_or;
+use keep::{backup, server, store};
 
 #[derive(Parser)]
 #[command(name = "keep", about = "The fleet's central database service")]

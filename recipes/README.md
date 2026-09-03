@@ -3,8 +3,9 @@
 Recipe book for the deepwa7er fleet: create, view, and edit recipes from one
 web page at **https://recipes.intern.deepwa7er.net**.
 
-A single Rust binary serves a JSON API and the built React SPA over one SQLite
-store — the same shape as the other small fleet services (see `clothes`).
+A single Rust binary serves a JSON API and the built React SPA over keep,
+the fleet's central database — the first service migrated off local SQLite
+(fleet #145). Its data lives on OVH, snapshotted to R2 every minute.
 
 ## Model
 
@@ -26,12 +27,15 @@ integers; `source_url` records where a recipe came from.
 ## Development
 
 ```sh
-cargo run -p recipes          # API + SPA on 127.0.0.1:8097 (recipes.db in CWD)
+cargo run -p recipes          # API + SPA on 127.0.0.1:8097 (needs keep; see below)
 cd web && bun install && bun run dev   # Vite dev server proxying /api to 8097
-cargo test -p recipes
+cargo test -p recipes         # spins an embedded keep; no OVH needed
 ```
 
-Configuration (env): `RECIPES_DB`, `RECIPES_ADDR`, `RECIPES_WEB_DIR`.
+Configuration (env): `RECIPES_KEEP_URL` (default `http://100.73.64.99:8106`),
+`RECIPES_KEEP_TOKEN` or `RECIPES_KEEP_TOKEN_FILE`, `RECIPES_ADDR`,
+`RECIPES_WEB_DIR`. Local dev against the live keep works over the tailnet;
+tests embed their own.
 
 ## Deploy
 

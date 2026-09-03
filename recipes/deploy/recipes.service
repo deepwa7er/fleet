@@ -7,18 +7,22 @@ Wants=network-online.target
 Type=simple
 User=recipes
 Group=recipes
-# Creates /var/lib/recipes (owned by recipes, writable under ProtectSystem=strict)
-# where the SQLite database lives — and which fleet-backup ships to R2.
-StateDirectory=recipes
-Environment=RECIPES_DB=/var/lib/recipes/recipes.db
+# No StateDirectory: recipes holds no local state — its database lives in
+# keep on OVH. /var/lib/recipes/recipes.db remains on disk as a frozen
+# pre-migration relic until manually removed; the app never touches it.
+Environment=RECIPES_KEEP_URL=http://100.73.64.99:8106
+# This database's Bearer [REDACTED] keep, installed by deploy/provision.sh
+# (recipes:recipes, 0640). A file rather than an Environment= line because a
+# unit's environment is readable via `systemctl show`.
+Environment=RECIPES_KEEP_TOKEN_FILE=/etc/recipes/keep-token
 Environment=RECIPES_ADDR=127.0.0.1:8097
 Environment=RECIPES_WEB_DIR=/opt/recipes/web
 ExecStart=/usr/local/bin/recipes serve
 Restart=on-failure
 RestartSec=2
 
-# Hardening — the service only reads its web dir and writes its state dir; it
-# makes no outbound requests.
+# Hardening — the service reads its web dir and token file, holds no local
+# state, and makes tailnet HTTP requests to keep and nothing else.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

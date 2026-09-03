@@ -105,6 +105,119 @@ fn verify_applied(conn: &Connection, idx: usize, hash: &str) -> Result<()> {
     }
 }
 
+/// Apply `migrations` to the keep database behind `client`: the remote twin
+/// of [`open_migrated`], enforcing the same two invariants across the wire.
+///
+/// 1. **The FK-off bracket** — `PRAGMA foreign_keys=OFF`, the migration
+///    pass, `PRAGMA foreign_keys=ON`. keep holds one connection per database
+///    behind a mutex, so these PRAGMAs and everything between them run on
+///    the same server-side connection with no interleaving request.
+/// 2. **Fingerprinted append-only migrations** — each applied migration's
+///    FNV-1a hash is recorded in `_fleet_migrations`, and an edit to an
+///    already-applied migration fails loudly, exactly as locally.
+///
+/// Each pending migration plus its hash row and version bump commits in one
+/// keep transaction, so a crash mid-migration can never leave a half-applied
+/// schema — the same atomicity the local runner gets from rusqlite.
+///
+/// Not directly unit-tested here: fleet-common cannot depend on keep (keep
+/// depends on fleet-common), so there is no embeddable server in this
+/// crate. Coverage comes from migrated services' tests, which run this
+/// against a real embedded keep (recipes does).
+pub async fn open_migrated_remote(
+    client: &crate::keep::Client,
+    migrations: &[&str],
+) -> Result<()> {
+    client
+        .batch(
+            "CREATE TABLE IF NOT EXISTS _fleet_migrations (
+             idx  INTEGER PRIMARY KEY,
+             hash TEXT NOT NULL
+         );",
+        )
+        .await?;
+    // Invariant 1: the FK-off bracket around the entire migration pass.
+    client.query("PRAGMA foreign_keys=OFF", vec![]).await?;
+    let result = migrate_remote(client, migrations).await;
+    client.query("PRAGMA foreign_keys=ON", vec![]).await?;
+    result
+}
+
+async fn migrate_remote(
+    client: &crate::keep::Client,
+    migrations: &[&str],
+) -> Result<()> {
+    use crate::keep::{Statement, Value};
+
+    let version = user_version(client).await?;
+    for (i, sql) in migrations.iter().enumerate() {
+        let hash = fingerprint(sql);
+        if (i as i64) < version {
+            verify_applied_remote(client, i, &hash).await?;
+            continue;
+        }
+        client
+            .tx(vec![
+                Statement::batch(sql.to_string()),
+                Statement::new(
+                    "INSERT INTO _fleet_migrations (idx, hash) VALUES (?1, ?2)",
+                    vec![Value::from(i as i64), Value::from(hash)],
+                ),
+                // `user_version` lives in the DB header and commits with the
+                // transaction, so it rolls back with the rest if the commit
+                // never lands — same guarantee as the local runner.
+                Statement::new(format!("PRAGMA user_version = {}", i + 1), vec![]),
+            ])
+            .await?;
+    }
+    Ok(())
+}
+
+async fn user_version(client: &crate::keep::Client) -> Result<i64> {
+    let outcome = client.query("PRAGMA user_version", vec![]).await?;
+    match outcome.rows.first().and_then(|row| row.first()) {
+        Some(crate::keep::Value::Integer(v)) => Ok(*v),
+        other => Err(Error::Internal(format!(
+            "keep answered PRAGMA user_version with {other:?}, want one integer"
+        ))),
+    }
+}
+
+/// Invariant 2, remote form: same backfill-then-verify discipline as
+/// [`verify_applied`], including the legacy backfill for databases migrated
+/// before hashes were recorded.
+async fn verify_applied_remote(
+    client: &crate::keep::Client,
+    idx: usize,
+    hash: &str,
+) -> Result<()> {
+    use crate::keep::{Statement, Value};
+
+    let outcome = client
+        .query(
+            "SELECT hash FROM _fleet_migrations WHERE idx = ?1",
+            vec![Value::from(idx as i64)],
+        )
+        .await?;
+    match outcome.rows.first().and_then(|row| row.first()) {
+        Some(Value::Text(recorded)) if recorded == hash => Ok(()),
+        Some(_) => Err(Error::Internal(format!(
+            "migration {idx} was edited after being applied — migrations are \
+             append-only; restore the original text and add a new migration \
+             instead"
+        ))),
+        _ => {
+            client
+                .tx(vec![Statement::new(
+                    "INSERT INTO _fleet_migrations (idx, hash) VALUES (?1, ?2)",
+                    vec![Value::from(idx as i64), Value::from(hash.to_string())],
+                )])
+                .await?;
+            Ok(())
+        }
+    }
+}
+
 /// FNV-1a 64-bit over the migration text. This detects *accidental* edits to
 /// shipped migrations (the failure mode that matters here), not tampering by
 /// an adversary — anyone who can rewrite the migration files can rewrite the

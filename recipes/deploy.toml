@@ -12,9 +12,11 @@ host = "deepwa7er"
 # (`tugboat fleet gen`).
 port = 8097
 
-[state]
-# The recipe book DB — snapshotted by fleet-backup (list is generated).
-db = "recipes.db"
+# NO [state] BLOCK: recipes' data lives in keep on OVH now (migrated under
+# fleet #145), snapshotted to R2 every minute by keep itself. The local file
+# /var/lib/recipes/recipes.db is a frozen pre-migration relic — fleet-backup
+# must let go of it, or it would ship a stale copy forever while looking
+# like coverage.
 
 [build]
 requirements = ["x86_64-linux-musl"]
