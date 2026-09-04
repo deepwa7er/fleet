@@ -45,9 +45,13 @@ export function App() {
     target.focus()
   }, [])
   const openSession = useCallback((id: string) => {
-    navigate({ ...workspace, session: id })
+    navigate({ ...workspace, session: id, newSession: false })
     setActivePane("session")
   }, [navigate, workspace])
+  const newChat = useCallback(() => {
+    navigate({ session: `muse:${crypto.randomUUID()}`, change: null, newSession: true })
+    setActivePane("session")
+  }, [navigate])
   const openChange = useCallback((repo: string, card: number) => {
     navigate({ ...workspace, change: { repo, card, round: null } })
     setActivePane("change")
@@ -86,6 +90,7 @@ export function App() {
         onClose={() => setRailOpen(false)}
         onOpenChange={openChange}
         onOpenSession={openSession}
+        onNewChat={newChat}
       />
       <main className="desk-main">
         <header className="desk-toolbar">
@@ -122,7 +127,8 @@ export function App() {
                 <Session
                   key={workspace.session}
                   id={workspace.session}
-                  onClose={() => navigate({ ...workspace, session: null })}
+                  fresh={workspace.newSession}
+                  onClose={() => navigate({ ...workspace, session: null, newSession: false })}
                   onOpenChange={openChange}
                 />
               </section>
@@ -154,6 +160,7 @@ export function App() {
         onClose={() => setPaletteOpen(false)}
         onOpenChange={openChange}
         onOpenSession={openSession}
+        onNewChat={newChat}
       />
     </div>
   )

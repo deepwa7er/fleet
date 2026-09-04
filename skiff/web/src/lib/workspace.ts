@@ -3,6 +3,8 @@ export type ChangePane = { repo: string; card: number; round: number | null }
 export type Workspace = {
   session: string | null
   change: ChangePane | null
+  /** The session id was just minted here and may not exist yet. */
+  newSession: boolean
 }
 
 export function readWorkspace(pathname = location.pathname, search = location.search): Workspace {
@@ -19,12 +21,13 @@ export function readWorkspace(pathname = location.pathname, search = location.se
         card,
         round: readRound(search),
       },
+      newSession: readNew(search),
     }
   }
   const session = pathname.match(/^\/s\/(.+)$/)
   if (session?.[1]) {
     const id = decodeSegment(session[1])
-    return id === null ? emptyWorkspace() : { session: id, change: null }
+    return id === null ? emptyWorkspace() : { session: id, change: null, newSession: readNew(search) }
   }
   const change = pathname.match(/^\/c\/([^/]+)\/(\d+)$/)
   if (change?.[1] && change[2]) {
@@ -34,6 +37,7 @@ export function readWorkspace(pathname = location.pathname, search = location.se
     return {
       session: null,
       change: { repo, card, round: readRound(search) },
+      newSession: false,
     }
   }
   return emptyWorkspace()
@@ -45,7 +49,11 @@ export function workspaceHref(workspace: Workspace): string {
     ? `/c/${encodeURIComponent(workspace.change.repo)}/${workspace.change.card}`
     : ""
   const path = `${session}${change}` || "/"
-  return workspace.change?.round ? `${path}?round=${workspace.change.round}` : path
+  const params = new URLSearchParams()
+  if (workspace.change?.round) params.set("round", String(workspace.change.round))
+  if (workspace.newSession && workspace.session) params.set("new", "1")
+  const query = params.toString()
+  return query ? `${path}?${query}` : path
 }
 
 function readRound(search: string): number | null {
@@ -67,6 +75,10 @@ function readCard(value: string): number | null {
   return Number.isSafeInteger(card) && card > 0 ? card : null
 }
 
+function readNew(search: string): boolean {
+  return new URLSearchParams(search).get("new") === "1"
+}
+
 function emptyWorkspace(): Workspace {
-  return { session: null, change: null }
+  return { session: null, change: null, newSession: false }
 }

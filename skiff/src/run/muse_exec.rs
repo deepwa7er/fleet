@@ -287,11 +287,16 @@ impl MuseRuns {
         let store = self.store.clone();
         let session = session.clone();
         tokio::task::spawn_blocking(move || {
-            let summary = store
-                .sessions()?
-                .into_iter()
-                .find(|summary| summary.id == session)
-                .with_context(|| format!("session {session} not found"))?;
+            let summaries = store.sessions()?;
+            let Some(summary) =
+                summaries.into_iter().find(|summary| summary.id == session)
+            else {
+                // A send to a session skiffd has never seen is how a new chat
+                // starts: the run adopts the id, and muse creates the session
+                // under it. No history to count, and home to run in until the
+                // session records a directory of its own.
+                return Ok((super::home(), 0, 0));
+            };
             let cwd = summary
                 .directory
                 .map(PathBuf::from)
@@ -558,5 +563,42 @@ mod tests {
             Some("hello"),
             "the stale entry was retired and the new prompt registered"
         );
+    }
+
+    /// A new chat starts by sending to an id skiffd has never seen: the run
+    /// adopts the id and muse creates the session under it, instead of the
+    /// send failing with "not found".
+    #[tokio::test]
+    async fn send_to_an_unknown_session_starts_a_new_chat() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("fake-muse");
+        std::fs::write(&fake, "#!/bin/sh\necho '{\"payload_type\":\"ready\"}'\n").unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let store = Store::in_memory().unwrap();
+        let (topics, _) = broadcast::channel(16);
+        let runs = MuseRuns::new(
+            MuseConfig {
+                binary: fake,
+                session_dir: dir.path().join("sessions"),
+                session_dir_explicit: false,
+            },
+            store,
+            topics,
+        );
+        let key = SessionKey::new(Harness::Muse, "brand-new-chat");
+
+        runs.send(&key, "hello", "c-9").await.unwrap();
+
+        let sessions = runs.sessions.lock().await;
+        let state = sessions.get(&key).expect("a run is registered for the new id");
+        let state = state.lock().await;
+        assert_eq!(
+            state.pending_prompt.as_ref().map(|prompt| prompt.text.as_str()),
+            Some("hello")
+        );
+        assert_eq!((state.user_count_at_send, state.assistant_count_at_send), (0, 0));
     }
 }

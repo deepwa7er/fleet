@@ -29,11 +29,33 @@ describe("CommandPalette", () => {
         onClose={close}
         onOpenChange={openChange}
         onOpenSession={vi.fn()}
+        onNewChat={vi.fn()}
       />,
     )
 
     await user.type(screen.getByLabelText("Open"), "skiff{Enter}")
     expect(openChange).toHaveBeenCalledWith("fleet", 124)
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it("offers a new chat as its first row", async () => {
+    const user = userEvent.setup()
+    const newChat = vi.fn()
+    const close = vi.fn()
+    render(
+      <CommandPalette
+        open
+        changes={[]}
+        sessions={[]}
+        onClose={close}
+        onOpenChange={vi.fn()}
+        onOpenSession={vi.fn()}
+        onNewChat={newChat}
+      />,
+    )
+
+    await user.click(screen.getByRole("button", { name: /New chat/ }))
+    expect(newChat).toHaveBeenCalledOnce()
     expect(close).toHaveBeenCalledOnce()
   })
 })

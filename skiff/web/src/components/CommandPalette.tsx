@@ -11,6 +11,7 @@ export function CommandPalette({
   onClose,
   onOpenChange,
   onOpenSession,
+  onNewChat,
 }: {
   open: boolean
   changes: ChangeRef[]
@@ -18,12 +19,14 @@ export function CommandPalette({
   onClose: () => void
   onOpenChange: (repo: string, card: number) => void
   onOpenSession: (id: string) => void
+  onNewChat: () => void
 }) {
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   const choices = useMemo<Choice[]>(
     () => [
+      { key: "new-chat", label: "New chat", detail: "muse · start a session", run: onNewChat },
       ...changes.map((change) => ({
         key: `c:${change.repo}:${change.card}`,
         label: change.title ?? `Change #${change.card}`,
@@ -37,7 +40,7 @@ export function CommandPalette({
         run: () => onOpenSession(session.id),
       })),
     ],
-    [changes, sessions, onOpenChange, onOpenSession],
+    [changes, sessions, onOpenChange, onOpenSession, onNewChat],
   )
   const filtered = choices.filter((choice) =>
     `${choice.label} ${choice.detail}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()),

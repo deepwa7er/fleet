@@ -7,10 +7,13 @@ import { Transcript } from "./Transcript"
 
 export function Session({
   id,
+  fresh,
   onClose,
   onOpenChange,
 }: {
   id: string
+  /** The id was just minted here; the session may not exist yet. */
+  fresh: boolean
   onClose: () => void
   onOpenChange: (repo: string, card: number) => void
 }) {
@@ -27,22 +30,42 @@ export function Session({
       </button>
       {view.status === "loading" && <p className="text-muted">Loading…</p>}
       {view.status === "error" && <p className="text-danger">{view.error}</p>}
-      {view.status === "ready" && <Loaded view={view.data} onOpenChange={onOpenChange} />}
+      {view.status === "ready" && <Loaded id={id} fresh={fresh} view={view.data} onOpenChange={onOpenChange} />}
     </div>
   )
 }
 
 function Loaded({
+  id,
+  fresh,
   view,
   onOpenChange,
 }: {
+  id: string
+  fresh: boolean
   view: SessionView
   onOpenChange: (repo: string, card: number) => void
 }) {
   // An absent session is named, not rendered as an empty transcript — the two
-  // look identical otherwise, and only one of them means "this is gone".
+  // look identical otherwise, and only one of them means "this is gone". A
+  // freshly minted id is the exception: it names a chat about to start.
   if (!view.session) {
-    return <p className="text-muted">That session no longer exists.</p>
+    if (!fresh) {
+      return <p className="text-muted">That session no longer exists.</p>
+    }
+    return (
+      <>
+        <header className="flex flex-col gap-1">
+          <h1 className="font-heading text-2xl tracking-tight">New chat</h1>
+          <p className="instrumentation flex flex-wrap gap-x-3">
+            <span>muse</span>
+          </p>
+          <p className="text-sm text-muted">Send the first message to start the session.</p>
+        </header>
+        <Transcript messages={[]} live={view.live} harness="muse" />
+        <Composer session={id} working={view.live.working} />
+      </>
+    )
   }
   const { session } = view
   return (

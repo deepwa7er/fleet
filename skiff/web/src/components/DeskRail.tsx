@@ -16,6 +16,7 @@ export function DeskRail({
   onClose,
   onOpenChange,
   onOpenSession,
+  onNewChat,
 }: {
   changes: ChangeRef[]
   sessions: SessionSummary[]
@@ -24,6 +25,7 @@ export function DeskRail({
   onClose: () => void
   onOpenChange: (repo: string, card: number) => void
   onOpenSession: (id: string) => void
+  onNewChat: () => void
 }) {
   const activeChanges = useMemo(
     () => changes.filter((change) => change.state !== "shipped"),
@@ -54,6 +56,10 @@ export function DeskRail({
     else onOpenSession(item.session.id)
     onClose()
   }
+  const startChat = () => {
+    onNewChat()
+    onClose()
+  }
 
   return (
     <>
@@ -77,6 +83,10 @@ export function DeskRail({
           <p className="font-heading text-2xl">skiff</p>
           <button className="text-accent lg:hidden" onClick={onClose}>Close</button>
         </header>
+        <button className="rail-row text-accent" onClick={startChat}>
+          <span>New chat</span>
+          <span className="instrumentation">muse</span>
+        </button>
         <SourceErrors sources={sources} />
         <section className="mt-7">
           <p className="instrumentation mb-3">Needs you · {activeChanges.length}</p>

@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -37,6 +37,7 @@ describe("DeskRail", () => {
         onClose={vi.fn()}
         onOpenChange={vi.fn()}
         onOpenSession={openSession}
+        onNewChat={vi.fn()}
       />,
     )
 
@@ -49,5 +50,28 @@ describe("DeskRail", () => {
     expect(openSession).toHaveBeenCalledWith("pi:abc")
     await user.keyboard("k")
     expect(document.activeElement).toBe(change)
+  })
+
+  it("starts a new chat from its button", () => {
+    const newChat = vi.fn()
+    const close = vi.fn()
+    render(
+      <DeskRail
+        changes={[]}
+        sessions={[]}
+        sources={[]}
+        open
+        onClose={close}
+        onOpenChange={vi.fn()}
+        onOpenSession={vi.fn()}
+        onNewChat={newChat}
+      />,
+    )
+
+    // fireEvent: jsdom has no layout, so the open scrim would swallow a
+    // hit-tested userEvent click that a real browser delivers to the rail.
+    fireEvent.click(screen.getByRole("button", { name: /New chat/ }))
+    expect(newChat).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
   })
 })
